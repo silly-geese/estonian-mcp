@@ -65,6 +65,14 @@ async def run() -> None:
         r = await c.get("/health")
         check("200 with body", r.status_code == 200 and r.json() == {"ok": True}, str(r.status_code))
 
+        print("well-known server card (no auth)")
+        r = await c.get("/.well-known/mcp/server-card.json")
+        check("server-card 200", r.status_code == 200, str(r.status_code))
+        body = r.json()
+        check("server-card name", body.get("serverInfo", {}).get("name") == "estonian-mcp")
+        check("server-card auth required (bearer mode)", body.get("authentication", {}).get("required") is True)
+        check("server-card advertises /mcp", body.get("endpoints", {}).get("streamable_http") == "/mcp")
+
         print("auth")
         r = await c.post("/mcp", json={})
         check("missing token → 401", r.status_code == 401)
@@ -116,6 +124,13 @@ async def run() -> None:
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=pub_app), base_url="http://t") as c:
         r = await c.get("/health")
         check("public: /health → 200", r.status_code == 200)
+
+        r = await c.get("/.well-known/mcp/server-card.json")
+        check("public: server-card 200", r.status_code == 200)
+        check(
+            "public: server-card auth not required",
+            r.json().get("authentication", {}).get("required") is False,
+        )
 
         r = await c.post("/mcp", json={})
         check("public: /mcp no token → 200", r.status_code == 200)

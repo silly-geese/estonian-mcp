@@ -49,6 +49,9 @@ MAX_WORD_CHARS = 200
 DEFAULT_RATE_LIMIT_PER_MINUTE = 60
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 30
 
+# Bumped manually in lockstep with pyproject.toml's [project].version.
+SERVER_VERSION = "0.1.0"
+
 log = logging.getLogger("estonian-mcp")
 
 mcp = FastMCP("estnltk")
@@ -348,6 +351,19 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
         # and uptime monitoring.
         if path == "/health":
             await _send_status(send, 200, {"ok": True})
+            return
+
+        # Smithery + similar registries probe this for auto-discovery.
+        # Spec: https://smithery.ai/docs/build/publish#troubleshooting
+        if path == "/.well-known/mcp/server-card.json":
+            card: dict[str, Any] = {
+                "serverInfo": {"name": "estonian-mcp", "version": SERVER_VERSION},
+                "authentication": {"required": not public_mode},
+                "endpoints": {"streamable_http": "/mcp"},
+            }
+            if not public_mode:
+                card["authentication"]["schemes"] = ["bearer"]
+            await _send_status(send, 200, card)
             return
 
         if public_mode:
