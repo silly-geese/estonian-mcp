@@ -28,10 +28,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Unbelieva/estonian-mcp"
-Repository = "https://github.com/Unbelieva/estonian-mcp"
-Issues = "https://github.com/Unbelieva/estonian-mcp/issues"
-"Bug Reports" = "https://github.com/Unbelieva/estonian-mcp/issues"
+Homepage = "https://github.com/silly-geese/estonian-mcp"
+Repository = "https://github.com/silly-geese/estonian-mcp"
+Issues = "https://github.com/silly-geese/estonian-mcp/issues"
+"Bug Reports" = "https://github.com/silly-geese/estonian-mcp/issues"
 
 [project.scripts]
 estonian-mcp = "server:main"

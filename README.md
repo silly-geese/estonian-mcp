@@ -2,7 +2,7 @@
 
 > Claude is quite bad at Estonian, so this MCP/wrapper is here to fix that. Give it a shot.
 
-[![CI](https://github.com/Unbelieva/estonian-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Unbelieva/estonian-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/silly-geese/estonian-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/silly-geese/estonian-mcp/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue.svg)](pyproject.toml)
 [![MCP](https://img.shields.io/badge/MCP-stdio-7c3aed.svg)](https://modelcontextprotocol.io)
@@ -49,7 +49,7 @@ EstNLTK requires Python 3.10–3.13 (Vabamorf is a C++ extension, only
 prebuilt wheels work). This repo pins **3.13** via `.python-version`.
 
 ```sh
-git clone https://github.com/Unbelieva/estonian-mcp.git
+git clone https://github.com/silly-geese/estonian-mcp.git
 cd estonian-mcp
 uv sync
 ```
