@@ -9,70 +9,203 @@
 
 A small **Model Context Protocol** server that exposes
 [EstNLTK](https://github.com/estnltk/estnltk) — the Estonian NLP toolkit —
-as tools any LLM client can call in real time. Hand it Estonian text, get
-back correct lemmas, morphology, POS tags, spell-check + suggestions,
+as tools any LLM client can call in real time. Hand it Estonian text,
+get back correct lemmas, morphology, POS tags, spell-check + suggestions,
 syllables, and named entities.
 
 If your AI agent has to draft, edit, or proofread Estonian, this wires
-in ground truth so it stops guessing. Two transports:
+in ground truth so it stops guessing.
 
-- **stdio** — local subprocess, zero config, zero network.
-- **streamable-http** — bearer-token-protected HTTPS endpoint for
-  remote clients (claude.ai web, Claude Cowork remote, Smithery
-  hosting, self-hosted Fly.io).
+**Three ways to use it:**
+
+1. 👉 **Paste a URL into your Claude app** — the easiest path, no
+   terminal, no install. See [Get started in 30 seconds](#-get-started-in-30-seconds-no-install) below.
+2. **One-click on [Smithery](https://smithery.ai)** — search for
+   `estonian-mcp` once the listing is live.
+3. **Self-host** — clone, run locally as stdio, or deploy your own
+   container to Fly.io / any host. See [Self-host (advanced)](#self-host-advanced).
 
 ## What it does
 
 | Tool | What it does |
 | --- | --- |
-| `tokenize(text)` | Sentences + words |
-| `analyze_morphology(text, all_analyses=False)` | Lemma, POS, form, root, ending, clitic, compound parts per word |
-| `lemmatize(text)` | Just the lemma per word (concise) |
-| `pos_tag(text)` | Just the POS tag per word |
-| `spell_check(text, suggestions=True)` | Spelling check + correction suggestions |
-| `syllabify(word)` | Syllables with quantity + accent for one word |
-| `named_entities(text)` | PER / LOC / ORG (CRF model, bundled, no download) |
+| `tokenize(text)` | Split text into sentences and words |
+| `analyze_morphology(text)` | Lemma, POS, form, root, ending, clitic, compound parts per word |
+| `lemmatize(text)` | Just the dictionary form per word |
+| `pos_tag(text)` | Just the part-of-speech tag per word |
+| `spell_check(text)` | Spelling check + correction suggestions |
+| `syllabify(word)` | Syllables with quantity + accent |
+| `named_entities(text)` | People / places / organisations |
 
-POS tags: `S`=noun, `V`=verb, `A`=adj, `P`=pron, `D`=adv, `K`=adp,
+POS tag set: `S`=noun, `V`=verb, `A`=adj, `P`=pron, `D`=adv, `K`=adp,
 `J`=conj, `N`=numeral, `I`=interj, `Y`=abbrev, `X`=foreign, `Z`=punct.
 
-## Compatibility
+---
 
-| Client | Transport | Status |
+## ✨ Get started in 30 seconds (no install)
+
+This section is for everyone — including if you've never opened a
+terminal in your life. You'll be done before your tea is steeped.
+
+The trick is that we run the server for you on the public internet at
+`https://estonian-mcp.fly.dev/mcp`. You just need to tell your Claude
+app to talk to it. Pick the app you use:
+
+### In Claude Cowork
+
+1. Open Cowork and click your profile / **Settings**.
+2. Find **Connectors** in the sidebar.
+3. Click **Add custom connector**.
+4. Paste this URL into the URL field:
+   ```
+   https://estonian-mcp.fly.dev/mcp
+   ```
+5. Leave any "Authentication" / "API key" / "Bearer token" fields
+   **empty**. The server is public — no token needed.
+6. Click **Save** / **Connect**.
+7. Open a new chat. Ask Claude something in Estonian, e.g.
+   *"Kontrolli selle teksti õigekirja: Mina sõinn täna putru."*
+   Claude should call the `spell_check` tool and tell you `sõinn`
+   is misspelled (suggestion: `sõin`).
+
+### In claude.ai (web Claude)
+
+1. Click your profile in the bottom-left → **Settings**.
+2. Find **Connectors** (sometimes called **Custom Integrations**).
+3. Click **Add custom connector**.
+4. Paste:
+   ```
+   https://estonian-mcp.fly.dev/mcp
+   ```
+5. Authentication: **none** (leave fields blank).
+6. Save. The new tools appear in your tool tray.
+
+### In Claude Desktop
+
+If your Claude Desktop has a **Settings → Connectors** menu (newer
+versions), follow the same three steps as Cowork above.
+
+If it doesn't, you have an older Desktop that needs a JSON config
+file edit — see [Self-host (advanced)](#self-host-advanced) for the
+local-stdio path, which works on every version.
+
+### Don't see your client here?
+
+Any tool that supports MCP over HTTPS can connect — just point it at
+`https://estonian-mcp.fly.dev/mcp` with no auth. If your client only
+speaks stdio (Cursor, VS Code MCP, Continue, Zed, Claude Code), jump
+to the local-install path in [Self-host](#self-host-advanced).
+
+---
+
+## 💡 Pro tip — teach Claude *your* Estonian alongside the MCP
+
+This MCP gives Claude **correct linguistics**: real lemmas, real case
+forms, real spelling. What it can't do is teach Claude **your voice** —
+the register, idioms, and tone you actually want when writing.
+
+You handle the voice; the MCP handles the correctness. Layer them.
+
+A few things to add to your Claude project / custom instructions /
+system prompt to get this right:
+
+- **Set the register.** *"Always reply in formal officialese Estonian
+  for legal and government topics, and in conversational Tallinn
+  speech for chat replies. Never mix the two in one message."*
+- **Pin the dialect / region.** *"I'm from Tartu — prefer southern
+  Estonian phrasings where there's a choice (e.g. 'kus sa lähed'
+  rather than 'kuhu sa lähed' for casual speech)."*
+- **Show your tone with examples.** Paste 3–4 short paragraphs of
+  your own writing into the project instructions and ask Claude to
+  match that voice. Real examples beat any abstract description.
+- **Anchor common mistakes.** *"You always confuse `kasutama` (to use)
+  with `käsitlema` (to handle / to deal with). Double-check those
+  with the lemmatize tool before sending."*
+- **Direct the MCP explicitly when it matters.** *"Before sending any
+  Estonian email, run spell_check on every word. Show me misspelled
+  words with suggestions before drafting."*
+
+The MCP catches misspelled words and invented case forms; your
+prompt drives the style. Together they make Claude actually useful
+for writing in Estonian, not just plausible-looking.
+
+---
+
+## How to prompt it once it's connected
+
+Most prompts don't need to mention the tools by name — Claude picks
+the right one. A few patterns that work especially well:
+
+```
+Proofread this Estonian email and use spell_check on any words
+you're unsure about: <text>
+```
+
+```
+Lemmatize this Estonian paragraph, then translate the lemmas to
+English so I can study vocabulary: <text>
+```
+
+```
+Analyze the morphology of this sentence and explain the case
+markings: "Tallinnas elavad eestlased räägivad eesti keelt."
+```
+
+```
+Extract the people and places from this Estonian news article,
+then summarise in one paragraph.
+```
+
+The model calls the tool, gets authoritative output, and bases its
+response on that — no more hallucinated lemmas or invented case forms.
+
+---
+
+## All clients at a glance
+
+| Client | No-install path | Local-install path |
 | --- | --- | --- |
-| **Claude Desktop** | stdio | ✅ Plug-and-play |
-| **Claude Code** | stdio | ✅ Plug-and-play |
-| **Claude Cowork** (local mode) | stdio | ✅ Plug-and-play |
-| **Claude Cowork** (remote mode) | HTTP | ✅ Paste URL into Settings → Connectors |
-| **claude.ai web** (Custom Connectors) | HTTP | ✅ Needs HTTPS endpoint + bearer token |
-| **Cursor** | stdio | ✅ Plug-and-play |
-| **VS Code MCP / Continue / Zed** | stdio | ✅ Plug-and-play |
+| **Claude Cowork** | ✅ Paste URL | ✅ stdio via JSON |
+| **Claude Desktop** | ✅ Paste URL (newer) | ✅ stdio via JSON |
+| **claude.ai web** | ✅ Paste URL | — |
+| **Claude Code** (CLI) | — | ✅ `claude mcp add ...` |
+| **Cursor** | — | ✅ stdio via JSON |
+| **VS Code MCP / Continue / Zed** | — | ✅ stdio via JSON |
 
-## Quickstart (local stdio)
+"No-install path" = paste `https://estonian-mcp.fly.dev/mcp` in the
+client's Connectors UI. "Local-install path" = clone the repo and
+point the client at `python server.py`.
+
+---
+
+## Self-host (advanced)
+
+The hosted instance is convenient, but if you'd rather run your own
+(privacy, latency, custom auth, offline use), the same one-file
+server works locally and as a container.
+
+### Run locally as stdio (zero network)
+
+EstNLTK requires Python 3.10–3.13.
 
 ```sh
 git clone https://github.com/silly-geese/estonian-mcp.git
 cd estonian-mcp
 uv sync
-uv run python tests/test_smoke.py   # verify
+uv run python tests/test_smoke.py     # verify
 ```
 
-Then wire it into your client (snippets below). Python 3.10–3.13
-required (Vabamorf is a C++ extension, only prebuilt wheels work).
+Then wire it into your client.
 
-### Claude Code
-
+**Claude Code:**
 ```sh
 claude mcp add estnltk -- /absolute/path/to/uv \
   --directory /absolute/path/to/estonian-mcp \
   run python server.py
 ```
 
-### Claude Desktop / Claude Cowork (local mode)
-
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`
-(macOS) or the equivalent on your platform:
-
+**Claude Desktop / Cowork (local mode)** — edit
+`~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
@@ -87,142 +220,71 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`
 }
 ```
 
-Restart the app.
+**Cursor** — same JSON shape in `~/.cursor/mcp.json`.
 
-### Cursor
+### Run as a remote server (HTTP)
 
-```json
-{
-  "mcpServers": {
-    "estnltk": {
-      "command": "uv",
-      "args": ["--directory", "/absolute/path/to/estonian-mcp", "run", "python", "server.py"]
-    }
-  }
-}
-```
-
-## Run as a remote server
-
-Use this when you want to plug the server into **claude.ai web**,
-**Claude Cowork (remote mode)**, or share one instance across a team.
-Two auth modes:
+The same `server.py` speaks `streamable-http` over the network.
+Two auth postures:
 
 - **Public mode** (`ESTNLTK_MCP_PUBLIC_MODE=1`) — no bearer token,
-  anyone can call `/mcp`, per-IP rate limit (default 30/min). Right
-  for a free public service (this is how the silly-geese-hosted
-  Smithery listing runs).
-- **Bearer mode** (default if `ESTNLTK_MCP_PUBLIC_MODE` unset) — every
-  request must carry `Authorization: Bearer <token>` (or Smithery's
-  `?config={"apiKey":"..."}`); per-token rate limit (default 60/min).
-  Server refuses to start without `ESTNLTK_MCP_AUTH_TOKEN` ≥16 chars.
+  per-IP rate limit (default 30/min). This is how the silly-geese
+  hosted instance runs.
+- **Bearer mode** (default) — every request must carry
+  `Authorization: Bearer <token>` (or Smithery's `?config=<base64>`);
+  per-token rate limit. Refuses to start without
+  `ESTNLTK_MCP_AUTH_TOKEN` ≥16 chars.
 
-### Option 1: Smithery (auto-host)
-
-[Smithery](https://smithery.ai) builds + hosts the Docker image from
-this repo's `smithery.yaml`. The shipped config has an empty
-`configSchema` so installs are one-click — works because the deployed
-instance runs in public mode. If you fork and want auth required,
-add an `apiKey` field back to `configSchema` and unset
-`ESTNLTK_MCP_PUBLIC_MODE` in your `fly.toml`.
-
-### Option 2: Fly.io (self-host on your domain)
-
-**Public deployment** (matches what silly-geese runs):
-
-```sh
-fly auth login
-fly apps create my-estonian-mcp        # pick a name
-fly deploy
-```
-
-`fly.toml` already sets `ESTNLTK_MCP_PUBLIC_MODE=1`, so no token
-needed. Endpoint: `https://my-estonian-mcp.fly.dev/mcp`.
-
-**Bearer-protected deployment**:
-
+**Fly.io public deployment** (matches silly-geese):
 ```sh
 fly auth login
 fly apps create my-estonian-mcp
-# Remove ESTNLTK_MCP_PUBLIC_MODE from fly.toml [env], then:
+fly deploy
+```
+`fly.toml` already sets `ESTNLTK_MCP_PUBLIC_MODE=1`. Endpoint:
+`https://my-estonian-mcp.fly.dev/mcp`.
+
+**Fly.io with bearer auth** — remove
+`ESTNLTK_MCP_PUBLIC_MODE` from `fly.toml`'s `[env]` block, then:
+```sh
 fly secrets set ESTNLTK_MCP_AUTH_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
 fly deploy
 ```
 
-Either way, `/health` is unauthenticated; everything else is
-protected. Auto-stops to zero when idle (cost ~$0–2/month); first
-request after idle has a ~5 s cold start.
-
-### Option 3: Any container host
-
-The included `Dockerfile` is platform-neutral.
-
+**Generic Docker** (any container host):
 ```sh
-# Public mode (no auth)
-docker build -t estonian-mcp .
-docker run --rm -p 8081:8081 -e ESTNLTK_MCP_PUBLIC_MODE=1 estonian-mcp
+# Public
+docker run -p 8081:8081 -e ESTNLTK_MCP_PUBLIC_MODE=1 \
+  ghcr.io/silly-geese/estonian-mcp     # or build from source
 
-# Bearer mode
-docker run --rm -p 8081:8081 \
+# Bearer
+docker run -p 8081:8081 \
   -e ESTNLTK_MCP_AUTH_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')" \
-  estonian-mcp
+  ghcr.io/silly-geese/estonian-mcp
 ```
 
-### Wire a remote server into claude.ai web
+**Smithery** auto-builds from `smithery.yaml` and hosts the image
+for you. Fork, [connect on Smithery](https://smithery.ai/docs/build),
+deploy. The shipped `configSchema` is empty (one-click install)
+because the deployment runs in public mode; flip it back if you fork
+to a bearer-mode setup.
 
-**Settings → Connectors → Add custom connector.** Paste:
-
-- **URL:** `https://your-host.example.com/mcp`
-- **Authentication:** none if public mode, `Bearer <token>` otherwise
-
-### Wire a remote server into Claude Cowork
-
-**Settings → Connectors → Add custom connector** in the Cowork app.
-Same URL + auth format as claude.ai web.
-
-## How to prompt it
-
-Once wired up, the tools appear in your client's tool list. Most prompts
-don't need to mention them by name — the model picks the right tool.
-Patterns that work well:
-
-```
-Proofread this Estonian email and use the estnltk spell_check tool
-to verify any words you're unsure about: <text>
-```
-
-```
-Lemmatize this Estonian paragraph using the estnltk MCP, then translate
-the lemmas to English so I can study vocabulary: <text>
-```
-
-```
-Analyze the morphology of this sentence with estnltk and explain the
-case markings to me: "Tallinnas elavad eestlased räägivad eesti keelt."
-```
-
-```
-Use estnltk's named_entities tool to extract people and places from
-this Estonian news article, then summarize.
-```
-
-The model calls the tool, gets authoritative output, and bases its
-response on that — no more hallucinated lemmas or invented case forms.
+---
 
 ## Security
 
 - **stdio mode**: pure local subprocess. No network egress, no shell
   exec, no fs writes, no telemetry.
-- **HTTP / bearer mode**: requires `ESTNLTK_MCP_AUTH_TOKEN` (≥16 chars),
-  refuses to start without it. Bearer auth on every request,
-  constant-time comparison, per-token rate limit (60/min default).
-- **HTTP / public mode**: no auth required (intentional for free public
-  service deployment). Per-IP rate limit (30/min default). All other
-  hardening preserved: no shell exec, no fs writes, no token logging,
+- **HTTP / public mode**: no auth required (intentional for the free
+  public service). Per-IP rate limit (30/min default). Same hardening
+  as bearer mode: no shell exec, no fs writes, no telemetry,
   size-bounded inputs.
-- **Common to all HTTP**: `/health` is the only unauth path. No request
-  or token logging. `proxy_headers=True` so client IPs come from the
-  platform's `X-Forwarded-For`.
+- **HTTP / bearer mode**: `ESTNLTK_MCP_AUTH_TOKEN` (≥16 chars)
+  required, server refuses to start without it. Bearer auth on every
+  request, constant-time comparison, per-token rate limit (60/min).
+- **Common to all HTTP**: `/health` is the only unauthenticated path.
+  No request or token logging. `proxy_headers=True` so client IPs
+  reflect the originator, not the platform's edge.
 - **Inputs**: 100 KB cap per text tool, 200 chars for `syllabify`.
   Oversized inputs return a structured error rather than hanging.
 - **Supply chain**: deps pinned + hashed in `uv.lock`. Dependabot
@@ -231,14 +293,18 @@ response on that — no more hallucinated lemmas or invented case forms.
 
 Full threat model and disclosure path: [SECURITY.md](SECURITY.md).
 
+---
+
 ## Notes
 
-- All EstNLTK models (morph, NER, spell-check) ship inside the wheel —
-  no runtime downloads.
+- All EstNLTK models (morph, NER, spell-check) ship inside the wheel
+  — no runtime downloads.
 - Heavy neural taggers (`estnltk_neural`, BERT-based NER) are
   intentionally not pulled in; this server stays lean and fast.
 - First call after server start incurs a one-time tag-layer load
   (~1–2 s). Subsequent calls are millisecond-scale.
+- The hosted Fly instance scales to zero when idle; the first request
+  after a quiet period takes ~5 s, then everything is fast again.
 
 ## License
 
