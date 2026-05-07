@@ -54,7 +54,11 @@ SERVER_VERSION = "0.1.0"
 
 log = logging.getLogger("estonian-mcp")
 
-mcp = FastMCP("estnltk")
+mcp = FastMCP("estonian-mcp")
+# FastMCP's constructor doesn't accept a server-version kwarg, so reach
+# into the underlying MCPServer to override the SDK-default version that
+# would otherwise show up in `initialize` responses (and Smithery's UI).
+mcp._mcp_server.version = SERVER_VERSION
 
 
 def _check_text(text: str, *, limit: int = MAX_TEXT_CHARS, name: str = "text") -> None:
