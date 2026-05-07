@@ -1,0 +1,88 @@
+"""Smoke tests for the EstNLTK MCP tools.
+
+Calls each tool's underlying function directly (no MCP transport) to
+prove the EstNLTK wiring is correct. Run via:
+
+    uv run python tests/test_smoke.py
+
+Exits non-zero on any failure. CI uses this as the gate.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import server  # noqa: E402
+
+failures: list[str] = []
+
+
+def check(label: str, cond: bool, detail: str = "") -> None:
+    if cond:
+        print(f"  PASS {label}")
+    else:
+        failures.append(f"{label}: {detail}")
+        print(f"  FAIL {label} {detail}")
+
+
+SAMPLE = "Mina sõinn täna hommikul Tallinnas putru."
+
+print("tokenize")
+tok = server.tokenize(SAMPLE)
+check("returns sentences+words", "sentences" in tok and "words" in tok)
+check("non-empty words", len(tok["words"]) >= 6)
+
+print("lemmatize")
+lem = server.lemmatize("Mina sõin täna hommikul Tallinnas putru.")
+lemmas = {row["lemma"] for row in lem}
+check("recognises 'sööma'", "sööma" in lemmas, str(lemmas))
+check("recognises 'Tallinn'", "Tallinn" in lemmas, str(lemmas))
+check("recognises 'puder'", "puder" in lemmas, str(lemmas))
+
+print("pos_tag")
+pos = server.pos_tag(SAMPLE)
+check("first tokens are non-empty POS", all(row["partofspeech"] for row in pos[:5]))
+
+print("analyze_morphology")
+morph = server.analyze_morphology("Tere maailm!")
+check("compound 'maailm' splits", any(row.get("root_tokens") == ["maa", "ilm"] for row in morph))
+
+print("spell_check")
+sp = server.spell_check(SAMPLE)
+bad = [row for row in sp if not row["spelling"]]
+check("flags 'sõinn' as misspelled", any(row["text"] == "sõinn" for row in bad))
+suggestions = next((row["suggestions"] for row in bad if row["text"] == "sõinn"), [])
+check("suggests 'sõin'", "sõin" in suggestions, str(suggestions))
+
+print("syllabify")
+syl = server.syllabify("hommikul")
+check("3 syllables", len(syl) == 3)
+check("syllable shape", set(syl[0].keys()) == {"syllable", "quantity", "accent"})
+
+print("named_entities")
+ner = server.named_entities("Eile käis Jaan Tamm Tallinnas Eesti Panga juures.")
+types = {ne["type"] for ne in ner}
+check("PER detected", "PER" in types)
+check("LOC detected", "LOC" in types)
+check("ORG detected", "ORG" in types)
+
+print("input limits")
+try:
+    server.tokenize("a" * (server.MAX_TEXT_CHARS + 1))
+    check("oversized input raises", False, "no exception")
+except ValueError:
+    check("oversized input raises", True)
+try:
+    server.syllabify("two words")
+    check("syllabify rejects whitespace", False, "no exception")
+except ValueError:
+    check("syllabify rejects whitespace", True)
+
+if failures:
+    print(f"\n{len(failures)} failure(s):")
+    for f in failures:
+        print(" -", f)
+    sys.exit(1)
+print("\nall smoke tests passed")

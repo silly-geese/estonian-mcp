@@ -1,0 +1,15 @@
+estonian-mcp
+Copyright 2026 estonian-mcp contributors
+
+This product includes software developed by the EstNLTK project
+(https://github.com/estnltk/estnltk), used under the terms of its
+Apache License 2.0 option (EstNLTK is dual-licensed GPL-2.0 OR Apache-2.0).
+
+The EstNLTK package bundles the Vabamorf morphological analyzer
+(https://github.com/Filosoft/vabamorf), which is dual-licensed under
+the LGPL-2.1 and a separate commercial license. Users distributing
+this server must comply with Vabamorf's license terms in addition to
+this project's Apache-2.0 license.
+
+POS tag inventory and morphological categories are produced by Vabamorf
+and follow the conventions documented in EstNLTK.
