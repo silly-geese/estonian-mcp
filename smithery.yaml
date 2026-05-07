@@ -2,7 +2,7 @@
 #
 # This server runs in PUBLIC mode (ESTNLTK_MCP_PUBLIC_MODE=1 set on Fly):
 # no bearer auth required, anyone can install with one click. Per-IP
-# rate limit (default 30/min) prevents abuse. The bearer-auth code path
+# rate limit (default 120/min) prevents abuse. The bearer-auth code path
 # remains in server.py for self-hosters who want it.
 runtime: "container"
 build:

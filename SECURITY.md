@@ -70,7 +70,7 @@ silly-geese-hosted public Smithery listing. Defences:
 
 - **No bearer auth required.** Anyone on the network can call `/mcp`.
   Intentional, so Smithery installs are one-click.
-- **Per-IP rate limit.** Default 30 requests/minute keyed on
+- **Per-IP rate limit.** Default 120 requests/minute keyed on
   `scope["client"][0]` (populated from `X-Forwarded-For` by uvicorn's
   `proxy_headers=True` so it reflects the originator IP, not Fly's
   edge address).

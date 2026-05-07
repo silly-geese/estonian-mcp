@@ -47,7 +47,7 @@ MAX_WORD_CHARS = 200
 # Private mode (bearer auth required): per-token, generous default.
 # Public mode (no auth, anyone can call): per-IP, tighter default.
 DEFAULT_RATE_LIMIT_PER_MINUTE = 60
-DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 30
+DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 120
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
 SERVER_VERSION = "0.1.0"

@@ -229,7 +229,7 @@ The same `server.py` speaks `streamable-http` over the network.
 Two auth postures:
 
 - **Public mode** (`ESTNLTK_MCP_PUBLIC_MODE=1`) — no bearer token,
-  per-IP rate limit (default 30/min). This is how the silly-geese
+  per-IP rate limit (default 120/min). This is how the silly-geese
   hosted instance runs.
 - **Bearer mode** (default) — every request must carry
   `Authorization: Bearer <token>` (or Smithery's `?config=<base64>`);
@@ -277,7 +277,7 @@ to a bearer-mode setup.
 - **stdio mode**: pure local subprocess. No network egress, no shell
   exec, no fs writes, no telemetry.
 - **HTTP / public mode**: no auth required (intentional for the free
-  public service). Per-IP rate limit (30/min default). Same hardening
+  public service). Per-IP rate limit (120/min default). Same hardening
   as bearer mode: no shell exec, no fs writes, no telemetry,
   size-bounded inputs.
 - **HTTP / bearer mode**: `ESTNLTK_MCP_AUTH_TOKEN` (≥16 chars)
