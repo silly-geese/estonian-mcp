@@ -333,6 +333,19 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
     `inner` defaults to FastMCP's streamable-http app; tests inject a stub.
     """
     if inner is None:
+        from mcp.server.transport_security import TransportSecuritySettings
+
+        # FastMCP auto-enables DNS-rebinding protection with a
+        # localhost-only host allowlist when constructed with the
+        # default host=127.0.0.1. That allowlist is baked in at
+        # construction time and rejects any request from a real
+        # domain (Fly, Smithery, custom). DNS-rebinding protection is
+        # designed for browser attacks against localhost-bound dev
+        # servers and doesn't apply behind HTTPS termination, so we
+        # disable it here for HTTP-mode deployments.
+        mcp.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+        )
         mcp.settings.stateless_http = True
         mcp.settings.json_response = True  # simpler for clients without SSE
         inner = mcp.streamable_http_app()
