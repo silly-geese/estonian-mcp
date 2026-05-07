@@ -3,6 +3,7 @@
 > Claude is quite bad at Estonian, so this MCP/wrapper is here to fix that. Give it a shot.
 
 [![CI](https://github.com/silly-geese/estonian-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/silly-geese/estonian-mcp/actions/workflows/ci.yml)
+[![smithery badge](https://smithery.ai/badge/@silly-geese/estonian-mcp)](https://smithery.ai/server/@silly-geese/estonian-mcp)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue.svg)](pyproject.toml)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7c3aed.svg)](https://modelcontextprotocol.io)
@@ -63,10 +64,10 @@ app to talk to it. Pick the app you use:
 5. Leave any "Authentication" / "API key" / "Bearer token" fields
    **empty**. The server is public — no token needed.
 6. Click **Save** / **Connect**.
-7. Open a new chat. Ask Claude something in Estonian, e.g.
-   *"Kontrolli selle teksti õigekirja: Mina sõinn täna putru."*
-   Claude should call the `spell_check` tool and tell you `sõinn`
-   is misspelled (suggestion: `sõin`).
+7. Done. Start a new chat and write in Estonian — proofread an
+   email, study a paragraph, draft a reply. Claude will reach for
+   the EstNLTK tools whenever it needs to verify spelling, lemmas,
+   or morphology rather than guessing.
 
 ### In claude.ai (web Claude)
 
