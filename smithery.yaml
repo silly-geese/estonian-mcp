@@ -1,0 +1,24 @@
+# Smithery deployment config — https://smithery.ai/docs/build
+runtime: "container"
+build:
+  dockerfile: "Dockerfile"
+  dockerBuildPath: "."
+startCommand:
+  type: "http"
+  port: 8081
+  configSchema:
+    type: object
+    required:
+      - apiKey
+    properties:
+      apiKey:
+        type: string
+        title: "Bearer token"
+        description: >-
+          The bearer token configured on the server (env var
+          ESTNLTK_MCP_AUTH_TOKEN). Smithery passes this on every request
+          as the configured `apiKey` field; the server also accepts a
+          standard `Authorization: Bearer <token>` header for direct
+          HTTPS clients.
+  exampleConfig:
+    apiKey: "replace-with-server-token-min-16-chars"

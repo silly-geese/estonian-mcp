@@ -1,26 +1,53 @@
-"""Local MCP server wrapping EstNLTK for Estonian NLP.
+"""Local + remote MCP server wrapping EstNLTK for Estonian NLP.
 
 Exposes morphological analysis, lemmatization, POS tagging, tokenization,
 spell-check + suggestions, syllabification, and NER as MCP tools so any
 LLM client can write better Estonian in real time.
 
-Security posture: pure local stdio. No network calls. No shell exec. No
-filesystem writes. Inputs are size-bounded; bad inputs raise ValueError
-which the MCP transport surfaces as a structured tool error rather than
-crashing the server.
+Two transports:
+
+* `stdio` (default) — subprocess wired by Claude Desktop / Claude Code /
+  Cursor / Cowork local mode / etc. Pure local, no network.
+* `streamable-http` — ASGI server on `$PORT` exposing `/mcp` for remote
+  clients (claude.ai web Custom Connectors, Smithery hosting, Cowork
+  remote, self-hosted Fly.io). Bearer-token auth required; per-token
+  rate limit.
+
+Security posture: no shell exec, no filesystem writes, no outbound
+network. Inputs size-bounded. HTTP mode refuses to start without a
+configured auth token. See SECURITY.md.
 """
 
 from __future__ import annotations
 
+import argparse
+import base64
+import collections
+import json
+import logging
+import os
+import secrets
+import sys
+import time
 from functools import lru_cache
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-# Input-size caps. Bound memory + analysis time so a hostile or runaway prompt
-# can't OOM the host or freeze the client.
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+# Input-size caps. Bound memory + analysis time so a hostile or runaway
+# prompt can't OOM the host or freeze the client.
 MAX_TEXT_CHARS = 100_000
 MAX_WORD_CHARS = 200
+
+# HTTP-mode rate limit: requests per minute per bearer token. Cheap defence
+# in depth if a token leaks.
+DEFAULT_RATE_LIMIT_PER_MINUTE = 60
+
+log = logging.getLogger("estonian-mcp")
 
 mcp = FastMCP("estnltk")
 
@@ -52,6 +79,10 @@ def _first(values: list[Any] | None) -> Any:
         return None
     return values[0]
 
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
 
 @mcp.tool()
 def tokenize(text: str) -> dict:
@@ -209,8 +240,185 @@ def named_entities(text: str) -> list[dict]:
     ]
 
 
-def main() -> None:
-    mcp.run()
+# ---------------------------------------------------------------------------
+# HTTP transport: bearer auth + rate limit
+# ---------------------------------------------------------------------------
+
+class _RateLimiter:
+    """Per-token leaky-bucket rate limiter (in-process, restart-resets).
+
+    Sufficient for one-process containers. Behind a load balancer with
+    multiple replicas, each replica enforces independently — combined
+    quota is N*replicas, which is acceptable for a defence-in-depth
+    measure.
+    """
+
+    def __init__(self, per_minute: int) -> None:
+        self.per_minute = per_minute
+        self.buckets: dict[str, collections.deque[float]] = {}
+
+    def allow(self, key: str) -> bool:
+        now = time.monotonic()
+        cutoff = now - 60.0
+        bucket = self.buckets.setdefault(key, collections.deque())
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= self.per_minute:
+            return False
+        bucket.append(now)
+        return True
+
+
+def _extract_token(scope: dict) -> str | None:
+    """Pull a token from either Authorization header or Smithery ?config= param."""
+    headers = {k.decode("latin1").lower(): v.decode("latin1") for k, v in scope.get("headers", [])}
+    auth = headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip() or None
+
+    # Smithery passes user config as base64(JSON) in ?config=
+    query_string = scope.get("query_string", b"").decode("latin1")
+    if not query_string:
+        return None
+    for part in query_string.split("&"):
+        if not part.startswith("config="):
+            continue
+        encoded = part[len("config="):]
+        # url-decode minimal: smithery sends raw base64 url-safe
+        try:
+            padded = encoded + "=" * (-len(encoded) % 4)
+            raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+            cfg = json.loads(raw.decode("utf-8"))
+        except (ValueError, json.JSONDecodeError):
+            return None
+        for field in ("apiKey", "bearerToken", "token"):
+            v = cfg.get(field)
+            if isinstance(v, str) and v:
+                return v
+        return None
+    return None
+
+
+async def _send_status(send, status: int, body: dict[str, Any]) -> None:
+    payload = json.dumps(body).encode("utf-8")
+    await send({
+        "type": "http.response.start",
+        "status": status,
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(payload)).encode("ascii")),
+        ],
+    })
+    await send({"type": "http.response.body", "body": payload})
+
+
+def _build_http_app(token: str, rate_limit: int, inner=None):
+    """Wrap an ASGI MCP app with bearer auth + rate limit + /health bypass.
+
+    `inner` defaults to FastMCP's streamable-http app; tests inject a stub.
+    """
+    if inner is None:
+        mcp.settings.stateless_http = True
+        mcp.settings.json_response = True  # simpler for clients without SSE
+        inner = mcp.streamable_http_app()
+    limiter = _RateLimiter(rate_limit)
+
+    async def app(scope, receive, send):
+        if scope["type"] == "lifespan":
+            return await inner(scope, receive, send)
+        if scope["type"] != "http":
+            await _send_status(send, 400, {"error": "unsupported scope"})
+            return
+
+        path = scope.get("path", "")
+
+        # Public health endpoint — no auth, no rate limit. Used by Fly probes
+        # and uptime monitoring.
+        if path == "/health":
+            await _send_status(send, 200, {"ok": True})
+            return
+
+        provided = _extract_token(scope)
+        if not provided or not secrets.compare_digest(provided, token):
+            await _send_status(send, 401, {"error": "unauthorized"})
+            return
+
+        # Rate limit on the (truncated) token so we don't log full secrets.
+        bucket_key = provided[:8]
+        if not limiter.allow(bucket_key):
+            await _send_status(send, 429, {"error": "rate_limited"})
+            return
+
+        await inner(scope, receive, send)
+
+    return app
+
+
+def _run_http(host: str, port: int, token: str, rate_limit: int) -> None:
+    import uvicorn  # local import; only needed in HTTP mode
+
+    log.info("starting estonian-mcp HTTP transport on %s:%d (path=/mcp)", host, port)
+    app = _build_http_app(token, rate_limit)
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+        access_log=False,  # keep tokens out of logs
+        proxy_headers=True,
+        forwarded_allow_ips="*",  # behind Fly/Smithery edge
+    )
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(prog="estonian-mcp", description=__doc__.splitlines()[0])
+    p.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default=os.environ.get("ESTNLTK_MCP_TRANSPORT", "stdio"),
+        help="stdio for local clients, http for remote (default: stdio)",
+    )
+    p.add_argument(
+        "--host",
+        default=os.environ.get("HOST", "0.0.0.0"),
+        help="HTTP bind host (default: 0.0.0.0)",
+    )
+    p.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("PORT", "8081")),
+        help="HTTP bind port (default: $PORT or 8081)",
+    )
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    args = _parse_args(argv)
+
+    if args.transport == "stdio":
+        mcp.run()
+        return
+
+    token = os.environ.get("ESTNLTK_MCP_AUTH_TOKEN", "").strip()
+    if not token:
+        sys.stderr.write(
+            "ERROR: ESTNLTK_MCP_AUTH_TOKEN env var is required in HTTP mode.\n"
+            "Generate one: python -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
+        )
+        sys.exit(2)
+    if len(token) < 16:
+        sys.stderr.write("ERROR: ESTNLTK_MCP_AUTH_TOKEN must be at least 16 characters.\n")
+        sys.exit(2)
+
+    rate_limit = int(os.environ.get(
+        "ESTNLTK_MCP_RATE_LIMIT_PER_MINUTE", str(DEFAULT_RATE_LIMIT_PER_MINUTE)
+    ))
+    _run_http(args.host, args.port, token, rate_limit)
 
 
 if __name__ == "__main__":

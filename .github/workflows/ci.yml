@@ -37,5 +37,57 @@ jobs:
       - name: Install dependencies (locked)
         run: uv sync --frozen --python ${{ matrix.python-version }}
 
-      - name: Run smoke tests
+      - name: Run tool smoke tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_smoke.py
+
+      - name: Run HTTP smoke tests
+        run: uv run --python ${{ matrix.python-version }} python tests/test_http.py
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: smoke
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: estonian-mcp:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Boot container, hit /health, hit /mcp with bearer
+        run: |
+          set -euo pipefail
+          TOKEN="ci-token-$(openssl rand -hex 12)"
+          docker run -d --name mcp -p 8081:8081 \
+            -e ESTNLTK_MCP_AUTH_TOKEN="$TOKEN" \
+            estonian-mcp:ci
+          # Container takes ~5-10s to be ready (uvicorn + lazy estnltk import).
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8081/health >/dev/null 2>&1; then
+              echo "ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          echo "--- /health"
+          curl -fsS http://127.0.0.1:8081/health
+          echo
+          echo "--- /mcp without token (expect 401)"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8081/mcp -H 'Content-Type: application/json' -d '{}')" = "401"
+          echo "--- /mcp with bearer (expect 200)"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8081/mcp \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}')" = "200"
+          docker logs mcp | tail -20
+          docker rm -f mcp

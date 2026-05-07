@@ -1,0 +1,47 @@
+# Fly.io deployment config.
+#
+# To deploy your own instance:
+#
+#   fly auth login
+#   fly apps create estonian-mcp                # pick your own app name
+#   fly secrets set ESTNLTK_MCP_AUTH_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
+#   fly deploy
+#
+# After first deploy, your MCP endpoint is:
+#
+#   https://<your-app>.fly.dev/mcp
+#
+# Auth header for clients:
+#
+#   Authorization: Bearer <the token you set above>
+
+app = "estonian-mcp"          # change to your app name
+primary_region = "ams"        # Amsterdam — close to .ee
+kill_signal = "SIGINT"
+kill_timeout = "5s"
+
+[build]
+
+[env]
+  ESTNLTK_MCP_TRANSPORT = "http"
+  HOST = "0.0.0.0"
+  PORT = "8081"
+
+[http_service]
+  internal_port = 8081
+  force_https = true
+  auto_stop_machines = "stop"      # scale to zero when idle
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpus = 1
