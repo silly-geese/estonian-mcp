@@ -3,7 +3,7 @@
 > Claude is quite bad at Estonian, so this MCP/wrapper is here to fix that. Give it a shot.
 
 [![CI](https://github.com/silly-geese/estonian-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/silly-geese/estonian-mcp/actions/workflows/ci.yml)
-[![smithery badge](https://smithery.ai/badge/@silly-geese/estonian-mcp)](https://smithery.ai/server/@silly-geese/estonian-mcp)
+[![smithery badge](https://smithery.ai/badge/silly-geese/estonian-mcp)](https://smithery.ai/servers/silly-geese/estonian-mcp)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue.svg)](pyproject.toml)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7c3aed.svg)](https://modelcontextprotocol.io)
@@ -21,8 +21,8 @@ in ground truth so it stops guessing.
 
 1. 👉 **Paste a URL into your Claude app** — the easiest path, no
    terminal, no install. See [Get started in 30 seconds](#-get-started-in-30-seconds-no-install) below.
-2. **One-click on [Smithery](https://smithery.ai)** — search for
-   `estonian-mcp` once the listing is live.
+2. **One-click on Smithery** — install from the
+   [estonian-mcp listing](https://smithery.ai/servers/silly-geese/estonian-mcp).
 3. **Self-host** — clone, run locally as stdio, or deploy your own
    container to Fly.io / any host. See [Self-host (advanced)](#self-host-advanced).
 
