@@ -111,6 +111,29 @@ async def run() -> None:
                 break
         check("rate limit eventually triggers 429", 429 in statuses, str(statuses))
 
+    print("public mode")
+    pub_app = server._build_http_app(token=None, rate_limit=4, public_mode=True, inner=stub_inner)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=pub_app), base_url="http://t") as c:
+        r = await c.get("/health")
+        check("public: /health → 200", r.status_code == 200)
+
+        r = await c.post("/mcp", json={})
+        check("public: /mcp no token → 200", r.status_code == 200)
+        check("public: inner reached", r.json() == {"ok": "stub"})
+
+        r = await c.post("/mcp", json={}, headers={"Authorization": "Bearer whatever"})
+        check("public: ignores bearer header → 200", r.status_code == 200)
+
+        # Per-IP rate limit: ASGITransport pins client to ("client", X), so all
+        # requests share one bucket and we can drive it to 429.
+        statuses = []
+        for _ in range(15):
+            r = await c.post("/mcp", json={})
+            statuses.append(r.status_code)
+            if r.status_code == 429:
+                break
+        check("public: per-IP rate limit triggers 429", 429 in statuses, str(statuses))
+
 
 asyncio.run(run())
 

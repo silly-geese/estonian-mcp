@@ -1,19 +1,20 @@
 # Fly.io deployment config.
 #
-# To deploy your own instance:
+# Defaults to PUBLIC mode (no auth, per-IP rate limit).
+#
+# To deploy your own public instance:
 #
 #   fly auth login
-#   fly apps create estonian-mcp                # pick your own app name
-#   fly secrets set ESTNLTK_MCP_AUTH_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
+#   fly apps create estonian-mcp           # pick your own app name
 #   fly deploy
 #
-# After first deploy, your MCP endpoint is:
+# To deploy in BEARER mode instead:
 #
-#   https://<your-app>.fly.dev/mcp
+#   1. Remove the ESTNLTK_MCP_PUBLIC_MODE line from [env] below.
+#   2. fly secrets set ESTNLTK_MCP_AUTH_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
+#   3. fly deploy
 #
-# Auth header for clients:
-#
-#   Authorization: Bearer <the token you set above>
+# After first deploy, your MCP endpoint is:  https://<your-app>.fly.dev/mcp
 
 app = "estonian-mcp"          # change to your app name
 primary_region = "ams"        # Amsterdam — close to .ee
@@ -24,6 +25,7 @@ kill_timeout = "5s"
 
 [env]
   ESTNLTK_MCP_TRANSPORT = "http"
+  ESTNLTK_MCP_PUBLIC_MODE = "1"   # no bearer auth; per-IP rate limit only
   HOST = "0.0.0.0"
   PORT = "8081"
 

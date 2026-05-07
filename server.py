@@ -43,9 +43,11 @@ from mcp.server.fastmcp import FastMCP
 MAX_TEXT_CHARS = 100_000
 MAX_WORD_CHARS = 200
 
-# HTTP-mode rate limit: requests per minute per bearer token. Cheap defence
-# in depth if a token leaks.
+# HTTP-mode rate limits.
+# Private mode (bearer auth required): per-token, generous default.
+# Public mode (no auth, anyone can call): per-IP, tighter default.
 DEFAULT_RATE_LIMIT_PER_MINUTE = 60
+DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 30
 
 log = logging.getLogger("estonian-mcp")
 
@@ -312,8 +314,18 @@ async def _send_status(send, status: int, body: dict[str, Any]) -> None:
     await send({"type": "http.response.body", "body": payload})
 
 
-def _build_http_app(token: str, rate_limit: int, inner=None):
-    """Wrap an ASGI MCP app with bearer auth + rate limit + /health bypass.
+def _client_ip(scope: dict) -> str:
+    """Best-effort originator IP. uvicorn(proxy_headers=True) populates
+    scope["client"] from X-Forwarded-For when running behind Fly/Smithery."""
+    client = scope.get("client") or ("unknown", 0)
+    return client[0] if isinstance(client, (tuple, list)) and client else "unknown"
+
+
+def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = False, inner=None):
+    """Wrap an ASGI MCP app with auth (or none) + rate limit + /health bypass.
+
+    public_mode=False (default): require bearer token, rate-limit per token.
+    public_mode=True:           no auth, rate-limit per client IP.
 
     `inner` defaults to FastMCP's streamable-http app; tests inject a stub.
     """
@@ -338,13 +350,16 @@ def _build_http_app(token: str, rate_limit: int, inner=None):
             await _send_status(send, 200, {"ok": True})
             return
 
-        provided = _extract_token(scope)
-        if not provided or not secrets.compare_digest(provided, token):
-            await _send_status(send, 401, {"error": "unauthorized"})
-            return
+        if public_mode:
+            bucket_key = f"ip:{_client_ip(scope)}"
+        else:
+            provided = _extract_token(scope)
+            if not provided or token is None or not secrets.compare_digest(provided, token):
+                await _send_status(send, 401, {"error": "unauthorized"})
+                return
+            # Bucket on truncated token so we don't log full secrets.
+            bucket_key = provided[:8]
 
-        # Rate limit on the (truncated) token so we don't log full secrets.
-        bucket_key = provided[:8]
         if not limiter.allow(bucket_key):
             await _send_status(send, 429, {"error": "rate_limited"})
             return
@@ -354,11 +369,14 @@ def _build_http_app(token: str, rate_limit: int, inner=None):
     return app
 
 
-def _run_http(host: str, port: int, token: str, rate_limit: int) -> None:
+def _run_http(host: str, port: int, token: str | None, rate_limit: int, public_mode: bool) -> None:
     import uvicorn  # local import; only needed in HTTP mode
 
-    log.info("starting estonian-mcp HTTP transport on %s:%d (path=/mcp)", host, port)
-    app = _build_http_app(token, rate_limit)
+    log.info(
+        "starting estonian-mcp HTTP transport on %s:%d (path=/mcp, mode=%s, rate_limit=%d/min)",
+        host, port, "public" if public_mode else "bearer", rate_limit,
+    )
+    app = _build_http_app(token, rate_limit, public_mode=public_mode)
     uvicorn.run(
         app,
         host=host,
@@ -393,6 +411,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=int(os.environ.get("PORT", "8081")),
         help="HTTP bind port (default: $PORT or 8081)",
     )
+    p.add_argument(
+        "--public",
+        action="store_true",
+        default=os.environ.get("ESTNLTK_MCP_PUBLIC_MODE", "").strip() in ("1", "true", "yes"),
+        help="Public mode: no bearer auth required, per-IP rate limit",
+    )
     return p.parse_args(argv)
 
 
@@ -404,21 +428,28 @@ def main(argv: list[str] | None = None) -> None:
         mcp.run()
         return
 
-    token = os.environ.get("ESTNLTK_MCP_AUTH_TOKEN", "").strip()
-    if not token:
-        sys.stderr.write(
-            "ERROR: ESTNLTK_MCP_AUTH_TOKEN env var is required in HTTP mode.\n"
-            "Generate one: python -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
-        )
-        sys.exit(2)
-    if len(token) < 16:
-        sys.stderr.write("ERROR: ESTNLTK_MCP_AUTH_TOKEN must be at least 16 characters.\n")
-        sys.exit(2)
+    token: str | None = None
+    if args.public:
+        default_rate = DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE
+        log.warning("public mode: bearer auth disabled, per-IP rate limit only")
+    else:
+        token = os.environ.get("ESTNLTK_MCP_AUTH_TOKEN", "").strip()
+        if not token:
+            sys.stderr.write(
+                "ERROR: ESTNLTK_MCP_AUTH_TOKEN env var is required in HTTP mode.\n"
+                "Either set the token or pass --public / ESTNLTK_MCP_PUBLIC_MODE=1.\n"
+                "Generate one: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
+            )
+            sys.exit(2)
+        if len(token) < 16:
+            sys.stderr.write("ERROR: ESTNLTK_MCP_AUTH_TOKEN must be at least 16 characters.\n")
+            sys.exit(2)
+        default_rate = DEFAULT_RATE_LIMIT_PER_MINUTE
 
     rate_limit = int(os.environ.get(
-        "ESTNLTK_MCP_RATE_LIMIT_PER_MINUTE", str(DEFAULT_RATE_LIMIT_PER_MINUTE)
+        "ESTNLTK_MCP_RATE_LIMIT_PER_MINUTE", str(default_rate)
     ))
-    _run_http(args.host, args.port, token, rate_limit)
+    _run_http(args.host, args.port, token, rate_limit, public_mode=args.public)
 
 
 if __name__ == "__main__":

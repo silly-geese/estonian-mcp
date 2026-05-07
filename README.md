@@ -106,40 +106,65 @@ Restart the app.
 
 Use this when you want to plug the server into **claude.ai web**,
 **Claude Cowork (remote mode)**, or share one instance across a team.
-The HTTP transport requires a bearer token; the server refuses to start
-without one.
+Two auth modes:
+
+- **Public mode** (`ESTNLTK_MCP_PUBLIC_MODE=1`) — no bearer token,
+  anyone can call `/mcp`, per-IP rate limit (default 30/min). Right
+  for a free public service (this is how the silly-geese-hosted
+  Smithery listing runs).
+- **Bearer mode** (default if `ESTNLTK_MCP_PUBLIC_MODE` unset) — every
+  request must carry `Authorization: Bearer <token>` (or Smithery's
+  `?config={"apiKey":"..."}`); per-token rate limit (default 60/min).
+  Server refuses to start without `ESTNLTK_MCP_AUTH_TOKEN` ≥16 chars.
 
 ### Option 1: Smithery (auto-host)
 
-[Smithery](https://smithery.ai) builds + hosts the Docker image for
-you. After [connecting your fork](https://smithery.ai/docs/build) and
-deploying, install in any client with a single command. The repo
-already contains `smithery.yaml` — Smithery picks it up automatically.
-
-Users will be prompted for an `apiKey` value at install time, which is
-the bearer token you set in your server's `ESTNLTK_MCP_AUTH_TOKEN`.
+[Smithery](https://smithery.ai) builds + hosts the Docker image from
+this repo's `smithery.yaml`. The shipped config has an empty
+`configSchema` so installs are one-click — works because the deployed
+instance runs in public mode. If you fork and want auth required,
+add an `apiKey` field back to `configSchema` and unset
+`ESTNLTK_MCP_PUBLIC_MODE` in your `fly.toml`.
 
 ### Option 2: Fly.io (self-host on your domain)
 
+**Public deployment** (matches what silly-geese runs):
+
 ```sh
 fly auth login
-fly apps create my-estonian-mcp                # pick a name
-fly secrets set ESTNLTK_MCP_AUTH_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
+fly apps create my-estonian-mcp        # pick a name
 fly deploy
 ```
 
-Your endpoint is `https://my-estonian-mcp.fly.dev/mcp`. Health probe
-is at `/health` and is unauthenticated. Auto-stops to zero when idle
-to keep cost ~free; first request after idle has a ~5 s cold start.
+`fly.toml` already sets `ESTNLTK_MCP_PUBLIC_MODE=1`, so no token
+needed. Endpoint: `https://my-estonian-mcp.fly.dev/mcp`.
+
+**Bearer-protected deployment**:
+
+```sh
+fly auth login
+fly apps create my-estonian-mcp
+# Remove ESTNLTK_MCP_PUBLIC_MODE from fly.toml [env], then:
+fly secrets set ESTNLTK_MCP_AUTH_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
+fly deploy
+```
+
+Either way, `/health` is unauthenticated; everything else is
+protected. Auto-stops to zero when idle (cost ~$0–2/month); first
+request after idle has a ~5 s cold start.
 
 ### Option 3: Any container host
 
-The included `Dockerfile` is platform-neutral. Build and run anywhere:
+The included `Dockerfile` is platform-neutral.
 
 ```sh
+# Public mode (no auth)
 docker build -t estonian-mcp .
+docker run --rm -p 8081:8081 -e ESTNLTK_MCP_PUBLIC_MODE=1 estonian-mcp
+
+# Bearer mode
 docker run --rm -p 8081:8081 \
-  -e ESTNLTK_MCP_AUTH_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')" \
+  -e ESTNLTK_MCP_AUTH_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')" \
   estonian-mcp
 ```
 
@@ -148,12 +173,12 @@ docker run --rm -p 8081:8081 \
 **Settings → Connectors → Add custom connector.** Paste:
 
 - **URL:** `https://your-host.example.com/mcp`
-- **Authentication:** `Bearer <your token>`
+- **Authentication:** none if public mode, `Bearer <token>` otherwise
 
 ### Wire a remote server into Claude Cowork
 
 **Settings → Connectors → Add custom connector** in the Cowork app.
-Same URL + bearer-token format as claude.ai web.
+Same URL + auth format as claude.ai web.
 
 ## How to prompt it
 
@@ -188,16 +213,21 @@ response on that — no more hallucinated lemmas or invented case forms.
 
 - **stdio mode**: pure local subprocess. No network egress, no shell
   exec, no fs writes, no telemetry.
-- **HTTP mode**: requires `ESTNLTK_MCP_AUTH_TOKEN` (≥16 chars), refuses
-  to start without it. Bearer-token auth on every request, constant-time
-  comparison, per-token rate limit (60/min default), public `/health`
-  but everything else 401s without a valid token. No request logging,
-  no token logging.
+- **HTTP / bearer mode**: requires `ESTNLTK_MCP_AUTH_TOKEN` (≥16 chars),
+  refuses to start without it. Bearer auth on every request,
+  constant-time comparison, per-token rate limit (60/min default).
+- **HTTP / public mode**: no auth required (intentional for free public
+  service deployment). Per-IP rate limit (30/min default). All other
+  hardening preserved: no shell exec, no fs writes, no token logging,
+  size-bounded inputs.
+- **Common to all HTTP**: `/health` is the only unauth path. No request
+  or token logging. `proxy_headers=True` so client IPs come from the
+  platform's `X-Forwarded-For`.
 - **Inputs**: 100 KB cap per text tool, 200 chars for `syllabify`.
   Oversized inputs return a structured error rather than hanging.
 - **Supply chain**: deps pinned + hashed in `uv.lock`. Dependabot
-  watches pip + GitHub Actions weekly. CI runs the smoke test on
-  Python 3.11 and 3.13 on every push.
+  watches pip + GitHub Actions weekly. CI runs smoke + HTTP tests +
+  Docker build/boot on Python 3.11 and 3.13 on every push.
 
 Full threat model and disclosure path: [SECURITY.md](SECURITY.md).
 

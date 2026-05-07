@@ -49,7 +49,9 @@ from an email, web page, etc.) and forwarded a crafted call. Defences:
 
 ### streamable-http mode
 
-Adds a network attack surface. Defences:
+Adds a network attack surface. Two auth postures:
+
+**Bearer mode (default).** Defences:
 
 - **Refuses to start without an auth token.** `ESTNLTK_MCP_AUTH_TOKEN`
   must be set and ≥16 characters; otherwise the process exits with
@@ -61,10 +63,24 @@ Adds a network attack surface. Defences:
 - **Constant-time comparison** (`secrets.compare_digest`) to prevent
   timing-based token disclosure.
 - **Per-token rate limit.** Default 60 requests/minute, configurable
-  via `ESTNLTK_MCP_RATE_LIMIT_PER_MINUTE`. In-process, restart-resets;
-  with multiple replicas behind a load balancer the effective quota
-  scales linearly with replica count, which we consider acceptable
-  defence-in-depth.
+  via `ESTNLTK_MCP_RATE_LIMIT_PER_MINUTE`.
+
+**Public mode (`ESTNLTK_MCP_PUBLIC_MODE=1`).** Used by the
+silly-geese-hosted public Smithery listing. Defences:
+
+- **No bearer auth required.** Anyone on the network can call `/mcp`.
+  Intentional, so Smithery installs are one-click.
+- **Per-IP rate limit.** Default 30 requests/minute keyed on
+  `scope["client"][0]` (populated from `X-Forwarded-For` by uvicorn's
+  `proxy_headers=True` so it reflects the originator IP, not Fly's
+  edge address).
+- **All other hardening preserved.** No shell exec, no fs writes, no
+  token logging (no tokens to log), no telemetry, size-bounded inputs.
+
+In either mode, in-process rate-limit state is restart-reset; with
+multiple replicas behind a load balancer the effective quota scales
+linearly with replica count, which we consider acceptable
+defence-in-depth.
 - **No request logging, no token logging.** Uvicorn access logs are
   disabled; only operational events (boot, shutdown) are logged.
 - **HTTPS termination at the edge.** The server itself listens on
