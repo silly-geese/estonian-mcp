@@ -14,12 +14,14 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.18 /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Install deps from the lockfile first to maximise layer cache hits.
+# Install deps from the lockfile only — the project itself isn't installed
+# because CMD invokes `python server.py` directly rather than the console
+# script entrypoint. This avoids Hatchling having to read README/LICENSE
+# during the build.
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
 COPY server.py ./
-RUN uv sync --frozen --no-dev
 
 # ---- runtime ----
 FROM python:3.13-slim AS runtime
