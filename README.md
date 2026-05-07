@@ -37,6 +37,8 @@ in ground truth so it stops guessing.
 | `spell_check(text)` | Spelling check + correction suggestions |
 | `syllabify(word)` | Syllables with quantity + accent |
 | `named_entities(text)` | People / places / organisations |
+| `synonyms(word)` | Synsets from Estonian WordNet — synonymous lemmas + definition + examples per word sense |
+| `classify_register(text)` | Coarse formal/colloquial register hint with matched markers (heuristic, phase 1) |
 
 POS tag set: `S`=noun, `V`=verb, `A`=adj, `P`=pron, `D`=adv, `K`=adp,
 `J`=conj, `N`=numeral, `I`=interj, `Y`=abbrev, `X`=foreign, `Z`=punct.

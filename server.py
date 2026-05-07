@@ -83,6 +83,49 @@ def _vabamorf():
     return Vabamorf.instance()
 
 
+@lru_cache(maxsize=1)
+def _wordnet():
+    from estnltk.wordnet import Wordnet
+    return Wordnet()
+
+
+# Phase-1 register lexicons. Hand-curated; coarse by design. Real register
+# lives in syntax (sentence structure, address forms, passive voice) which
+# this approach misses, so treat the score as a directional hint, not a
+# verdict. Phase 2 (corpus-trained classifier) is the upgrade path.
+
+_FORMAL_MARKERS: frozenset[str] = frozenset({
+    # Officialese / legal-administrative markers
+    "käesolev", "käesolevalt", "vastavalt", "tulenevalt", "lähtuvalt",
+    "alusel", "raames", "kohaselt", "antud", "nimetatud", "kohaldatav",
+    "sätestatud", "määratletud", "ettenähtud", "ette nähtud",
+    "järgnevalt", "eelnevalt", "punkt", "lõige", "alapunkt",
+    # Formal verbs (lemmas)
+    "sätestama", "kohaldama", "tagama", "teostama", "korraldama",
+    "viitama", "esitama", "rakendama", "võimaldama", "tähistama",
+    "määrama", "otsustama", "kinnitama", "kehtestama", "väljendama",
+    # Formal-register conjunctions / connectives
+    "seetõttu", "seega", "muuhulgas", "sealhulgas", "millest tulenevalt",
+    "millele viidates", "eeltoodust",
+})
+
+_COLLOQUIAL_MARKERS: frozenset[str] = frozenset({
+    # Discourse particles / interjections of casual speech
+    "noh", "nojah", "nojaa", "vot", "ahsoo", "mhm",
+    "kuule", "kuulge", "njah", "nuhh", "ahaa",
+    # Anglicisms / youth slang
+    "okei", "cool", "lahe", "vinge", "mõnus", "vahva", "äge",
+    "krõbe", "jurakas", "kihvt",
+    # NOTE: deliberately excluding pronouns ("see", "no"), neutral
+    # adverbs ("ikka", "vist", "natuke"), and the bare interjection
+    # "ah" because they appear in formal text too. Adding them caused
+    # false positives that swung neutral prose to "colloquial".
+})
+
+# Punctuation we'll skip when matching markers
+_PUNCT_RE = None  # populated lazily; see _classify_register
+
+
 def _first(values: list[Any] | None) -> Any:
     if not values:
         return None
@@ -247,6 +290,116 @@ def named_entities(text: str) -> list[dict]:
         }
         for ne in t.ner
     ]
+
+
+@mcp.tool()
+def synonyms(word: str, max_synsets: int = 5) -> dict:
+    """Look up Estonian synonyms via WordNet.
+
+    Returns synsets (groups of synonymous lemmas) for the input word, each
+    with its definition and example usages. Useful when you want Claude to
+    pick a different word with the same meaning, e.g. swap an over-used
+    verb in marketing copy. Word-sense ambiguity is preserved: a polysemous
+    word returns multiple synsets, one per meaning. Input capped at 200
+    characters.
+    """
+    _check_text(word, limit=MAX_WORD_CHARS, name="word")
+    if any(ch.isspace() for ch in word):
+        raise ValueError("synonyms expects a single word, no whitespace")
+    wn = _wordnet()
+    synsets = wn[word] or []
+    out: list[dict] = []
+    for s in synsets[:max_synsets]:
+        out.append({
+            "name": s.name,
+            "pos": s.pos,
+            "definition": s.definition,
+            "examples": list(s.examples) if s.examples else [],
+            "lemmas": list(s.lemmas),
+        })
+    return {"word": word, "synsets": out, "synset_count": len(synsets)}
+
+
+def _classify_register(text: str) -> dict:
+    """Pure helper, also used by tests."""
+    _check_text(text)
+    Text = _Text()
+    t = Text(text)
+    t.tag_layer(["morph_analysis"])
+
+    formal_hits: list[str] = []
+    colloquial_hits: list[str] = []
+    word_count = 0
+
+    for span in t.morph_analysis:
+        word = span.text
+        # Skip punctuation
+        if not any(ch.isalpha() for ch in word):
+            continue
+        word_count += 1
+        # Test against both surface form and best lemma; lower-cased.
+        lemma = (list(span.lemma)[0] if span.lemma else "").lower()
+        surface = word.lower()
+        for candidate in {surface, lemma}:
+            if not candidate:
+                continue
+            if candidate in _FORMAL_MARKERS:
+                formal_hits.append(candidate)
+                break
+            if candidate in _COLLOQUIAL_MARKERS:
+                colloquial_hits.append(candidate)
+                break
+
+    # Score: positive = formal, negative = colloquial, 0 = neutral.
+    # Normalise by word count so longer text doesn't dominate.
+    if word_count == 0:
+        score = 0.0
+    else:
+        raw = len(formal_hits) - len(colloquial_hits)
+        score = max(-1.0, min(1.0, raw * 4.0 / word_count))
+
+    if score >= 0.25:
+        tier = "formal"
+    elif score >= 0.05:
+        tier = "neutral-formal"
+    elif score <= -0.25:
+        tier = "colloquial"
+    elif score <= -0.05:
+        tier = "neutral-colloquial"
+    else:
+        tier = "neutral"
+
+    return {
+        "tier": tier,
+        "score": round(score, 3),
+        "formal_markers": sorted(set(formal_hits)),
+        "colloquial_markers": sorted(set(colloquial_hits)),
+        "word_count": word_count,
+        "note": (
+            "Heuristic phase-1 classifier — lexicon-based, lemma-aware. "
+            "Catches obvious officialese vs slang; most newsletter prose "
+            "scores 'neutral'. Treat as a directional hint, not a verdict."
+        ),
+    }
+
+
+@mcp.tool()
+def classify_register(text: str) -> dict:
+    """Heuristic register classifier for Estonian (formal vs colloquial).
+
+    Returns a tier label, a normalised score in [-1, 1] (positive = formal,
+    negative = colloquial), and the matched formal/colloquial markers found
+    in the text. Useful for sanity-checking that marketing copy hasn't
+    drifted into officialese, or that a contract draft hasn't slipped into
+    chat tone.
+
+    PHASE-1 LIMITATION: this is a coarse lexicon-based heuristic, not a
+    trained model. Real register also lives in sentence structure,
+    address forms, and passive voice — none of which this catches. Most
+    newsletter prose scores 'neutral'. Use the result as a directional
+    hint, not a verdict. Input capped at 100,000 characters.
+    """
+    return _classify_register(text)
 
 
 # ---------------------------------------------------------------------------

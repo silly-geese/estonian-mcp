@@ -68,6 +68,34 @@ check("PER detected", "PER" in types)
 check("LOC detected", "LOC" in types)
 check("ORG detected", "ORG" in types)
 
+print("synonyms")
+syn = server.synonyms("kasutama")
+check("returns synsets", syn["synset_count"] > 0)
+flat_lemmas = {lemma for s in syn["synsets"] for lemma in s["lemmas"]}
+check("recognises 'tarvitama' as a synonym", "tarvitama" in flat_lemmas, str(flat_lemmas))
+try:
+    server.synonyms("two words")
+    check("synonyms rejects whitespace", False, "no exception")
+except ValueError:
+    check("synonyms rejects whitespace", True)
+
+print("classify_register")
+formal = server.classify_register(
+    "Käesoleva lepingu alusel sätestatakse poolte kohustused vastavalt "
+    "määratletud tingimustele."
+)
+check("formal text → formal tier", formal["tier"] == "formal", formal["tier"])
+check("formal text → positive score", formal["score"] > 0)
+casual = server.classify_register(
+    "Noh, kuule, see oli vinge mõnus üritus, ja kohvik oli ka lahe!"
+)
+check("colloquial text → colloquial tier", casual["tier"] == "colloquial", casual["tier"])
+check("colloquial text → negative score", casual["score"] < 0)
+neutral = server.classify_register(
+    "Saadame teile uue uudiskirja, milles tutvustame meie sügisesi tooteid."
+)
+check("neutral text → neutral tier", neutral["tier"] == "neutral", neutral["tier"])
+
 print("input limits")
 try:
     server.tokenize("a" * (server.MAX_TEXT_CHARS + 1))

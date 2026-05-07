@@ -21,6 +21,12 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
+# Pre-download EstNLTK WordNet (~26 MB) into the venv's resources dir so
+# the `synonyms` tool doesn't trigger an interactive download prompt on
+# first call at runtime. The "y" pipes past the [Y/n] prompt baked into
+# Wordnet's lazy-init path.
+RUN echo "y" | /opt/venv/bin/python -c "from estnltk.wordnet import Wordnet; Wordnet()"
+
 COPY server.py ./
 
 # ---- runtime ----
