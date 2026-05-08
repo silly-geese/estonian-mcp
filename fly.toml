@@ -45,5 +45,5 @@ kill_timeout = "5s"
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "512mb"
+  memory = "1gb"      # bumped from 512mb to comfortably hold EstNLTK + fastText
   cpus = 1

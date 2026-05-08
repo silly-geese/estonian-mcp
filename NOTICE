@@ -13,3 +13,24 @@ this project's Apache-2.0 license.
 
 POS tag inventory and morphological categories are produced by Vabamorf
 and follow the conventions documented in EstNLTK.
+
+This product also bundles compressed Estonian fastText word embeddings
+(file: /opt/models/fasttext-et-mini in the Docker image) used by the
+find_related_words tool. The vectors are licensed under
+Creative Commons Attribution-ShareAlike 3.0 (CC-BY-SA-3.0):
+
+  Original vectors:
+    Grave, E., Bojanowski, P., Gupta, P., Joulin, A., Mikolov, T.
+    "Learning Word Vectors for 157 Languages." LREC 2018.
+    https://fasttext.cc/docs/en/crawl-vectors.html
+
+  Compression and quantization:
+    Bernhard Liebl, "fasttext-et-mini" (2021).
+    Zenodo: https://zenodo.org/records/4905385
+
+The bundled model file remains under CC-BY-SA-3.0 — anyone
+redistributing this Docker image or any derivative model file must
+preserve attribution and apply share-alike to derivative model files.
+The rest of estonian-mcp (source code, server.py, etc.) stays under
+Apache-2.0; the share-alike obligation applies only to the embeddings
+file itself.

@@ -89,6 +89,17 @@ def _wordnet():
     return Wordnet()
 
 
+@lru_cache(maxsize=1)
+def _embeddings():
+    """Lazy-load the compressed fastText model used by find_related_words."""
+    import compress_fasttext
+    path = os.environ.get(
+        "ESTNLTK_MCP_FASTTEXT_PATH",
+        "/opt/models/fasttext-et-mini",
+    )
+    return compress_fasttext.models.CompressedFastTextKeyedVectors.load(path)
+
+
 # Phase-1 register lexicons. Hand-curated; coarse by design. Real register
 # lives in syntax (sentence structure, address forms, passive voice) which
 # this approach misses, so treat the score as a directional hint, not a
@@ -290,6 +301,49 @@ def named_entities(text: str) -> list[dict]:
         }
         for ne in t.ner
     ]
+
+
+@mcp.tool()
+def find_related_words(word: str, n: int = 10) -> dict:
+    """Find Estonian words semantically similar to the input via fastText.
+
+    Returns the top-n nearest neighbours by cosine similarity over a
+    pre-trained Estonian fastText model (Common Crawl + Wikipedia, 2018).
+    Useful for breaking repetition, finding alternative phrasings, or
+    expanding vocabulary when WordNet's exact-meaning synonyms aren't
+    enough.
+
+    Distinct from `synonyms`: that one returns WordNet synsets — words
+    with the same meaning. This one returns words that *pattern* with
+    the input in real Estonian text, which can include near-synonyms,
+    related concepts, and (sometimes) antonyms.
+
+    Known quirks of the embedding model:
+    - **Inflections crowd the top results** for some words. fastText
+      sees `kasutama` and `kasutada` as related because the surface
+      forms share subword n-grams; you may want to lemmatize matches
+      yourself to dedupe.
+    - **Antonyms can appear** because antonyms occur in similar
+      contexts (`tark` may surface `loll`). Treat the list as
+      "semantically nearby" rather than "synonymous."
+    - **Polysemy is not disambiguated.** `lahe` (which means both
+      "bay" and the colloquial "cool") will return whichever sense
+      dominates the training data.
+
+    Single-word input only, capped at 200 characters.
+    """
+    _check_text(word, limit=MAX_WORD_CHARS, name="word")
+    if any(ch.isspace() for ch in word):
+        raise ValueError("find_related_words expects a single word, no whitespace")
+    n = max(1, min(int(n), 50))
+    kv = _embeddings()
+    matches = kv.most_similar(word, topn=n)
+    return {
+        "word": word,
+        "matches": [
+            {"word": w, "score": round(float(s), 4)} for w, s in matches
+        ],
+    }
 
 
 @mcp.tool()

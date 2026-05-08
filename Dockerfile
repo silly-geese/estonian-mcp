@@ -27,6 +27,15 @@ RUN uv sync --frozen --no-install-project --no-dev
 # Wordnet's lazy-init path.
 RUN echo "y" | /opt/venv/bin/python -c "from estnltk.wordnet import Wordnet; Wordnet()"
 
+# Estonian fastText word embeddings (compressed, ~22 MB). Used by the
+# find_related_words tool. Source: Liebl 2021 on Zenodo, vectors by
+# Grave et al. 2018 (CC-BY-SA-3.0). MD5 verified at build time.
+RUN mkdir -p /opt/models \
+ && curl -fsSL --retry 3 --retry-delay 2 \
+      -o /opt/models/fasttext-et-mini \
+      "https://zenodo.org/records/4905385/files/fasttext-et-mini?download=1" \
+ && echo "0904bf4e96e53a727069f783a3415869  /opt/models/fasttext-et-mini" | md5sum -c -
+
 COPY server.py ./
 
 # ---- runtime ----
@@ -45,6 +54,7 @@ RUN groupadd --system --gid 1000 app \
 
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /opt/models /opt/models
 COPY --from=builder /app/server.py /app/server.py
 
 USER app

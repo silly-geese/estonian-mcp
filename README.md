@@ -12,8 +12,8 @@ A small **Model Context Protocol** server that exposes
 [EstNLTK](https://github.com/estnltk/estnltk) — the Estonian NLP toolkit —
 as tools any LLM client can call in real time. Hand it Estonian text,
 get back correct lemmas, morphology, POS tags, spell-check + suggestions,
-syllables, named entities, WordNet synonyms, and a register hint
-(formal vs colloquial).
+syllables, named entities, WordNet synonyms, fastText-based related
+words, and a register hint (formal vs colloquial).
 
 If your AI agent has to draft, edit, or proofread Estonian, this wires
 in ground truth so it stops guessing on the mechanical layer
@@ -41,6 +41,7 @@ synonyms instead of inventing them.
 | `syllabify(word)` | Syllables with quantity + accent |
 | `named_entities(text)` | People / places / organisations |
 | `synonyms(word)` | Synsets from Estonian WordNet — synonymous lemmas + definition + examples per word sense |
+| `find_related_words(word)` | Top-N semantically nearby words via fastText embeddings (semantically related, not always synonymous) |
 | `classify_register(text)` | Coarse formal/colloquial register hint with matched markers (heuristic, phase 1) |
 
 POS tag set: `S`=noun, `V`=verb, `A`=adj, `P`=pron, `D`=adv, `K`=adp,
@@ -140,6 +141,14 @@ system prompt to get this right:
   `kasutama` four times. Look up synonyms via the MCP and suggest
   natural-sounding swaps."* You'll get real Estonian alternatives
   with definitions, not invented ones.
+- **Use `find_related_words` for richer rewrites.** *"What words
+  pattern with `kohv` in Estonian? Use that to suggest three
+  alternative phrasings for our café-launch ad copy."* This is
+  fastText-based, so it surfaces near-neighbours that aren't strict
+  synonyms — useful when you want adjacent concepts, not just
+  same-meaning swaps. (Quick rule of thumb: `synonyms` for "say the
+  same thing differently"; `find_related_words` for "what else
+  belongs in this conceptual space.")
 
 The MCP catches misspelled words and invented case forms; your
 prompt drives the style. Together they make Claude actually useful
@@ -330,6 +339,9 @@ Full threat model and disclosure path: [SECURITY.md](SECURITY.md).
 - WordNet is a separate ~26 MB resource (used by `synonyms`); the
   Docker image pre-downloads it at build time so the first call
   doesn't pause to fetch it.
+- The fastText model used by `find_related_words` is a separate ~22
+  MB compressed resource (CC-BY-SA-3.0; see [NOTICE](NOTICE) for
+  attribution); also pre-downloaded at image-build time.
 - Heavy neural taggers (`estnltk_neural`, BERT-based NER) are
   intentionally not pulled in; this server stays lean and fast.
 - First call after server start incurs a one-time tag-layer load
@@ -339,8 +351,10 @@ Full threat model and disclosure path: [SECURITY.md](SECURITY.md).
 
 ## License
 
-[Apache-2.0](LICENSE). EstNLTK itself is dual-licensed GPL-2.0 OR
-Apache-2.0; we use it under the Apache-2.0 option. The bundled Vabamorf
-analyzer is LGPL-2.1 with a separate commercial-use license — see
-[NOTICE](NOTICE) for attribution and license obligations when
-redistributing.
+[Apache-2.0](LICENSE) for the source. EstNLTK is dual-licensed
+GPL-2.0 OR Apache-2.0 (we use the Apache-2.0 option). The bundled
+Vabamorf analyzer is LGPL-2.1 with a separate commercial-use license.
+The bundled Estonian fastText model file (used by `find_related_words`)
+is CC-BY-SA-3.0 — its share-alike obligation applies to the model
+file only, not the rest of the project. See [NOTICE](NOTICE) for full
+attribution and obligations when redistributing.

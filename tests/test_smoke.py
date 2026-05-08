@@ -68,6 +68,28 @@ check("PER detected", "PER" in types)
 check("LOC detected", "LOC" in types)
 check("ORG detected", "ORG" in types)
 
+print("find_related_words")
+related = server.find_related_words("kohv", n=5)
+check("returns 5 matches", len(related["matches"]) == 5)
+check(
+    "match shape",
+    all("word" in m and "score" in m for m in related["matches"]),
+)
+check(
+    "scores in [-1, 1]",
+    all(-1.0 <= m["score"] <= 1.0 for m in related["matches"]),
+)
+check(
+    "kohv neighbours include a drink",
+    any(m["word"] in {"jook", "õlu", "piim", "alkohol", "tee"} for m in related["matches"]),
+    str([m["word"] for m in related["matches"]]),
+)
+try:
+    server.find_related_words("two words")
+    check("rejects whitespace", False, "no exception")
+except ValueError:
+    check("rejects whitespace", True)
+
 print("synonyms")
 syn = server.synonyms("kasutama")
 check("returns synsets", syn["synset_count"] > 0)

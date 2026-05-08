@@ -40,6 +40,14 @@ jobs:
       - name: Pre-download EstNLTK WordNet (used by synonyms tool)
         run: echo "y" | uv run --python ${{ matrix.python-version }} python -c "from estnltk.wordnet import Wordnet; Wordnet()"
 
+      - name: Pre-download fastText-et-mini (used by find_related_words tool)
+        run: |
+          mkdir -p $HOME/.cache/estnltk-mcp
+          curl -fsSL --retry 3 -o $HOME/.cache/estnltk-mcp/fasttext-et-mini \
+            "https://zenodo.org/records/4905385/files/fasttext-et-mini?download=1"
+          echo "0904bf4e96e53a727069f783a3415869  $HOME/.cache/estnltk-mcp/fasttext-et-mini" | md5sum -c -
+          echo "ESTNLTK_MCP_FASTTEXT_PATH=$HOME/.cache/estnltk-mcp/fasttext-et-mini" >> $GITHUB_ENV
+
       - name: Run tool smoke tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_smoke.py
 
