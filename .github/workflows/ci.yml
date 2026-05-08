@@ -37,6 +37,9 @@ jobs:
       - name: Install dependencies (locked)
         run: uv sync --frozen --python ${{ matrix.python-version }}
 
+      - name: Pre-download EstNLTK WordNet (used by synonyms tool)
+        run: echo "y" | uv run --python ${{ matrix.python-version }} python -c "from estnltk.wordnet import Wordnet; Wordnet()"
+
       - name: Run tool smoke tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_smoke.py
 
