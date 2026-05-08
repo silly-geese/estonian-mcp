@@ -12,6 +12,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # uv produces reproducible installs from uv.lock with pinned hashes.
 COPY --from=ghcr.io/astral-sh/uv:0.5.18 /uv /usr/local/bin/uv
 
+# curl is needed to fetch the fastText model from Zenodo at build time.
+# Builder stage only — discarded; runtime image doesn't get curl.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Install deps from the lockfile only — the project itself isn't installed
