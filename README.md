@@ -1,6 +1,6 @@
 # estonian-mcp
 
-> Claude is quite bad at Estonian, so this MCP/wrapper is here to fix that. Give it a shot.
+> Claude is quite bad at Estonian, so this MCP is here to fix that. Give it a shot.
 
 [![CI](https://github.com/silly-geese/estonian-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/silly-geese/estonian-mcp/actions/workflows/ci.yml)
 [![smithery badge](https://smithery.ai/badge/silly-geese/estonian-mcp)](https://smithery.ai/servers/silly-geese/estonian-mcp)
@@ -12,10 +12,13 @@ A small **Model Context Protocol** server that exposes
 [EstNLTK](https://github.com/estnltk/estnltk) — the Estonian NLP toolkit —
 as tools any LLM client can call in real time. Hand it Estonian text,
 get back correct lemmas, morphology, POS tags, spell-check + suggestions,
-syllables, and named entities.
+syllables, named entities, WordNet synonyms, and a register hint
+(formal vs colloquial).
 
 If your AI agent has to draft, edit, or proofread Estonian, this wires
-in ground truth so it stops guessing.
+in ground truth so it stops guessing on the mechanical layer
+(spelling, case forms, conjugation) and gives it real Estonian
+synonyms instead of inventing them.
 
 **Three ways to use it:**
 
@@ -127,6 +130,16 @@ system prompt to get this right:
 - **Direct the MCP explicitly when it matters.** *"Before sending any
   Estonian email, run spell_check on every word. Show me misspelled
   words with suggestions before drafting."*
+- **Use `classify_register` as a sanity check.** *"After drafting,
+  run classify_register on the final text and warn me if it lands
+  in 'formal' or 'colloquial' when I asked for the opposite."* The
+  classifier is coarse but reliably catches drift into officialese
+  (`käesolev`, `vastavalt`, `sätestama`) or slang (`mõnus`, `vinge`,
+  `kuule`).
+- **Use `synonyms` to break repetition.** *"This newsletter uses
+  `kasutama` four times. Look up synonyms via the MCP and suggest
+  natural-sounding swaps."* You'll get real Estonian alternatives
+  with definitions, not invented ones.
 
 The MCP catches misspelled words and invented case forms; your
 prompt drives the style. Together they make Claude actually useful
@@ -157,6 +170,18 @@ markings: "Tallinnas elavad eestlased räägivad eesti keelt."
 ```
 Extract the people and places from this Estonian news article,
 then summarise in one paragraph.
+```
+
+```
+This Estonian draft uses "kasutama" three times — look up synonyms
+via the MCP and rewrite each occurrence with a natural-sounding
+alternative that preserves the meaning.
+```
+
+```
+Classify the register of this draft. If it scores formal, soften
+it for a casual newsletter audience. If it scores colloquial,
+tighten it for a B2B email.
 ```
 
 The model calls the tool, gets authoritative output, and bases its
@@ -300,8 +325,11 @@ Full threat model and disclosure path: [SECURITY.md](SECURITY.md).
 
 ## Notes
 
-- All EstNLTK models (morph, NER, spell-check) ship inside the wheel
-  — no runtime downloads.
+- Most EstNLTK models (morph, NER, spell-check) ship inside the
+  wheel — no runtime downloads.
+- WordNet is a separate ~26 MB resource (used by `synonyms`); the
+  Docker image pre-downloads it at build time so the first call
+  doesn't pause to fetch it.
 - Heavy neural taggers (`estnltk_neural`, BERT-based NER) are
   intentionally not pulled in; this server stays lean and fast.
 - First call after server start incurs a one-time tag-layer load
