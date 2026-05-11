@@ -329,6 +329,7 @@ to a bearer-mode setup.
   Docker build/boot on Python 3.11 and 3.13 on every push.
 
 Full threat model and disclosure path: [SECURITY.md](SECURITY.md).
+Privacy policy (what we receive, what we don't store): [PRIVACY.md](PRIVACY.md).
 
 ---
 

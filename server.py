@@ -33,6 +33,7 @@ from functools import lru_cache
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -147,7 +148,12 @@ def _first(values: list[Any] | None) -> Any:
 # Tools
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    title="Tokenize Estonian text",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def tokenize(text: str) -> dict:
     """Split Estonian text into sentences and words.
 
@@ -163,7 +169,12 @@ def tokenize(text: str) -> dict:
     return {"sentences": sentences, "words": words}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    title="Estonian morphological analysis",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def analyze_morphology(text: str, all_analyses: bool = False) -> list[dict]:
     """Run full morphological analysis on Estonian text.
 
@@ -214,7 +225,12 @@ def analyze_morphology(text: str, all_analyses: bool = False) -> list[dict]:
     return out
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    title="Lemmatize Estonian words",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def lemmatize(text: str) -> list[dict]:
     """Return lemma (dictionary form) for each word in the text.
 
@@ -231,7 +247,12 @@ def lemmatize(text: str) -> list[dict]:
     ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    title="Part-of-speech tagging",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def pos_tag(text: str) -> list[dict]:
     """Return part-of-speech tag for each word.
 
@@ -249,7 +270,12 @@ def pos_tag(text: str) -> list[dict]:
     ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    title="Estonian spell check",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def spell_check(text: str, suggestions: bool = True) -> list[dict]:
     """Check Estonian spelling for each word and optionally return suggestions.
 
@@ -267,7 +293,12 @@ def spell_check(text: str, suggestions: bool = True) -> list[dict]:
     return _vabamorf().spellcheck(words, suggestions=suggestions)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    title="Syllabify Estonian word",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def syllabify(word: str) -> list[dict]:
     """Split a single Estonian word into syllables with quantity and accent.
 
@@ -281,7 +312,12 @@ def syllabify(word: str) -> list[dict]:
     return syllabify_word(word)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    title="Estonian named entity recognition",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def named_entities(text: str) -> list[dict]:
     """Extract named entities (PER/LOC/ORG) using EstNLTK's CRF model.
 
@@ -303,7 +339,12 @@ def named_entities(text: str) -> list[dict]:
     ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    title="Find semantically related Estonian words",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def find_related_words(word: str, n: int = 10) -> dict:
     """Find Estonian words semantically similar to the input via fastText.
 
@@ -346,7 +387,12 @@ def find_related_words(word: str, n: int = 10) -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    title="Estonian WordNet synonyms",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def synonyms(word: str, max_synsets: int = 5) -> dict:
     """Look up Estonian synonyms via WordNet.
 
@@ -437,7 +483,12 @@ def _classify_register(text: str) -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    title="Classify Estonian register (formal vs colloquial)",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
 def classify_register(text: str) -> dict:
     """Heuristic register classifier for Estonian (formal vs colloquial).
 
