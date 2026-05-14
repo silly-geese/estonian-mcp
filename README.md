@@ -330,6 +330,7 @@ to a bearer-mode setup.
 
 Full threat model and disclosure path: [SECURITY.md](SECURITY.md).
 Privacy policy (what we receive, what we don't store): [PRIVACY.md](PRIVACY.md).
+Terms of service for the hosted endpoint: [TERMS.md](TERMS.md).
 
 ---
 
