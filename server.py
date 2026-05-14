@@ -30,6 +30,7 @@ import secrets
 import sys
 import time
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -53,11 +54,13 @@ DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 120
 # Bumped manually in lockstep with pyproject.toml's [project].version.
 SERVER_VERSION = "0.1.0"
 
-# Favicon served at /favicon.svg and /favicon.ico so Google's favicon
-# service (used by the Anthropic Connectors Directory + tool-call UI in
-# Claude) can fetch our icon when probing estonian-mcp.fly.dev. The
-# same SVG lives at logo.svg in the repo for direct upload to the
-# Directory submission form. Estonian flag, rounded square.
+# Favicons served alongside the MCP endpoint so Google's favicon service
+# (used by the Anthropic Connectors Directory + tool-call UI in Claude)
+# can fetch our icon when probing estonian-mcp.fly.dev.
+#
+# Google's pipeline only accepts raster (PNG/ICO/JPG) — it rejects SVG,
+# so /favicon.ico must serve the PNG bytes to be picked up. We keep
+# /favicon.svg for modern user agents that prefer scalable.
 FAVICON_SVG = (
     b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" '
     b'role="img" aria-label="estonian-mcp"><title>estonian-mcp</title>'
@@ -69,6 +72,17 @@ FAVICON_SVG = (
     b'<rect x="0.5" y="0.5" width="63" height="63" rx="9.5" ry="9.5" '
     b'fill="none" stroke="#cfd4d9" stroke-width="1"/></svg>'
 )
+
+# Pre-rasterised PNG of logo.svg (64x64, transparent corners). Generated
+# at build/dev time via `rsvg-convert -w 64 -h 64 logo.svg -o logo.png`
+# and shipped in the Docker image. If it's missing for any reason, we
+# fall back to serving the SVG at the .ico path — which Google still
+# can't read, but at least browsers will get something.
+_LOGO_PNG_PATH = Path(__file__).resolve().parent / "logo.png"
+try:
+    FAVICON_PNG: bytes | None = _LOGO_PNG_PATH.read_bytes()
+except OSError:
+    FAVICON_PNG = None
 
 log = logging.getLogger("estonian-mcp")
 
@@ -645,9 +659,25 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
             await _send_status(send, 200, {"ok": True})
             return
 
-        # Favicon — public, no auth. Google's favicon service probes
-        # /favicon.ico; modern browsers also accept /favicon.svg.
-        if path in ("/favicon.svg", "/favicon.ico"):
+        # Favicons — public, no auth. Google's s2/favicons service rejects
+        # SVG, so /favicon.ico and /favicon.png must serve PNG bytes for
+        # the icon to appear in Anthropic's Directory + Claude tool-call
+        # UI. /favicon.svg keeps SVG for modern browsers.
+        if path in ("/favicon.ico", "/favicon.png") and FAVICON_PNG is not None:
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", b"image/png"),
+                    (b"content-length", str(len(FAVICON_PNG)).encode("ascii")),
+                    (b"cache-control", b"public, max-age=86400"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": FAVICON_PNG})
+            return
+        if path == "/favicon.svg" or (
+            path == "/favicon.ico" and FAVICON_PNG is None
+        ):
             await send({
                 "type": "http.response.start",
                 "status": 200,

@@ -42,7 +42,7 @@ RUN mkdir -p /opt/models \
       "https://zenodo.org/records/4905385/files/fasttext-et-mini?download=1" \
  && echo "0904bf4e96e53a727069f783a3415869  /opt/models/fasttext-et-mini" | md5sum -c -
 
-COPY server.py ./
+COPY server.py logo.png ./
 
 # ---- runtime ----
 FROM python:3.13-slim AS runtime
@@ -62,6 +62,7 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /opt/models /opt/models
 COPY --from=builder /app/server.py /app/server.py
+COPY --from=builder /app/logo.png /app/logo.png
 
 USER app
 EXPOSE 8081
