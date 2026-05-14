@@ -53,6 +53,23 @@ DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 120
 # Bumped manually in lockstep with pyproject.toml's [project].version.
 SERVER_VERSION = "0.1.0"
 
+# Favicon served at /favicon.svg and /favicon.ico so Google's favicon
+# service (used by the Anthropic Connectors Directory + tool-call UI in
+# Claude) can fetch our icon when probing estonian-mcp.fly.dev. The
+# same SVG lives at logo.svg in the repo for direct upload to the
+# Directory submission form. Estonian flag, rounded square.
+FAVICON_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" '
+    b'role="img" aria-label="estonian-mcp"><title>estonian-mcp</title>'
+    b'<defs><clipPath id="r"><rect width="64" height="64" rx="10" ry="10"/>'
+    b'</clipPath></defs><g clip-path="url(#r)">'
+    b'<rect width="64" height="21.33" fill="#0072CE"/>'
+    b'<rect y="21.33" width="64" height="21.34" fill="#000000"/>'
+    b'<rect y="42.67" width="64" height="21.33" fill="#FFFFFF"/></g>'
+    b'<rect x="0.5" y="0.5" width="63" height="63" rx="9.5" ry="9.5" '
+    b'fill="none" stroke="#cfd4d9" stroke-width="1"/></svg>'
+)
+
 log = logging.getLogger("estonian-mcp")
 
 mcp = FastMCP("estonian-mcp")
@@ -626,6 +643,21 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
         # and uptime monitoring.
         if path == "/health":
             await _send_status(send, 200, {"ok": True})
+            return
+
+        # Favicon — public, no auth. Google's favicon service probes
+        # /favicon.ico; modern browsers also accept /favicon.svg.
+        if path in ("/favicon.svg", "/favicon.ico"):
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", b"image/svg+xml"),
+                    (b"content-length", str(len(FAVICON_SVG)).encode("ascii")),
+                    (b"cache-control", b"public, max-age=86400"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": FAVICON_SVG})
             return
 
         # Smithery + similar registries probe this for auto-discovery.

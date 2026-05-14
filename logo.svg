@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="estonian-mcp">
+  <title>estonian-mcp</title>
+  <defs>
+    <clipPath id="r"><rect width="64" height="64" rx="10" ry="10"/></clipPath>
+  </defs>
+  <g clip-path="url(#r)">
+    <rect width="64" height="21.33" fill="#0072CE"/>
+    <rect y="21.33" width="64" height="21.34" fill="#000000"/>
+    <rect y="42.67" width="64" height="21.33" fill="#FFFFFF"/>
+  </g>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="9.5" ry="9.5" fill="none" stroke="#cfd4d9" stroke-width="1"/>
+</svg>
