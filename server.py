@@ -84,6 +84,38 @@ try:
 except OSError:
     FAVICON_PNG = None
 
+# Minimal HTML landing page at /. Two purposes:
+# 1. Google's favicon scraper fetches / first and parses <link rel="icon">
+#    tags before trying /favicon.ico. With no HTML response at /, the
+#    scraper gives up and serves a generic placeholder. The link tags
+#    here make our PNG the canonical icon.
+# 2. Humans who paste estonian-mcp.fly.dev into a browser see something
+#    useful instead of a 404.
+INDEX_HTML = b"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>estonian-mcp</title>
+<meta name="description" content="Estonian NLP MCP server \xe2\x80\x94 spell-check, morphology, synonyms, NER for AI agents writing Estonian.">
+<link rel="icon" type="image/png" sizes="64x64" href="/favicon.png">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="shortcut icon" href="/favicon.ico">
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 640px; margin: 4rem auto; padding: 0 1rem; line-height: 1.5; color: #1a1a1a; }
+  code { background: #f3f3f3; padding: 0.1em 0.4em; border-radius: 3px; }
+  a { color: #0072CE; }
+  img.flag { display: inline-block; width: 32px; height: 32px; vertical-align: middle; margin-right: 8px; }
+</style>
+</head>
+<body>
+<h1><img class="flag" src="/favicon.svg" alt="">estonian-mcp</h1>
+<p>Estonian NLP MCP server \xe2\x80\x94 spell-check, morphology, synonyms, NER, and more, exposed as MCP tools so AI agents stop hallucinating Estonian.</p>
+<p>MCP endpoint: <code>https://estonian-mcp.fly.dev/mcp</code></p>
+<p>Source: <a href="https://github.com/silly-geese/estonian-mcp">silly-geese/estonian-mcp</a> &nbsp;\xc2\xb7&nbsp; Listing: <a href="https://smithery.ai/servers/silly-geese/estonian-mcp">Smithery</a></p>
+</body>
+</html>
+"""
+
 log = logging.getLogger("estonian-mcp")
 
 mcp = FastMCP("estonian-mcp")
@@ -657,6 +689,22 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
         # and uptime monitoring.
         if path == "/health":
             await _send_status(send, 200, {"ok": True})
+            return
+
+        # Landing page at / — public, no auth. Tells humans what they hit
+        # and gives Google's favicon scraper the <link rel="icon"> tags
+        # it needs to find our PNG.
+        if path == "/":
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", b"text/html; charset=utf-8"),
+                    (b"content-length", str(len(INDEX_HTML)).encode("ascii")),
+                    (b"cache-control", b"public, max-age=300"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": INDEX_HTML})
             return
 
         # Favicons — public, no auth. Google's s2/favicons service rejects
