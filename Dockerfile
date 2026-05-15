@@ -35,11 +35,16 @@ RUN echo "y" | /opt/venv/bin/python -c "from estnltk.wordnet import Wordnet; Wor
 
 # Estonian fastText word embeddings (compressed, ~22 MB). Used by the
 # find_related_words tool. Source: Liebl 2021 on Zenodo, vectors by
-# Grave et al. 2018 (CC-BY-SA-3.0). MD5 verified at build time.
+# Grave et al. 2018 (CC-BY-SA-3.0). Try Zenodo first (canonical
+# upstream), fall back to our GH Release mirror on outage — Zenodo
+# 503s have caused build failures. MD5 verified after either path.
 RUN mkdir -p /opt/models \
- && curl -fsSL --retry 3 --retry-delay 2 \
-      -o /opt/models/fasttext-et-mini \
-      "https://zenodo.org/records/4905385/files/fasttext-et-mini?download=1" \
+ && ( curl -fsSL --retry 3 --retry-delay 2 \
+        -o /opt/models/fasttext-et-mini \
+        "https://zenodo.org/records/4905385/files/fasttext-et-mini?download=1" \
+   || curl -fsSL --retry 3 --retry-delay 2 \
+        -o /opt/models/fasttext-et-mini \
+        "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/fasttext-et-mini" ) \
  && echo "0904bf4e96e53a727069f783a3415869  /opt/models/fasttext-et-mini" | md5sum -c -
 
 COPY server.py logo.png ./

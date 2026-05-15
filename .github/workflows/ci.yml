@@ -43,10 +43,16 @@ jobs:
       - name: Pre-download fastText-et-mini (used by find_related_words tool)
         run: |
           mkdir -p $HOME/.cache/estnltk-mcp
-          curl -fsSL --retry 3 -o $HOME/.cache/estnltk-mcp/fasttext-et-mini \
-            "https://zenodo.org/records/4905385/files/fasttext-et-mini?download=1"
-          echo "0904bf4e96e53a727069f783a3415869  $HOME/.cache/estnltk-mcp/fasttext-et-mini" | md5sum -c -
-          echo "ESTNLTK_MCP_FASTTEXT_PATH=$HOME/.cache/estnltk-mcp/fasttext-et-mini" >> $GITHUB_ENV
+          F="$HOME/.cache/estnltk-mcp/fasttext-et-mini"
+          # Try Zenodo first (canonical upstream), fall back to our GH
+          # Release mirror on outage. Both URLs serve the same bytes;
+          # MD5 check below verifies whichever path returned content.
+          curl -fsSL --retry 3 --retry-delay 2 -o "$F" \
+            "https://zenodo.org/records/4905385/files/fasttext-et-mini?download=1" \
+          || curl -fsSL --retry 3 --retry-delay 2 -o "$F" \
+            "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/fasttext-et-mini"
+          echo "0904bf4e96e53a727069f783a3415869  $F" | md5sum -c -
+          echo "ESTNLTK_MCP_FASTTEXT_PATH=$F" >> $GITHUB_ENV
 
       - name: Run tool smoke tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_smoke.py
