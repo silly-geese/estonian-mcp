@@ -44,6 +44,10 @@ synonyms instead of inventing them.
 | `find_related_words(word)` | Top-N semantically nearby words via fastText embeddings (semantically related, not always synonymous) |
 | `classify_register(text)` | Coarse formal/colloquial register hint with matched markers (heuristic, phase 1) |
 | `check_capitalization(text)` | Algustäheortograafia check — flags wrongly capitalized weekdays, months, nationalities, and language/culture adjectives per EKI's Reeglid |
+| `check_compounds(text)` | Liitsõnaõigekiri — flags common AI-generated splits of words that should be a single compound (`kooli maja` → `koolimaja`) |
+| `check_punctuation(text)` | Kirjavahemärgid — flags missing commas before subordinating conjunctions (`et`, `sest`, `kuna`, `kuid`, `vaid`, `nagu`, …) |
+| `check_hyphenation(word)` | Poolitamine — safe line-break positions for an Estonian word, syllable-boundary based with no-orphan-edge rule |
+| `check_numbers(text)` | Numbrite õigekirjutus — flags decimal separators (`3.14` → `3,14`) and thousands separators (`1,000,000` → `1 000 000`) |
 
 POS tag set: `S`=noun, `V`=verb, `A`=adj, `P`=pron, `D`=adv, `K`=adp,
 `J`=conj, `N`=numeral, `I`=interj, `Y`=abbrev, `X`=foreign, `Z`=punct.

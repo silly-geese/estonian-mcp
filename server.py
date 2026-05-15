@@ -231,6 +231,64 @@ _CULTURE_NOUNS_ET: frozenset[str] = frozenset({
     "ortograafia", "õigekiri", "haridus", "kool",
 })
 
+# Bigram lexicon for check_compounds. Each (word_a, word_b) — keys are
+# lowercased surface tokens — represents a common AI mis-split that
+# should be a single compound word. The value is the joined form.
+# Hand-curated; phase-1 coverage.
+_COMPOUND_BIGRAMS: dict[tuple[str, str], str] = {
+    ("kooli", "maja"): "koolimaja",
+    ("laste", "aed"): "lasteaed",
+    ("laste", "aias"): "lasteaias",
+    ("raamatu", "kogu"): "raamatukogu",
+    ("ema", "keel"): "emakeel",
+    ("kõrg", "kool"): "kõrgkool",
+    ("üli", "kool"): "ülikool",
+    ("alg", "kool"): "algkool",
+    ("kesk", "kool"): "keskkool",
+    ("kesk", "öö"): "keskööd",
+    ("ette", "panek"): "ettepanek",
+    ("nädala", "vahetus"): "nädalavahetus",
+    ("nädala", "vahetusel"): "nädalavahetusel",
+    ("nädala", "vahetuseks"): "nädalavahetuseks",
+    ("aasta", "aeg"): "aastaaeg",
+    ("aasta", "ajal"): "aastaajal",
+    ("päeva", "kava"): "päevakava",
+    ("kohvi", "kann"): "kohvikann",
+    ("kohvi", "tass"): "kohvitass",
+    ("töö", "koht"): "töökoht",
+    ("töö", "kohale"): "töökohale",
+    ("raha", "kott"): "rahakott",
+    ("tervise", "kindlustus"): "tervisekindlustus",
+    ("öko", "süsteem"): "ökosüsteem",
+    ("info", "tehnoloogia"): "infotehnoloogia",
+    ("ühis", "kond"): "ühiskond",
+    ("ühis", "konnas"): "ühiskonnas",
+    ("välis", "minister"): "välisminister",
+    ("pea", "minister"): "peaminister",
+    ("siseministeerium",): "siseministeerium",  # placeholder, removed below
+    ("vee", "mass"): "veemass",
+    ("toidu", "aine"): "toiduaine",
+    ("toidu", "ained"): "toiduained",
+    ("õhu", "saaste"): "õhusaaste",
+    ("õhu", "rõhk"): "õhurõhk",
+    ("metsa", "raie"): "metsaraie",
+    ("õpilas", "esindus"): "õpilasesindus",
+    ("õpetajate", "tuba"): "õpetajatetuba",
+}
+# trim placeholder
+_COMPOUND_BIGRAMS = {k: v for k, v in _COMPOUND_BIGRAMS.items() if len(k) == 2}
+
+# Subordinating / coordinating conjunctions where Estonian comma rules
+# require a comma immediately before. `kui`, `mis`, `kes` deliberately
+# excluded — they're highly context-dependent (kui = "when/if" needs
+# comma but kui = "than/as" doesn't; mis can be relative or
+# interrogative; kes similar) and the false-positive cost outweighs
+# the catch rate for v1.
+_COMMA_BEFORE: frozenset[str] = frozenset({
+    "et", "kuna", "sest", "kuigi", "kuid", "vaid", "nagu",
+    "mistõttu", "millepärast", "kuhu",
+})
+
 
 _COLLOQUIAL_MARKERS: frozenset[str] = frozenset({
     # Discourse particles / interjections of casual speech
@@ -725,6 +783,330 @@ def _check_capitalization(text: str) -> dict:
             "FIELD VERBATIM rather than translating `rule` yourself."
         ),
     }
+
+
+def _check_compounds(text: str) -> dict:
+    """Phase-1 liitsõnaõigekiri checker — scans for common AI splits."""
+    _check_text(text)
+    Text = _Text()
+    t = Text(text)
+    t.tag_layer(["morph_analysis"])
+    spans = list(t.morph_analysis)
+
+    issues: list[dict] = []
+    for i in range(len(spans) - 1):
+        a, b = spans[i], spans[i + 1]
+        if not a.text.isalpha() or not b.text.isalpha():
+            continue
+        # Verify there's actual whitespace between them in the source.
+        if a.end >= b.start:
+            continue
+        key = (a.text.lower(), b.text.lower())
+        if key in _COMPOUND_BIGRAMS:
+            joined = _COMPOUND_BIGRAMS[key]
+            issues.append({
+                "split": f"{a.text} {b.text}",
+                "position": a.start,
+                "rule": "compound-split",
+                "rule_estonian": "liitsõna kokkukirjutamine",
+                "explanation": (
+                    f"In Estonian, '{joined}' is a single compound word "
+                    f"and should be written together (liitsõnaõigekiri, EKI "
+                    f"Reeglid). The split form is a common AI mistake."
+                ),
+                "suggestion": joined,
+            })
+
+    return {
+        "text": text,
+        "issues": issues,
+        "summary_estonian": (
+            f"Leiti {len(issues)} liitsõnaõigekirja viga." if issues
+            else "Liitsõnaõigekirja probleeme ei leitud."
+        ),
+        "note": (
+            "Heuristic liitsõnaõigekiri checker — flags ~30 common "
+            "AI-generated compound-splits per a hand-curated bigram "
+            "lexicon. NOT exhaustive: Estonian compounding is productive "
+            "and many valid compounds aren't in the lexicon. Treat hits "
+            "as high-confidence (likely real errors); absence of hits is "
+            "NOT proof of compound correctness. When surfacing rule "
+            "labels in an Estonian reply, USE THE rule_estonian FIELD "
+            "VERBATIM rather than translating `rule` yourself."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian compound writing (liitsõnaõigekiri)",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def check_compounds(text: str) -> dict:
+    """Heuristic Estonian compound-word check (liitsõnaõigekiri).
+
+    Scans for common AI-generated splits of words that should be written
+    as a single compound — `kooli maja` (wrong) → `koolimaja` (right),
+    `nädala vahetus` (wrong) → `nädalavahetus` (right), etc. Uses a
+    curated bigram lexicon (~30 entries covering the highest-frequency
+    AI mistakes); not a full liitsõnaõigekiri solver.
+
+    Phase-1 limitations: only catches the bigrams in the lexicon.
+    Estonian compounding is highly productive and most valid compounds
+    aren't enumerated here. Treat hits as high-confidence; absence of
+    hits does not prove the compound writing is correct everywhere.
+    Input capped at 100,000 characters.
+    """
+    return _check_compounds(text)
+
+
+def _check_punctuation(text: str) -> dict:
+    """Phase-1 punctuation checker — comma before subordinating words."""
+    _check_text(text)
+    Text = _Text()
+    t = Text(text)
+    t.tag_layer(["morph_analysis"])
+    spans = list(t.morph_analysis)
+
+    issues: list[dict] = []
+    skip_prev = {",", ";", ":", "(", "—", "–", "-", ".", "!", "?", "...", "…"}
+    for i, span in enumerate(spans):
+        word_lower = span.text.lower()
+        if word_lower not in _COMMA_BEFORE:
+            continue
+        if i == 0:
+            continue
+        prev = spans[i - 1]
+        if prev.text in skip_prev:
+            continue
+        issues.append({
+            "word": span.text,
+            "position": span.start,
+            "rule": "comma-before-clause-conjunction",
+            "rule_estonian": "koma alistava sidesõna ees",
+            "explanation": (
+                f"Estonian punctuation rules require a comma before "
+                f"clause-introducing conjunctions like '{span.text}'. "
+                f"Insert a comma between the previous word and "
+                f"'{span.text}'."
+            ),
+            "suggestion": f", {span.text}",
+        })
+
+    return {
+        "text": text,
+        "issues": issues,
+        "summary_estonian": (
+            f"Leiti {len(issues)} kirjavahemärgiviga." if issues
+            else "Kirjavahemärgivigu ei leitud."
+        ),
+        "note": (
+            "Heuristic comma checker — catches missing commas before "
+            "the most common subordinating conjunctions (et, kuna, sest, "
+            "kuigi, kuid, vaid, nagu, mistõttu, millepärast, kuhu). "
+            "Excludes `kui` / `mis` / `kes` because their function is "
+            "context-dependent (kui = than/when, mis = which/what) and "
+            "naive flagging produces too many false positives. NOT a full "
+            "Estonian punctuation rule engine — listing comma, "
+            "apposition comma, and dash/colon rules are out of scope for "
+            "phase 1. Quote `rule_estonian` verbatim in Estonian replies."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian punctuation (kirjavahemärgid)",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def check_punctuation(text: str) -> dict:
+    """Heuristic Estonian punctuation check — comma-before-clause rule.
+
+    Flags missing commas before subordinating conjunctions where Estonian
+    rules require one: et (that/in order to), kuna (because), sest
+    (because), kuigi (although), kuid (but), vaid (rather), nagu (like),
+    mistõttu (because of which), millepärast, kuhu.
+
+    Phase-1 limitations: only the comma-before-clause-conjunction rule
+    is covered. `kui`, `mis`, `kes` are deliberately excluded because
+    their function is contextual (kui = than/as in comparisons doesn't
+    need a comma). Listing commas, apposition commas, dash and colon
+    rules — all out of scope for phase 1. Input capped at 100,000
+    characters.
+    """
+    return _check_punctuation(text)
+
+
+def _check_hyphenation(word: str) -> dict:
+    """Return valid line-break positions for an Estonian word."""
+    _check_text(word, limit=MAX_WORD_CHARS, name="word")
+    if any(ch.isspace() for ch in word):
+        raise ValueError("check_hyphenation expects a single word, no whitespace")
+    from estnltk.vabamorf.morf import syllabify_word
+    syls = syllabify_word(word)
+    if len(syls) < 2:
+        return {
+            "word": word,
+            "breaks": [],
+            "preferred": word,
+            "syllable_count": len(syls),
+            "summary_estonian": "Sõna on liiga lühike poolitamiseks.",
+            "note": (
+                "Single-syllable Estonian words can't be hyphenated "
+                "across lines."
+            ),
+        }
+    breaks: list[int] = []
+    offset = 0
+    for i, s in enumerate(syls[:-1]):
+        offset += len(s["syllable"])
+        # poolitamine rule: don't leave <2 characters at either edge of
+        # the broken word.
+        if offset >= 2 and len(word) - offset >= 2:
+            breaks.append(offset)
+    # Build a human-readable form with break markers (interpunct U+00B7)
+    pieces: list[str] = []
+    last = 0
+    for b in breaks:
+        pieces.append(word[last:b])
+        last = b
+    pieces.append(word[last:])
+    preferred = "·".join(pieces) if breaks else word
+    return {
+        "word": word,
+        "breaks": breaks,
+        "preferred": preferred,
+        "syllable_count": len(syls),
+        "summary_estonian": (
+            f"Lubatud poolitamiskohad: {breaks}." if breaks
+            else "Sõnal puuduvad turvalised poolitamiskohad."
+        ),
+        "note": (
+            "Phase-1 hyphenation: syllable-boundary based, with the "
+            "edge-character rule that you can't leave fewer than 2 "
+            "characters before or after the break. Compound-boundary "
+            "preference is NOT applied yet (Estonian poolitamine "
+            "prefers compound seams over syllable seams); for compounds "
+            "like 'koolimaja' the morphologically-preferred break is at "
+            "the compound seam, which this tool may not surface. "
+            "Treat the offsets as a safe-break list, not an authoritative "
+            "preference."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian word hyphenation (poolitamine)",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def check_hyphenation(word: str) -> dict:
+    """Return safe line-break positions for an Estonian word (poolitamine).
+
+    Different from `syllabify` (which is phonological): this returns
+    character offsets where a typesetter can legally break the word
+    across lines. Applies the no-orphan-edge rule (don't leave fewer
+    than 2 characters before or after the break point).
+
+    Phase-1 limitation: pure syllable-boundary based. Compound-boundary
+    preference (Estonian poolitamine prefers `kooli-maja` over
+    `koo-limaja`) is not yet applied. Input must be a single word with
+    no whitespace, capped at 200 characters.
+    """
+    return _check_hyphenation(word)
+
+
+def _check_numbers(text: str) -> dict:
+    """Phase-1 number-writing checker — separator rules only."""
+    _check_text(text)
+    import re
+    issues: list[dict] = []
+
+    # Decimal with period instead of Estonian comma. Skip patterns that
+    # look like dates (\d+\.\d+\.\d+) or version numbers / IPs by
+    # excluding matches whose tail is followed by another period+digit.
+    for m in re.finditer(r"(?<![\d.])(\d+)\.(\d+)(?![\d.])", text):
+        # if followed by ".\d+" (date-like), skip
+        rest = text[m.end():]
+        if rest.startswith(".") and len(rest) > 1 and rest[1].isdigit():
+            continue
+        original = m.group(0)
+        corrected = f"{m.group(1)},{m.group(2)}"
+        issues.append({
+            "text": original,
+            "position": m.start(),
+            "rule": "decimal-separator",
+            "rule_estonian": "kümnenduskoma",
+            "explanation": (
+                "Estonian uses a comma as the decimal separator, not a "
+                "period (e.g. 3,14 not 3.14). EKI Reeglid: numbrite "
+                "õigekirjutus."
+            ),
+            "suggestion": corrected,
+        })
+
+    # Thousands separator using comma where Estonian uses a space.
+    # Matches \d{1,3}(,\d{3})+ where the grouping is exactly 3-digit
+    # blocks (real thousand separator), not a decimal like 3,14.
+    for m in re.finditer(r"(?<!\d)\d{1,3}(?:,\d{3})+(?!\d)", text):
+        original = m.group(0)
+        corrected = original.replace(",", " ")
+        issues.append({
+            "text": original,
+            "position": m.start(),
+            "rule": "thousands-separator",
+            "rule_estonian": "tuhandeliste eraldaja",
+            "explanation": (
+                "Estonian uses a non-breaking space (or thin space) as "
+                "the thousands separator, not a comma. EKI Reeglid: "
+                "numbrite õigekirjutus."
+            ),
+            "suggestion": corrected,
+        })
+
+    return {
+        "text": text,
+        "issues": issues,
+        "summary_estonian": (
+            f"Leiti {len(issues)} numbrite õigekirjutuse viga." if issues
+            else "Numbrite õigekirjutuse vigu ei leitud."
+        ),
+        "note": (
+            "Heuristic number-writing checker — covers decimal-separator "
+            "(period vs comma) and thousands-separator (comma vs space) "
+            "rules. Spell-out-vs-digits guidance (Estonian convention: "
+            "spell out 1-10 in running text) is out of scope for phase 1 "
+            "because it requires context awareness (years, dates, "
+            "measurements stay as digits). Quote `rule_estonian` "
+            "verbatim in Estonian replies."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian number writing (numbrite õigekirjutus)",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def check_numbers(text: str) -> dict:
+    """Heuristic Estonian number-writing check.
+
+    Flags two clear-cut cases per EKI Reeglid:
+    - Decimal separator: Estonian uses a comma (3,14), not a period (3.14).
+    - Thousands separator: Estonian uses a space (1 000 000), not a
+      comma (1,000,000).
+
+    Phase-1 limitations: spell-out-vs-digits guidance (the
+    one-to-ten-spelled-out convention) is intentionally not implemented
+    — it requires distinguishing measurements, dates, years, and lists
+    from running prose, and naive flagging produces too many false
+    positives. Input capped at 100,000 characters.
+    """
+    return _check_numbers(text)
 
 
 @mcp.tool(annotations=ToolAnnotations(

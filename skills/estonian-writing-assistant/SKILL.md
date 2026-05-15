@@ -32,6 +32,10 @@ The hard rule, applied throughout this skill:
 | `find_related_words` | Semantically nearby words via fastText. Broader than synonyms — includes near-synonyms, related concepts, and (sometimes) antonyms. |
 | `classify_register` | Heuristic formal/colloquial score with the markers that triggered it. Useful as a "did my edit drift in tone" check. |
 | `check_capitalization` | Algustäheortograafia (initial-letter orthography) check per EKI Reeglid. Flags weekdays, months, nationalities, and language/culture adjectives wrongly capitalized mid-sentence. Run on every Estonian text you produce. |
+| `check_compounds` | Liitsõnaõigekiri — flags common compound splits the model produces (`kooli maja` → `koolimaja`). Lexicon-based, phase 1. |
+| `check_punctuation` | Kirjavahemärgid — flags missing commas before subordinating conjunctions (et, sest, kuna, kuid, vaid, nagu, …). Phase-1 scope: the comma-before-clause rule only. |
+| `check_hyphenation` | Poolitamine — returns safe line-break positions for a word. Use only when typesetting/line-breaking matters; skip in normal writing. |
+| `check_numbers` | Numbrite õigekirjutus — flags decimal-separator (period vs comma) and thousands-separator (comma vs space) violations. |
 | `named_entities` | PER/LOC/ORG extraction. Useful for summarisation and content audit. |
 | `syllabify` | Per-syllable breakdown with quantity + accent. Useful for slogan rhythm, song lyrics, or pronunciation guides. |
 
@@ -61,10 +65,19 @@ text:
    you suspect a wrong case form, call `analyze_morphology` and
    report the actual `form` (e.g., `sg p` = singular partitive).
 
-**You should run `check_capitalization` on every Estonian text you
+**You should run `check_capitalization`, `check_compounds`,
+`check_punctuation`, and `check_numbers` on every Estonian text you
 yourself produce before sending it to the user**, not just on text
-the user gives you. This catches your own AI-generated capitalization
-mistakes before they ship.
+the user gives you. The four EKI-Reeglid checks together catch the
+most common AI mistakes (wrongly-capitalized weekdays / language
+adjectives, split compounds, missing commas before subordinating
+conjunctions, wrong decimal/thousands separators). Each one is
+cheap; run them all in parallel and surface every flag with the
+`rule_estonian` label.
+
+`check_hyphenation` is the odd one out — only call it if the user
+explicitly cares about line breaks (slogans, signs, fixed-width
+layouts). It's not part of the routine proofread pipeline.
 
 Do not "fix" anything silently. List what you'd change and why, then
 let the user accept or reject. Estonian grammar choices often depend

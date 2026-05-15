@@ -101,6 +101,50 @@ try:
 except ValueError:
     check("synonyms rejects whitespace", True)
 
+print("check_compounds")
+r = server.check_compounds("Käisin laste aias ja kooli maja juures.")
+suggestions = {i["suggestion"] for i in r["issues"]}
+check("flags 'laste aias' → lasteaias", "lasteaias" in suggestions, str(suggestions))
+check("flags 'kooli maja' → koolimaja", "koolimaja" in suggestions, str(suggestions))
+clean = server.check_compounds("See on tavaline lause kus pole vigu.")
+check("clean text → no flags", len(clean["issues"]) == 0, str(clean["issues"]))
+check("compounds every issue has rule_estonian",
+      all(i.get("rule_estonian") for i in r["issues"]),
+      str([i.get("rule_estonian") for i in r["issues"]]))
+
+print("check_punctuation")
+r = server.check_punctuation("Ma arvan et töötan kodus sest see on mugav.")
+words = {i["word"] for i in r["issues"]}
+check("flags missing comma before 'et'", "et" in words, str(words))
+check("flags missing comma before 'sest'", "sest" in words, str(words))
+clean = server.check_punctuation("Ma arvan, et kõik on hästi.")
+check("already-correct comma → no flag", len(clean["issues"]) == 0, str(clean["issues"]))
+check("punctuation every issue has rule_estonian",
+      all(i.get("rule_estonian") for i in r["issues"]))
+
+print("check_hyphenation")
+r = server.check_hyphenation("hommikul")
+check("3-syllable word → 2 break points", len(r["breaks"]) == 2, str(r["breaks"]))
+check("preferred uses interpunct", "·" in r["preferred"], r["preferred"])
+short = server.check_hyphenation("on")
+check("too-short word → no breaks", short["breaks"] == [], str(short))
+try:
+    server.check_hyphenation("two words")
+    check("rejects whitespace", False, "no exception")
+except ValueError:
+    check("rejects whitespace", True)
+
+print("check_numbers")
+r = server.check_numbers("See maksis 3.14 eurot ja linnas elab 1,500,000 inimest.")
+rules = {i["rule"] for i in r["issues"]}
+check("flags decimal '3.14'", "decimal-separator" in rules, str(rules))
+check("flags thousands '1,500,000'", "thousands-separator" in rules, str(rules))
+clean = server.check_numbers("Päeval 14.05.2026 maksis pi umbes 3,14.")
+check("date pattern + correct decimal → no flag",
+      len(clean["issues"]) == 0, str(clean["issues"]))
+check("numbers every issue has rule_estonian",
+      all(i.get("rule_estonian") for i in r["issues"]))
+
 print("check_capitalization")
 # The exact AI mistake that motivated the tool: 'Eesti keelt' mid-sentence.
 r = server.check_capitalization(
