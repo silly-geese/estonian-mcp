@@ -12,10 +12,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # uv produces reproducible installs from uv.lock with pinned hashes.
 COPY --from=ghcr.io/astral-sh/uv:0.5.18 /uv /usr/local/bin/uv
 
-# curl is needed to fetch the fastText model from Zenodo at build time.
-# Builder stage only — discarded; runtime image doesn't get curl.
+# curl + unzip are needed at build time:
+# - curl: fetch the fastText model from Zenodo (+ WordNet zip from our
+#   GH Release mirror if upstream EstNLTK S3 is down).
+# - unzip: extract the GH-mirrored WordNet zip into the resources dir.
+# Builder stage only — discarded; runtime image doesn't get either.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl \
+ && apt-get install -y --no-install-recommends curl unzip \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -30,8 +33,24 @@ RUN uv sync --frozen --no-install-project --no-dev
 # Pre-download EstNLTK WordNet (~26 MB) into the venv's resources dir so
 # the `synonyms` tool doesn't trigger an interactive download prompt on
 # first call at runtime. The "y" pipes past the [Y/n] prompt baked into
-# Wordnet's lazy-init path.
-RUN echo "y" | /opt/venv/bin/python -c "from estnltk.wordnet import Wordnet; Wordnet()"
+# Wordnet's lazy-init path. If EstNLTK's upstream S3 (hpc.ut.ee) is
+# down, fall back to fetching the same zip from our GH Release mirror
+# and unpacking manually — same play as the Zenodo fastText fallback.
+RUN set +e; \
+    echo "y" | /opt/venv/bin/python -c "from estnltk.wordnet import Wordnet; Wordnet()"; \
+    status=$?; \
+    set -e; \
+    if [ $status -ne 0 ]; then \
+      echo "Upstream WordNet download failed; using GH Release mirror." ; \
+      WN_DIR=$(/opt/venv/bin/python -c "from estnltk.resource_utils import get_resources_dir; print(get_resources_dir())") ; \
+      mkdir -p "$WN_DIR/wordnet" ; \
+      curl -fsSL --retry 3 --retry-delay 2 \
+        -o /tmp/wn.zip \
+        "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/wordnet_2026-02-13.zip" ; \
+      unzip -q -o /tmp/wn.zip -d "$WN_DIR/wordnet/" ; \
+      rm /tmp/wn.zip ; \
+      /opt/venv/bin/python -c "from estnltk.wordnet import Wordnet; assert Wordnet()['kasutama'], 'wordnet still not loadable after mirror fallback'" ; \
+    fi
 
 # Estonian fastText word embeddings (compressed, ~22 MB). Used by the
 # find_related_words tool. Source: Liebl 2021 on Zenodo, vectors by

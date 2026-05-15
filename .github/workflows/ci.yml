@@ -38,7 +38,25 @@ jobs:
         run: uv sync --frozen --python ${{ matrix.python-version }}
 
       - name: Pre-download EstNLTK WordNet (used by synonyms tool)
-        run: echo "y" | uv run --python ${{ matrix.python-version }} python -c "from estnltk.wordnet import Wordnet; Wordnet()"
+        # Try EstNLTK's built-in S3 download; fall back to our GH
+        # Release mirror if the upstream S3 (hpc.ut.ee) is down.
+        run: |
+          set +e
+          echo "y" | uv run --python ${{ matrix.python-version }} python -c "from estnltk.wordnet import Wordnet; Wordnet()"
+          status=$?
+          set -e
+          if [ $status -ne 0 ]; then
+            echo "Upstream WordNet download failed; falling back to GH Release mirror."
+            WN_DIR=$(uv run --python ${{ matrix.python-version }} python -c "from estnltk.resource_utils import get_resources_dir; print(get_resources_dir())")
+            mkdir -p "$WN_DIR/wordnet"
+            curl -fsSL --retry 3 --retry-delay 2 \
+              -o /tmp/wn.zip \
+              "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/wordnet_2026-02-13.zip"
+            unzip -q -o /tmp/wn.zip -d "$WN_DIR/wordnet/"
+            rm /tmp/wn.zip
+            # sanity: confirm Wordnet() now loads from the unpacked tree
+            uv run --python ${{ matrix.python-version }} python -c "from estnltk.wordnet import Wordnet; assert Wordnet()['kasutama'], 'wordnet still not loadable after mirror fallback'"
+          fi
 
       - name: Pre-download fastText-et-mini (used by find_related_words tool)
         run: |
