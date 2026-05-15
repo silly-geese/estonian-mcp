@@ -31,6 +31,7 @@ The hard rule, applied throughout this skill:
 | `synonyms` | Same-meaning alternatives via Estonian WordNet. Returns synsets grouped by sense. |
 | `find_related_words` | Semantically nearby words via fastText. Broader than synonyms — includes near-synonyms, related concepts, and (sometimes) antonyms. |
 | `classify_register` | Heuristic formal/colloquial score with the markers that triggered it. Useful as a "did my edit drift in tone" check. |
+| `check_capitalization` | Algustäheortograafia (initial-letter orthography) check per EKI Reeglid. Flags weekdays, months, nationalities, and language/culture adjectives wrongly capitalized mid-sentence. Run on every Estonian text you produce. |
 | `named_entities` | PER/LOC/ORG extraction. Useful for summarisation and content audit. |
 | `syllabify` | Per-syllable breakdown with quantity + accent. Useful for slogan rhythm, song lyrics, or pronunciation guides. |
 
@@ -46,13 +47,24 @@ text:
 2. For each misspelled word, pick the top suggestion from
    `suggestions` if there's a clear best match; otherwise present the
    top 2–3 to the user.
-3. Call `lemmatize` on the corrected (or original, if no spell
+3. Call `check_capitalization` on the same text. It catches
+   AI-generated capitalization mistakes that `spell_check` cannot:
+   `Eesti keel` (should be `eesti keel`), weekdays like
+   `Esmaspäeval` (should be `esmaspäeval`), nationalities like
+   `Eestlane` (should be `eestlane`), month names like `Jaanuaris`.
+   Surface every issue with the `rule_estonian` label verbatim.
+4. Call `lemmatize` on the corrected (or original, if no spell
    failures) text. Skim for any word whose lemma looks unexpected —
    that's often a sign the word is itself wrong (right spelling,
    wrong word).
-4. For any word where the user asks "is this the right case here" or
+5. For any word where the user asks "is this the right case here" or
    you suspect a wrong case form, call `analyze_morphology` and
    report the actual `form` (e.g., `sg p` = singular partitive).
+
+**You should run `check_capitalization` on every Estonian text you
+yourself produce before sending it to the user**, not just on text
+the user gives you. This catches your own AI-generated capitalization
+mistakes before they ship.
 
 Do not "fix" anything silently. List what you'd change and why, then
 let the user accept or reject. Estonian grammar choices often depend

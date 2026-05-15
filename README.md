@@ -43,6 +43,7 @@ synonyms instead of inventing them.
 | `synonyms(word)` | Synsets from Estonian WordNet — synonymous lemmas + definition + examples per word sense |
 | `find_related_words(word)` | Top-N semantically nearby words via fastText embeddings (semantically related, not always synonymous) |
 | `classify_register(text)` | Coarse formal/colloquial register hint with matched markers (heuristic, phase 1) |
+| `check_capitalization(text)` | Algustäheortograafia check — flags wrongly capitalized weekdays, months, nationalities, and language/culture adjectives per EKI's Reeglid |
 
 POS tag set: `S`=noun, `V`=verb, `A`=adj, `P`=pron, `D`=adv, `K`=adp,
 `J`=conj, `N`=numeral, `I`=interj, `Y`=abbrev, `X`=foreign, `Z`=punct.

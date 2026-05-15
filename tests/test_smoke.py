@@ -101,6 +101,42 @@ try:
 except ValueError:
     check("synonyms rejects whitespace", True)
 
+print("check_capitalization")
+# The exact AI mistake that motivated the tool: 'Eesti keelt' mid-sentence.
+r = server.check_capitalization(
+    "AI-agendid ei leiutaks Eesti keelt vastates vigaseid käändvorme."
+)
+check(
+    "flags 'Eesti' before 'keelt' as language-adjective",
+    any(i["word"] == "Eesti" and i["rule"] == "language-adjective"
+        for i in r["issues"]),
+    str([(i["word"], i["rule"]) for i in r["issues"]]),
+)
+# Weekday + month + nationality, each in its own sentence.
+r = server.check_capitalization(
+    "Kohtume Esmaspäeval. Loodi Jaanuaris uus seadus. Olen Eestlane."
+)
+rules_seen = {i["rule"] for i in r["issues"]}
+check("flags weekday Esmaspäeval", "weekday" in rules_seen, str(rules_seen))
+check("flags month Jaanuaris", "month" in rules_seen, str(rules_seen))
+check("flags nationality Eestlane", "nationality" in rules_seen, str(rules_seen))
+# Sentence-initial Eesti is fine (could be the country).
+clean = server.check_capitalization("Eesti keelt räägitakse Eestis.")
+check("sentence start not flagged", len(clean["issues"]) == 0, str(clean["issues"]))
+# All-caps acronym not flagged.
+acronym = server.check_capitalization("Töötan NATO juures.")
+check("acronym not flagged", len(acronym["issues"]) == 0, str(acronym["issues"]))
+# Country proper-noun usage (no following culture noun) not flagged.
+country = server.check_capitalization("Käisin Eestis suvel.")
+check("country proper noun not flagged", len(country["issues"]) == 0, str(country["issues"]))
+# rule_estonian must be populated for every issue (no English-only labels).
+r = server.check_capitalization("Olen Eestlane ja räägin Eesti keelt Esmaspäeval.")
+check(
+    "every issue has rule_estonian",
+    all(i.get("rule_estonian") for i in r["issues"]),
+    str([i.get("rule_estonian") for i in r["issues"]]),
+)
+
 print("classify_register")
 formal = server.classify_register(
     "Käesoleva lepingu alusel sätestatakse poolte kohustused vastavalt "

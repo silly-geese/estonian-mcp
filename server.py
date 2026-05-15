@@ -184,6 +184,54 @@ _FORMAL_MARKERS: frozenset[str] = frozenset({
     "millele viidates", "eeltoodust",
 })
 
+# Algustäheortograafia (initial-letter orthography) lexicons. Used by
+# check_capitalization. Names that should be lowercase mid-sentence in
+# Estonian: weekday names, month names, nationalities, and adjectives
+# derived from country/language names when used attributively before a
+# culture/language noun. Hand-curated; not exhaustive — covers the
+# most common AI-generated mistakes per EKI's Reeglid.
+
+_WEEKDAYS_ET: frozenset[str] = frozenset({
+    "esmaspäev", "teisipäev", "kolmapäev", "neljapäev",
+    "reede", "laupäev", "pühapäev",
+})
+
+_MONTHS_ET: frozenset[str] = frozenset({
+    "jaanuar", "veebruar", "märts", "aprill", "mai", "juuni",
+    "juuli", "august", "september", "oktoober", "november", "detsember",
+})
+
+_NATIONALITIES_ET: frozenset[str] = frozenset({
+    "eestlane", "venelane", "soomlane", "sakslane", "rootslane",
+    "lätlane", "leedulane", "prantslane", "inglane", "ameeriklane",
+    "hispaanlane", "itaallane", "poolakas", "ungarlane", "taanlane",
+    "kreeklane", "türklane", "araablane", "hiinlane", "jaapanlane",
+    "korealane", "vietnamlane", "tšehh", "slovakk", "horvaat",
+    "sloveen", "ukrainlane", "valgevenelane", "rumeenlane",
+    "bulgaarlane", "serblane", "albaanlane", "kasahh", "usbekk",
+})
+
+_LANG_ADJECTIVES_ET: frozenset[str] = frozenset({
+    "eesti", "vene", "inglise", "soome", "saksa", "rootsi", "läti",
+    "leedu", "prantsuse", "hispaania", "itaalia", "poola", "tšehhi",
+    "slovaki", "ungari", "taani", "norra", "kreeka", "türgi",
+    "araabia", "hiina", "jaapani", "korea", "vietnami", "pärsia",
+    "heebrea", "ladina", "bulgaaria", "ukraina", "valgevene",
+    "rumeenia", "serbia", "horvaadi", "sloveeni", "albaania",
+    "makedoonia", "armeenia", "gruusia", "kasahhi", "usbeki",
+    "mongoli",
+})
+
+_CULTURE_NOUNS_ET: frozenset[str] = frozenset({
+    # Words that, when preceded by a language/country adjective,
+    # signal it's the adjective rather than the country proper-noun.
+    "keel", "kõne", "sõna", "sõnastik", "sõnaraamat", "grammatika",
+    "kirjandus", "kultuur", "kunst", "köök", "muusika", "tants",
+    "rahvas", "tava", "ajalugu", "etnograafia", "folkloor",
+    "ortograafia", "õigekiri", "haridus", "kool",
+})
+
+
 _COLLOQUIAL_MARKERS: frozenset[str] = frozenset({
     # Discourse particles / interjections of casual speech
     "noh", "nojah", "nojaa", "vot", "ahsoo", "mhm",
@@ -562,6 +610,157 @@ def _classify_register(text: str) -> dict:
             "vs 'formaalne' (correct)."
         ),
     }
+
+
+def _check_capitalization(text: str) -> dict:
+    """Pure helper; the @mcp.tool wrapper below delegates here so tests
+    can call it without going through the MCP wire layer."""
+    _check_text(text)
+    Text = _Text()
+    t = Text(text)
+    t.tag_layer(["sentences", "morph_analysis"])
+
+    # EstNLTK sets sentence.start to the offset of the first word in
+    # that sentence (modulo leading whitespace, which is rare in
+    # well-formed text). Words starting at any of these offsets are
+    # legitimately capitalized; everything else is suspect.
+    sentence_starts = {s.start for s in t.sentences}
+    spans = list(t.morph_analysis)
+
+    issues: list[dict] = []
+    for i, span in enumerate(spans):
+        word = span.text
+        if not word or not word[0].isupper():
+            continue
+        if span.start in sentence_starts:
+            continue
+        # All-caps acronyms (NATO, EÜ, …) are deliberate; skip.
+        if word.isupper() and len(word) > 1:
+            continue
+
+        lemma_lower = (list(span.lemma)[0] if span.lemma else "").lower()
+        if not lemma_lower:
+            continue
+
+        rule: str | None = None
+        rule_estonian: str | None = None
+        explanation: str | None = None
+
+        if lemma_lower in _WEEKDAYS_ET:
+            rule = "weekday"
+            rule_estonian = "nädalapäev"
+            explanation = (
+                "Estonian weekday names are written with a lowercase initial "
+                "letter mid-sentence (Algustäheortograafia, EKI Reeglid). "
+                "Capitalize only at the start of a sentence."
+            )
+        elif lemma_lower in _MONTHS_ET:
+            rule = "month"
+            rule_estonian = "kuu nimi"
+            explanation = (
+                "Estonian month names are written with a lowercase initial "
+                "letter mid-sentence (Algustäheortograafia, EKI Reeglid). "
+                "Capitalize only at the start of a sentence."
+            )
+        elif lemma_lower in _NATIONALITIES_ET:
+            rule = "nationality"
+            rule_estonian = "rahvuse nimetus"
+            explanation = (
+                "Estonian nationality names (eestlane, soomlane, sakslane, …) "
+                "are lowercase mid-sentence (Algustäheortograafia, EKI Reeglid). "
+                "Capitalize only at the start of a sentence."
+            )
+        elif word.lower() in _LANG_ADJECTIVES_ET:
+            # Country/language adjectives are lowercase only when used
+            # attributively before a culture/language noun. The
+            # capitalized form is a valid proper-noun usage on its own
+            # (Eesti, Eestit, Eestis = the country).
+            #
+            # NOTE: match the surface form, not the lemma — Vabamorf
+            # lemmatizes some adjectives to a stem (e.g. Inglise -> Inglis),
+            # which would miss the rule. Language adjectives don't inflect
+            # in attributive position, so the surface form is reliable.
+            next_lemma = ""
+            if i + 1 < len(spans):
+                next_lemma = (
+                    list(spans[i + 1].lemma)[0] if spans[i + 1].lemma else ""
+                ).lower()
+            if next_lemma in _CULTURE_NOUNS_ET:
+                rule = "language-adjective"
+                rule_estonian = "keele- või kultuuriadjektiiv"
+                explanation = (
+                    "Language and culture adjectives derived from country "
+                    "names are lowercase when attributive (eesti keel, vene "
+                    "kultuur, soome saun). Capitalize only as a country "
+                    "proper noun on its own (Eesti, Eesti Vabariik, Eestis)."
+                )
+
+        if rule is None:
+            continue
+
+        issues.append({
+            "word": word,
+            "position": span.start,
+            "rule": rule,
+            "rule_estonian": rule_estonian,
+            "explanation": explanation,
+            "suggestion": word[0].lower() + word[1:],
+        })
+
+    return {
+        "text": text,
+        "issues": issues,
+        "summary_estonian": (
+            f"Leiti {len(issues)} algustäheortograafia viga." if issues
+            else "Algustäheortograafia probleeme ei leitud."
+        ),
+        "note": (
+            "Heuristic Algustäheortograafia checker — covers the four most "
+            "common AI-generated mistakes (weekdays, months, nationalities, "
+            "and language/culture adjectives before related nouns). Not a "
+            "full EÕS substitute; edge cases like proper-noun brand names "
+            "containing a culture word (e.g. a restaurant called 'Eesti Köök') "
+            "may produce a false positive that the user can ignore. When "
+            "surfacing rule labels in an Estonian reply, USE THE rule_estonian "
+            "FIELD VERBATIM rather than translating `rule` yourself."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian capitalization (Algustäheortograafia)",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def check_capitalization(text: str) -> dict:
+    """Heuristic Estonian capitalization checker (Algustäheortograafia).
+
+    Scans Estonian text for the most common AI-generated capitalization
+    errors per EKI's Reeglid:
+
+    - Weekday names capitalized mid-sentence (Esmaspäeval → esmaspäeval)
+    - Month names capitalized mid-sentence (Jaanuaris → jaanuaris)
+    - Nationality names capitalized mid-sentence (Eestlane → eestlane)
+    - Country/language adjectives capitalized before a culture or
+      language noun (Eesti keel → eesti keel; Eesti köök → eesti köök).
+      The bare capitalized form on its own (Eesti, Eestis) is left
+      alone because it's a valid country proper-noun usage.
+
+    Sentence-initial capitalization is always allowed. All-caps
+    acronyms are ignored. Returns each issue with rule code, an
+    Estonian rule label (`rule_estonian` — quote this verbatim in
+    Estonian replies, don't translate the English `rule`), a
+    user-facing explanation, and a suggested correction. Input capped
+    at 100,000 characters.
+
+    PHASE-1 LIMITATION: this is a lexicon-based heuristic, not a full
+    EÕS implementation. Compound-word capitalization, punctuation
+    rules, and hyphenation are NOT covered by this tool (separate
+    check_compounds / check_punctuation / check_hyphenation tools may
+    follow).
+    """
+    return _check_capitalization(text)
 
 
 @mcp.tool(annotations=ToolAnnotations(
