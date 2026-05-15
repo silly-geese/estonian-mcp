@@ -278,6 +278,113 @@ _COMPOUND_BIGRAMS: dict[tuple[str, str], str] = {
 # trim placeholder
 _COMPOUND_BIGRAMS = {k: v for k, v in _COMPOUND_BIGRAMS.items() if len(k) == 2}
 
+# Marked-usage lexicon for analyze_morphology's usage_note annotation.
+# Each entry is a lemma that is technically correct but stylistically
+# marked (archaic, foreign, or otherwise non-neutral). The flag tells
+# Claude this lemma is unusual without it having to guess. Curated and
+# small on purpose — phase-1 coverage.
+
+_MARKED_LEMMAS_ET: dict[str, tuple[str, str]] = {
+    # archaic-formal alternatives to neutral words
+    "tarvitama":   ("archaic",  "vananenud (neutraalne: kasutama)"),
+    "nõnda":       ("archaic",  "vananenud (neutraalne: nii)"),
+    "ent":         ("archaic",  "vananenud (neutraalne: aga)"),
+    "kuid":        ("archaic",  "kirjakeelne (kõnekeelne: aga)"),
+    "vaid":        ("archaic",  "kirjakeelne (kõnekeelne: ainult)"),
+    "ülla":        ("archaic",  "vananenud (neutraalne: õilis)"),
+    "siiski":      ("archaic",  "kirjakeelne"),
+    "ehkki":       ("archaic",  "kirjakeelne (kõnekeelne: kuigi)"),
+    "ometi":       ("archaic",  "kirjakeelne"),
+    "senini":      ("archaic",  "kirjakeelne (neutraalne: seni)"),
+    "kohaselt":    ("archaic",  "ametlik (neutraalne: vastavalt)"),
+    # anglicisms / foreign words with Estonian alternatives
+    "okei":        ("foreign",  "anglitsism (eesti: olgu, hästi)"),
+    "super":       ("foreign",  "anglitsism (eesti: vahva, äge)"),
+    "cool":        ("foreign",  "anglitsism (eesti: lahe, äge)"),
+    "meeting":     ("foreign",  "anglitsism (eesti: kohtumine, koosolek)"),
+    "email":       ("foreign",  "anglitsism (eesti: e-kiri)"),
+    "weekend":     ("foreign",  "anglitsism (eesti: nädalavahetus)"),
+    "deadline":    ("foreign",  "anglitsism (eesti: tähtaeg)"),
+    "feedback":    ("foreign",  "anglitsism (eesti: tagasiside)"),
+    "team":        ("foreign",  "anglitsism (eesti: meeskond)"),
+    "boss":        ("foreign",  "anglitsism (eesti: ülemus)"),
+}
+
+# POS-tag-based usage notes. Maps Vabamorf POS codes that signal
+# non-routine usage. Skipped: S/V/A/P/D/K/J/N/Z (standard parts of
+# speech, no special flag).
+_POS_USAGE_NOTES_ET: dict[str, tuple[str, str]] = {
+    "X": ("foreign", "võõrsõna või tundmatu sõna"),
+    "Y": ("abbreviation", "lühend"),
+    "I": ("interjection", "interjektsioon"),
+    "H": ("proper-noun", "pärisnimi"),
+}
+
+# Paradigm form lists for the new `paradigm` tool. Forms passed to
+# Vabamorf.synthesize(lemma, form, pos). Phase-1 scope: the most
+# commonly-needed forms per word class, not every possible form.
+
+_NOMINAL_FORMS: tuple[str, ...] = (
+    "sg n", "sg g", "sg p", "sg ill", "sg in", "sg el", "sg all",
+    "sg ad", "sg abl", "sg tr", "sg ter", "sg es", "sg ab", "sg kom",
+    "pl n", "pl g", "pl p", "pl ill", "pl in", "pl el", "pl all",
+    "pl ad", "pl abl", "pl tr", "pl ter", "pl es", "pl ab", "pl kom",
+)
+
+# Human-readable Estonian labels for the case forms.
+_CASE_LABELS_ET: dict[str, str] = {
+    "sg n": "ainsuse nimetav", "sg g": "ainsuse omastav",
+    "sg p": "ainsuse osastav", "sg ill": "ainsuse sisseütlev",
+    "sg in": "ainsuse seesütlev", "sg el": "ainsuse seestütlev",
+    "sg all": "ainsuse alaleütlev", "sg ad": "ainsuse alalütlev",
+    "sg abl": "ainsuse alaltütlev", "sg tr": "ainsuse saav",
+    "sg ter": "ainsuse rajav", "sg es": "ainsuse olev",
+    "sg ab": "ainsuse ilmaütlev", "sg kom": "ainsuse kaasaütlev",
+    "pl n": "mitmuse nimetav", "pl g": "mitmuse omastav",
+    "pl p": "mitmuse osastav", "pl ill": "mitmuse sisseütlev",
+    "pl in": "mitmuse seesütlev", "pl el": "mitmuse seestütlev",
+    "pl all": "mitmuse alaleütlev", "pl ad": "mitmuse alalütlev",
+    "pl abl": "mitmuse alaltütlev", "pl tr": "mitmuse saav",
+    "pl ter": "mitmuse rajav", "pl es": "mitmuse olev",
+    "pl ab": "mitmuse ilmaütlev", "pl kom": "mitmuse kaasaütlev",
+}
+
+_VERB_FORMS: tuple[str, ...] = (
+    # infinitives + supine
+    "ma", "da", "vat", "mas", "mast", "mata",
+    # present indicative (1sg, 2sg, 3sg, 1pl, 2pl, 3pl)
+    "n", "d", "b", "me", "te", "vad",
+    # past indicative
+    "sin", "sid", "s", "sime", "site",
+    # conditional
+    "ksin", "ksid", "ks", "ksime", "ksite", "ksid",
+    # participles
+    "nud", "tud", "v", "tav", "tava",
+    # imperative (mostly 2nd / 3rd person)
+    "gu", "gem", "ge",
+)
+
+_VERB_LABELS_ET: dict[str, str] = {
+    "ma": "ma-tegevusnimi", "da": "da-tegevusnimi",
+    "vat": "vat-vorm", "mas": "mas-vorm",
+    "mast": "mast-vorm", "mata": "mata-vorm",
+    "n": "olevik 1.p ainsus", "d": "olevik 2.p ainsus",
+    "b": "olevik 3.p ainsus", "me": "olevik 1.p mitmus",
+    "te": "olevik 2.p mitmus", "vad": "olevik 3.p mitmus",
+    "sin": "lihtminevik 1.p ainsus", "sid": "lihtminevik 2.p ainsus / 3.p mitmus",
+    "s": "lihtminevik 3.p ainsus", "sime": "lihtminevik 1.p mitmus",
+    "site": "lihtminevik 2.p mitmus",
+    "ksin": "tingiv 1.p ainsus", "ksid": "tingiv 2.p ainsus / 3.p mitmus",
+    "ks": "tingiv 3.p ainsus", "ksime": "tingiv 1.p mitmus",
+    "ksite": "tingiv 2.p mitmus",
+    "nud": "mineviku kesksõna", "tud": "tegumoeline kesksõna",
+    "v": "olevikuline kesksõna", "tav": "tegumoeline olevikuline kesksõna",
+    "tava": "umbisikuline olevikuline kesksõna",
+    "gu": "käskiv 3.p ainsus", "gem": "käskiv 1.p mitmus",
+    "ge": "käskiv 2.p mitmus",
+}
+
+
 # Subordinating / coordinating conjunctions where Estonian comma rules
 # require a comma immediately before. `kui`, `mis`, `kes` deliberately
 # excluded — they're highly context-dependent (kui = "when/if" needs
@@ -338,6 +445,21 @@ def tokenize(text: str) -> dict:
     return {"sentences": sentences, "words": words}
 
 
+def _usage_note(lemma: str | None, pos: str | None) -> tuple[str | None, str | None]:
+    """Return (code, estonian_note) for a word, or (None, None) if neutral.
+
+    Priority: POS-tag markers (X, Y, I, H) before lemma-lexicon markers.
+    Word is matched lowercased against the lemma lexicon.
+    """
+    if pos and pos in _POS_USAGE_NOTES_ET:
+        return _POS_USAGE_NOTES_ET[pos]
+    if lemma:
+        key = lemma.lower()
+        if key in _MARKED_LEMMAS_ET:
+            return _MARKED_LEMMAS_ET[key]
+    return None, None
+
+
 @mcp.tool(annotations=ToolAnnotations(
     title="Estonian morphological analysis",
     readOnlyHint=True,
@@ -348,9 +470,25 @@ def analyze_morphology(text: str, all_analyses: bool = False) -> list[dict]:
     """Run full morphological analysis on Estonian text.
 
     For each word returns lemma(s), part-of-speech, grammatical form, root,
-    ending, clitic and compound parts. By default returns the first (most
-    likely) analysis per word; set `all_analyses=True` to return every
-    ambiguous analysis. Input is capped at 100,000 characters.
+    ending, clitic, compound parts, ambiguity info, and a usage note
+    flagging archaic / foreign / abbreviation / interjection / proper-noun
+    cases. By default returns the first (most likely) analysis per word;
+    set `all_analyses=True` to return every ambiguous analysis.
+
+    Each word's response includes:
+      - lemma, partofspeech, form, root, ending, clitic, root_tokens
+      - analyses_count: how many alternative analyses Vabamorf produced
+        for this surface form (>1 means the word is morphologically
+        ambiguous)
+      - is_ambiguous: shorthand for analyses_count > 1
+      - usage_note: machine code (None if neutral)
+        — "archaic" / "foreign" / "abbreviation" / "interjection" /
+          "proper-noun"
+      - usage_note_estonian: human-readable Estonian rendering of the
+        same flag (quote this verbatim in Estonian replies; do NOT
+        translate the English usage_note yourself)
+
+    Input is capped at 100,000 characters.
     """
     _check_text(text)
     Text = _Text()
@@ -366,6 +504,9 @@ def analyze_morphology(text: str, all_analyses: bool = False) -> list[dict]:
         endings = list(span.ending)
         clitics = list(span.clitic)
         root_tokens = [list(rt) for rt in span.root_tokens]
+        analyses_count = len(lemmas)
+        is_ambiguous = analyses_count > 1
+        code, et = _usage_note(_first(lemmas), _first(pos))
         if all_analyses:
             analyses = [
                 {
@@ -379,7 +520,14 @@ def analyze_morphology(text: str, all_analyses: bool = False) -> list[dict]:
                 }
                 for i in range(len(lemmas))
             ]
-            out.append({"word": word, "analyses": analyses})
+            out.append({
+                "word": word,
+                "analyses": analyses,
+                "analyses_count": analyses_count,
+                "is_ambiguous": is_ambiguous,
+                "usage_note": code,
+                "usage_note_estonian": et,
+            })
         else:
             out.append({
                 "word": word,
@@ -390,8 +538,123 @@ def analyze_morphology(text: str, all_analyses: bool = False) -> list[dict]:
                 "ending": _first(endings),
                 "clitic": _first(clitics),
                 "root_tokens": _first(root_tokens) or [],
+                "analyses_count": analyses_count,
+                "is_ambiguous": is_ambiguous,
+                "usage_note": code,
+                "usage_note_estonian": et,
             })
     return out
+
+
+def _paradigm(word: str) -> dict:
+    """Generate a full inflection paradigm for a word.
+
+    Resolves the input through analyze() to find its lemma + POS, then
+    calls Vabamorf.synthesize() for each form in the appropriate paradigm
+    table.
+    """
+    _check_text(word, limit=MAX_WORD_CHARS, name="word")
+    if any(ch.isspace() for ch in word):
+        raise ValueError("paradigm expects a single word, no whitespace")
+
+    vm = _vabamorf()
+    # Find the dominant lemma + POS for this word.
+    analyses = vm.analyze([word], disambiguate=True)
+    if not analyses or not analyses[0].get("analysis"):
+        return {
+            "input": word,
+            "lemma": None,
+            "partofspeech": None,
+            "forms": [],
+            "summary_estonian": f"Sõnale '{word}' paradigmat ei leitud.",
+            "note": "Vabamorf couldn't analyse this word.",
+        }
+    primary = analyses[0]["analysis"][0]
+    lemma = primary["lemma"]
+    pos = primary["partofspeech"]
+
+    if pos in {"S", "A", "P", "N"}:
+        form_list = _NOMINAL_FORMS
+        labels = _CASE_LABELS_ET
+        class_name = "nominal"
+    elif pos == "V":
+        form_list = _VERB_FORMS
+        labels = _VERB_LABELS_ET
+        class_name = "verb"
+    else:
+        return {
+            "input": word,
+            "lemma": lemma,
+            "partofspeech": pos,
+            "forms": [],
+            "summary_estonian": (
+                f"Sõnaliik '{pos}' ei käändu ega pöördu — paradigmat pole."
+            ),
+            "note": (
+                "This part of speech does not inflect (e.g. adverbs, "
+                "conjunctions, particles). No paradigm to generate."
+            ),
+        }
+
+    forms: list[dict] = []
+    for f in form_list:
+        try:
+            generated = vm.synthesize(lemma, f, pos)
+        except Exception:
+            generated = []
+        if not generated:
+            continue
+        forms.append({
+            "form": f,
+            "form_estonian": labels.get(f, f),
+            "surface": generated[0] if len(generated) == 1 else generated,
+        })
+
+    return {
+        "input": word,
+        "lemma": lemma,
+        "partofspeech": pos,
+        "word_class": class_name,
+        "forms": forms,
+        "summary_estonian": (
+            f"Sõna '{lemma}' ({pos}) paradigma: {len(forms)} vormi."
+        ),
+        "note": (
+            "Generated via Vabamorf.synthesize. Some forms may be marked, "
+            "rare, or stylistically odd — Vabamorf produces what's "
+            "morphologically possible, not what a native speaker would "
+            "necessarily use. For ambiguous lemmas pass the bare lemma "
+            "(e.g. 'kasutama') rather than an inflected form for the "
+            "cleanest result."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Generate Estonian inflection paradigm",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def paradigm(word: str) -> dict:
+    """Generate the full inflection paradigm for an Estonian word.
+
+    For nominals (nouns, adjectives, pronouns, numerals): produces all 14
+    cases × 2 numbers = up to 28 forms. For verbs: produces infinitives,
+    present/past/conditional indicative, imperative, and participles
+    (~30 forms). Other parts of speech (adverbs, conjunctions,
+    particles) don't inflect — `forms` is empty.
+
+    Each form entry has the Vabamorf form code (e.g. `sg p`, `ksin`),
+    its Estonian label (e.g. `ainsuse osastav`, `tingiv 1.p ainsus`),
+    and the surface form Vabamorf generated. Use `form_estonian` verbatim
+    in Estonian replies — don't translate the English `form` code.
+
+    Phase-1 scope: covers the most commonly-needed forms per word class,
+    not every theoretical form Vabamorf can produce. Single-word input,
+    capped at 200 characters.
+    """
+    return _paradigm(word)
 
 
 @mcp.tool(annotations=ToolAnnotations(

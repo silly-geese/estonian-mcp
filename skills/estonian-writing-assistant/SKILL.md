@@ -25,7 +25,8 @@ The hard rule, applied throughout this skill:
 | --- | --- |
 | `spell_check` | First pass on any Estonian text the user wrote. Cheapest validation. |
 | `lemmatize` | Get dictionary forms — for vocabulary study, deduping word stems, citation. |
-| `analyze_morphology` | Full analysis with case form, root, ending, compound parts. The authoritative tool when discussing grammar. |
+| `analyze_morphology` | Full analysis with case form, root, ending, compound parts, ambiguity count, and a usage flag (`archaic` / `foreign` / `interjection` / `abbreviation` / `proper-noun`). The authoritative tool when discussing grammar. |
+| `paradigm` | Generates the full inflection paradigm for a word — all 14 cases for nouns, ~30 forms for verbs. Use when the user asks "what's the X-case of Y" or wants to see every form. Don't try to recall paradigms from memory. |
 | `pos_tag` | When you only need POS, e.g., filtering a list to nouns. |
 | `tokenize` | Sentence + word boundaries. Useful before per-sentence operations. |
 | `synonyms` | Same-meaning alternatives via Estonian WordNet. Returns synsets grouped by sense. |

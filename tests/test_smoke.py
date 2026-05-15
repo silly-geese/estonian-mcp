@@ -48,6 +48,47 @@ check("first tokens are non-empty POS", all(row["partofspeech"] for row in pos[:
 print("analyze_morphology")
 morph = server.analyze_morphology("Tere maailm!")
 check("compound 'maailm' splits", any(row.get("root_tokens") == ["maa", "ilm"] for row in morph))
+check(
+    "ambiguity surfaced via analyses_count + is_ambiguous fields",
+    all("analyses_count" in row and "is_ambiguous" in row for row in morph),
+)
+# Marked-usage lexicon: 'tarvitama' should be tagged archaic.
+r = server.analyze_morphology("Ma tarvitan programmi.")
+tarv = next((row for row in r if row.get("lemma") == "tarvitama"), None)
+check("'tarvitama' flagged archaic", tarv and tarv.get("usage_note") == "archaic", str(tarv))
+check(
+    "archaic flag has Estonian rendering",
+    tarv and tarv.get("usage_note_estonian", "").startswith("vananenud"),
+    tarv.get("usage_note_estonian") if tarv else "no row",
+)
+# Anglicism: 'okei' flagged as foreign or interjection (POS tag I).
+r = server.analyze_morphology("Okei, sõidame!")
+okei = next((row for row in r if row.get("word", "").lower() == "okei"), None)
+check(
+    "'okei' has a usage_note flag",
+    okei and okei.get("usage_note") in {"foreign", "interjection"},
+    str(okei),
+)
+
+print("paradigm")
+p = server.paradigm("raamat")
+forms_by_code = {f["form"]: f["surface"] for f in p["forms"]}
+check("nominal paradigm has sg n", forms_by_code.get("sg n") == "raamat", str(p["forms"][:3]))
+check("nominal paradigm has sg p", forms_by_code.get("sg p") == "raamatut")
+check("nominal paradigm has pl g", forms_by_code.get("pl g") in {"raamatute", "raamatuid"} or forms_by_code.get("pl g"))
+check("all forms have Estonian labels", all("form_estonian" in f for f in p["forms"]))
+p = server.paradigm("kasutama")
+verb_forms = {f["form"]: f["surface"] for f in p["forms"]}
+check("verb paradigm has 3sg present", verb_forms.get("b") == "kasutab", str(p["forms"][:3]))
+check("verb paradigm has past 1sg", verb_forms.get("sin") == "kasutasin")
+check("verb paradigm has nud-participle", verb_forms.get("nud") == "kasutanud")
+p = server.paradigm("ja")
+check("non-inflecting word returns empty forms", p["forms"] == [], str(p))
+try:
+    server.paradigm("two words")
+    check("paradigm rejects whitespace", False, "no exception")
+except ValueError:
+    check("paradigm rejects whitespace", True)
 
 print("spell_check")
 sp = server.spell_check(SAMPLE)

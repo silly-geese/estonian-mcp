@@ -34,7 +34,8 @@ synonyms instead of inventing them.
 | Tool | What it does |
 | --- | --- |
 | `tokenize(text)` | Split text into sentences and words |
-| `analyze_morphology(text)` | Lemma, POS, form, root, ending, clitic, compound parts per word |
+| `analyze_morphology(text)` | Lemma, POS, form, root, ending, clitic, compound parts, ambiguity count, and usage flags (archaic / foreign / interjection / abbreviation / proper-noun) per word |
+| `paradigm(word)` | Full Vabamorf-generated inflection paradigm — 14 cases × 2 numbers for nominals, ~30 verb forms — with Estonian labels per form |
 | `lemmatize(text)` | Just the dictionary form per word |
 | `pos_tag(text)` | Just the part-of-speech tag per word |
 | `spell_check(text)` | Spelling check + correction suggestions |
