@@ -200,6 +200,16 @@ The classifier is lexicon-based. It flags obvious officialese
 in syntax (passive voice, address forms, sentence length). Use it as
 a directional hint, not a verdict.
 
+### `classify_register` returns the tier label in two languages
+
+The response has both `tier` (English: `formal`, `neutral`,
+`colloquial`, etc.) and `tier_estonian` (the correct Estonian
+rendering: `formaalne`, `neutraalne`, `kõnekeelne`, …). When you
+reply to the user in Estonian, quote `tier_estonian` verbatim
+rather than translating `tier` yourself — the most common
+mistranslation is `formalne` (wrong) instead of `formaalne`
+(correct). This is the whole point of having the field.
+
 ### `syllabify` rejects multi-word input
 
 It's strictly per-word. If the user wants syllabification of a

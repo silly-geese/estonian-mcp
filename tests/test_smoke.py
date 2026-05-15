@@ -108,15 +108,30 @@ formal = server.classify_register(
 )
 check("formal text → formal tier", formal["tier"] == "formal", formal["tier"])
 check("formal text → positive score", formal["score"] > 0)
+check(
+    "formal text → tier_estonian='formaalne' (not the *formalne hallucination)",
+    formal["tier_estonian"] == "formaalne",
+    formal.get("tier_estonian", "<missing>"),
+)
 casual = server.classify_register(
     "Noh, kuule, see oli vinge mõnus üritus, ja kohvik oli ka lahe!"
 )
 check("colloquial text → colloquial tier", casual["tier"] == "colloquial", casual["tier"])
 check("colloquial text → negative score", casual["score"] < 0)
+check(
+    "colloquial text → tier_estonian='kõnekeelne'",
+    casual["tier_estonian"] == "kõnekeelne",
+    casual.get("tier_estonian", "<missing>"),
+)
 neutral = server.classify_register(
     "Saadame teile uue uudiskirja, milles tutvustame meie sügisesi tooteid."
 )
 check("neutral text → neutral tier", neutral["tier"] == "neutral", neutral["tier"])
+check(
+    "neutral text → tier_estonian='neutraalne'",
+    neutral["tier_estonian"] == "neutraalne",
+    neutral.get("tier_estonian", "<missing>"),
+)
 
 print("input limits")
 try:

@@ -532,8 +532,22 @@ def _classify_register(text: str) -> dict:
     else:
         tier = "neutral"
 
+    # Estonian translations for the tier label. Without these, models
+    # composing an Estonian-language reply will invent plausible-looking
+    # but wrong inflections (e.g. *formalne instead of formaalne when
+    # rendering "formal"). Hard-coding the right word is the only way
+    # to keep the hallucination off our surface.
+    _TIER_ET = {
+        "formal": "formaalne",
+        "neutral-formal": "pigem formaalne",
+        "neutral": "neutraalne",
+        "neutral-colloquial": "pigem kõnekeelne",
+        "colloquial": "kõnekeelne",
+    }
+
     return {
         "tier": tier,
+        "tier_estonian": _TIER_ET[tier],
         "score": round(score, 3),
         "formal_markers": sorted(set(formal_hits)),
         "colloquial_markers": sorted(set(colloquial_hits)),
@@ -541,7 +555,11 @@ def _classify_register(text: str) -> dict:
         "note": (
             "Heuristic phase-1 classifier — lexicon-based, lemma-aware. "
             "Catches obvious officialese vs slang; most newsletter prose "
-            "scores 'neutral'. Treat as a directional hint, not a verdict."
+            "scores 'neutral'. Treat as a directional hint, not a verdict. "
+            "When composing an Estonian-language reply, USE THE "
+            "tier_estonian FIELD VERBATIM rather than translating `tier` "
+            "yourself — common mistranslations include 'formalne' (wrong) "
+            "vs 'formaalne' (correct)."
         ),
     }
 
@@ -555,11 +573,15 @@ def _classify_register(text: str) -> dict:
 def classify_register(text: str) -> dict:
     """Heuristic register classifier for Estonian (formal vs colloquial).
 
-    Returns a tier label, a normalised score in [-1, 1] (positive = formal,
-    negative = colloquial), and the matched formal/colloquial markers found
-    in the text. Useful for sanity-checking that marketing copy hasn't
-    drifted into officialese, or that a contract draft hasn't slipped into
-    chat tone.
+    Returns a tier label (English in `tier`, correct Estonian in
+    `tier_estonian` — quote that field verbatim when composing an
+    Estonian-language reply rather than translating `tier` yourself, to
+    avoid mistranslations like "formalne" instead of the correct
+    "formaalne"), a normalised score in [-1, 1] (positive = formal,
+    negative = colloquial), and the matched formal/colloquial markers
+    found in the text. Useful for sanity-checking that marketing copy
+    hasn't drifted into officialese, or that a contract draft hasn't
+    slipped into chat tone.
 
     PHASE-1 LIMITATION: this is a coarse lexicon-based heuristic, not a
     trained model. Real register also lives in sentence structure,
