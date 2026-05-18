@@ -1571,7 +1571,8 @@ def _check_compound_familiarity(text: str) -> dict:
         #   - in-vocab → real Estonian compound, never suspect
         #   - out-of-vocab AND weak top similarity → likely calque
         # In-vocab covers most legitimate compounds; the score gate
-        # catches the calque case (kuldkast, score 0.537, OOV).
+        # catches the calque case (mõtteliin — literal English
+        # "train of thought" — score 0.536, OOV).
         is_suspect = (not in_vocab) and top_score < 0.55
 
         compounds.append({
@@ -1605,20 +1606,21 @@ def _check_compound_familiarity(text: str) -> dict:
         ),
         "note": (
             "Heuristic compound-familiarity check via fastText nearest "
-            "neighbours. Top similarity below 0.55 is flagged as a 'worth "
-            "a second look' signal — the bundled fastText-et-mini model "
-            "has a pruned 20K vocabulary, so legitimate but uncommon "
-            "compounds also score low. NOT authoritative; this is a hint "
-            "to verify the compound is in actual Estonian usage, not a "
-            "verdict that it's wrong. The neighbours list is included so "
-            "Claude or the user can judge: if top neighbours are mostly "
-            "subword-similar to the input's parts (sharing 'kuld-' or "
-            "'-kast' substrings), suspect a calque; if neighbours are "
-            "semantically coherent (synonyms or related concepts), the "
-            "compound is probably real. Designed for the case of Claude "
-            "inventing literal English-to-Estonian compounds like "
-            "'kuldkast' for 'money line' / 'golden line' — the lemma is "
-            "morphologically valid but not in real Estonian usage."
+            "neighbours, using a 100K-vocab compressed model. Two-tier "
+            "signal: in-vocab compounds are treated as real Estonian and "
+            "never flagged; out-of-vocab compounds whose top similarity "
+            "is below 0.55 are flagged as suspect (likely calque or "
+            "coined term). NOT authoritative — even at 100K vocab a few "
+            "legitimate but rare compounds will be OOV with weak signal. "
+            "The neighbours list is included so callers can judge close "
+            "calls: if top neighbours mostly share letters with the "
+            "input's parts (subword-similar), suspect a calque; if they "
+            "are semantically coherent (synonyms or related concepts), "
+            "the compound is probably real. Designed for the case of "
+            "Claude inventing literal English-to-Estonian compounds like "
+            "'mõtteliin' (English: 'train of thought'; real Estonian: "
+            "'mõttekäik') — the lemma is morphologically valid but not "
+            "in real Estonian usage."
         ),
     }
 
@@ -1632,19 +1634,20 @@ def _check_compound_familiarity(text: str) -> dict:
 def check_compound_familiarity(text: str) -> dict:
     """fastText-based diagnostic for compound-noun familiarity in Estonian.
 
-    For each compound noun (root_tokens length >= 2), returns its
-    top fastText neighbours and a `top_score` similarity, flagging
-    compounds where the top similarity is below 0.55 as `is_suspect:
-    true` — the failure mode for AI-invented calques like `kuldkast`
-    for "money line."
+    For each compound noun (root_tokens length >= 2), returns its top
+    fastText neighbours and a `top_score` similarity, flagging
+    compounds that are out-of-vocab AND have top similarity below 0.55
+    as `is_suspect: true` — the failure mode for AI-invented calques
+    like `mõtteliin` (literal English "train of thought"; real Estonian
+    is `mõttekäik`).
 
-    Output is diagnostic, not authoritative. The bundled
-    fastText-et-mini model has a pruned 20K vocabulary so legitimate
-    but uncommon compounds (e.g. `aastaaeg`, `tervisekindlustus`)
-    can also score below the threshold. Treat suspect flags as "worth
-    a second look" and judge by the included neighbours list: if
-    neighbours are semantically coherent the compound is fine; if
-    they're subword-similar variations (mostly sharing letters with
+    Output is diagnostic, not authoritative. Even with the 100K-vocab
+    medium model, some legitimate but rare compounds (e.g.
+    `tervisekindlustus`) can still be OOV with weak signal. Treat
+    suspect flags as "worth a second look" and judge by the included
+    neighbours list: if neighbours are semantically coherent the
+    compound is fine; if they're subword-similar variations (mostly
+    sharing letters with
     the input's parts) the compound is likely translationese.
 
     Input capped at 100,000 characters.
