@@ -186,6 +186,47 @@ check("date pattern + correct decimal → no flag",
 check("numbers every issue has rule_estonian",
       all(i.get("rule_estonian") for i in r["issues"]))
 
+print("check_style")
+heavy = (
+    "Süsteem kasutab andmeid. Süsteemi kasutatakse osakondades. "
+    "Andmed töödeldakse ja analüüsitakse. Võib-olla on lahendus "
+    "pigem ajutine, ehk midagi tuleks tõenäoliselt vist muuta. "
+    "Süsteem on hea."
+)
+r = server.check_style(heavy)
+check("passive voice detected", r["passive_voice"]["passive_count"] >= 2,
+      str(r["passive_voice"]))
+check("passive ratio computed", 0 < r["passive_voice"]["ratio"] <= 1.0)
+check("hedging detected", r["hedging"]["hedge_count"] >= 3,
+      str(r["hedging"]))
+check("hedging density computed", r["hedging"]["density"] > 0)
+check("sentence_length has mean+stddev",
+      "mean" in r["sentence_length"] and "stddev" in r["sentence_length"])
+check("all four sub-checks have Estonian summary",
+      all(r[k].get("summary_estonian") for k in
+          ("repetition", "passive_voice", "sentence_length", "hedging")))
+clean = "Eile käisin kinos. Film oli huvitav ja näitlejad mängisid hästi."
+r = server.check_style(clean)
+check("clean copy: no passive flagged", r["passive_voice"]["passive_count"] == 0)
+check("clean copy: no hedging", r["hedging"]["hedge_count"] == 0)
+
+print("classify_register consistency")
+mixed = (
+    "Käesoleva lepingu alusel sätestatakse poolte kohustused. "
+    "Noh, kuule, see on lahe."
+)
+r = server.classify_register(mixed)
+check("is_mixed flag true on register-mixed text",
+      r["consistency"]["is_mixed"] is True,
+      str(r["consistency"]))
+check("consistency summary cites both marker sides",
+      "ametlikke" in r["consistency"]["summary_estonian"]
+      and "kõnekeelseid" in r["consistency"]["summary_estonian"])
+formal_only = server.classify_register(
+    "Käesoleva lepingu alusel sätestatakse kohustused vastavalt määratud korrale."
+)
+check("formal-only: is_mixed false", formal_only["consistency"]["is_mixed"] is False)
+
 print("check_capitalization")
 # The exact AI mistake that motivated the tool: 'Eesti keelt' mid-sentence.
 r = server.check_capitalization(

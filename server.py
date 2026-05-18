@@ -364,6 +364,41 @@ _VERB_FORMS: tuple[str, ...] = (
     "gu", "gem", "ge",
 )
 
+# Passive-voice form codes from Vabamorf. When analyze_morphology
+# returns one of these as the `form` for a V-pos word, the verb is in
+# passive voice — Estonian's -takse / -ti / -tud / -tav family.
+_PASSIVE_FORMS_ET: frozenset[str] = frozenset({
+    "takse", "dakse",   # present passive
+    "ti", "di",         # past passive (e.g. tehti, kasutati)
+    "tud", "dud",       # past passive participle (tehtud, kasutatud)
+    "tav", "dav",       # present passive participle (tehtav, kasutatav)
+    "tava", "dava",     # umbisikuline kesksõna
+    "taks", "daks",     # passive conditional
+})
+
+# Hedging / wishy-washy markers — counted to gauge how confident the
+# prose reads. Higher density = more uncertain / less assertive copy.
+# Hand-curated; single-word entries only (multi-word hedging phrases
+# left for a later round).
+_HEDGING_WORDS_ET: frozenset[str] = frozenset({
+    "võib-olla", "võibolla", "umbes", "vist", "pigem", "äkki",
+    "ehk", "ilmselt", "arvatavasti", "tõenäoliselt", "mõnevõrra",
+    "veidi", "üpris", "tundub", "näiliselt", "ligilähedaselt",
+})
+
+# POS tags whose lemmas we IGNORE when counting repetition — function
+# words and connectives that naturally repeat in any prose and would
+# drown out real content-word repetition signal.
+_REPETITION_SKIP_POS: frozenset[str] = frozenset({
+    "K",  # postposition / preposition
+    "J",  # conjunction
+    "P",  # pronoun
+    "D",  # adverb (most are function-y; trade-off accepted)
+    "Z",  # punctuation
+    "Y",  # abbreviation
+})
+
+
 _VERB_LABELS_ET: dict[str, str] = {
     "ma": "ma-tegevusnimi", "da": "da-tegevusnimi",
     "vat": "vat-vorm", "mas": "mas-vorm",
@@ -914,21 +949,49 @@ def _classify_register(text: str) -> dict:
         "colloquial": "kõnekeelne",
     }
 
+    # Consistency: text contains BOTH formal and colloquial markers.
+    # Real register-mixed copy reads jarring; flag it explicitly so
+    # callers don't need to compute it themselves from the two marker
+    # lists.
+    formal_unique = sorted(set(formal_hits))
+    colloquial_unique = sorted(set(colloquial_hits))
+    is_mixed = bool(formal_unique) and bool(colloquial_unique)
+    if is_mixed:
+        consistency_et = (
+            f"Registriline ebakõla: tekst sisaldab nii ametlikke "
+            f"({', '.join(formal_unique[:3])}) kui ka kõnekeelseid "
+            f"({', '.join(colloquial_unique[:3])}) markereid."
+        )
+    elif formal_unique and not colloquial_unique:
+        consistency_et = "Register on järjekindlalt formaalne."
+    elif colloquial_unique and not formal_unique:
+        consistency_et = "Register on järjekindlalt kõnekeelne."
+    else:
+        consistency_et = "Registri markereid ei tuvastatud."
+
     return {
         "tier": tier,
         "tier_estonian": _TIER_ET[tier],
         "score": round(score, 3),
-        "formal_markers": sorted(set(formal_hits)),
-        "colloquial_markers": sorted(set(colloquial_hits)),
+        "formal_markers": formal_unique,
+        "colloquial_markers": colloquial_unique,
+        "consistency": {
+            "is_mixed": is_mixed,
+            "summary_estonian": consistency_et,
+        },
         "word_count": word_count,
         "note": (
             "Heuristic phase-1 classifier — lexicon-based, lemma-aware. "
             "Catches obvious officialese vs slang; most newsletter prose "
-            "scores 'neutral'. Treat as a directional hint, not a verdict. "
-            "When composing an Estonian-language reply, USE THE "
-            "tier_estonian FIELD VERBATIM rather than translating `tier` "
-            "yourself — common mistranslations include 'formalne' (wrong) "
-            "vs 'formaalne' (correct)."
+            "scores 'neutral'. The `consistency` field flags texts that "
+            "carry BOTH formal AND colloquial markers — useful for "
+            "catching jarring register-mixing even when the overall "
+            "tier rounds to 'neutral'. Treat as a directional hint, not "
+            "a verdict. When composing an Estonian-language reply, "
+            "USE THE tier_estonian AND consistency.summary_estonian "
+            "FIELDS VERBATIM rather than translating yourself — common "
+            "mistranslations include 'formalne' (wrong) vs 'formaalne' "
+            "(correct)."
         ),
     }
 
@@ -1406,6 +1469,197 @@ def check_capitalization(text: str) -> dict:
     follow).
     """
     return _check_capitalization(text)
+
+
+def _check_style(text: str) -> dict:
+    """Heuristic style metrics for Estonian text. Returns repetition,
+    passive-voice ratio, sentence-length variance, and hedging density."""
+    _check_text(text)
+    Text = _Text()
+    t = Text(text)
+    t.tag_layer(["sentences", "morph_analysis"])
+
+    spans = list(t.morph_analysis)
+    sentences = list(t.sentences)
+
+    # 1. Repetition — lemma-aware, skip function-word POS classes.
+    from collections import Counter, defaultdict
+    lemma_counts: Counter = Counter()
+    lemma_positions: dict[str, list[int]] = defaultdict(list)
+    content_word_count = 0
+    for span in spans:
+        if not span.text or not span.text[0].isalpha():
+            continue
+        lemma = _first(list(span.lemma))
+        pos = _first(list(span.partofspeech))
+        if not lemma or pos in _REPETITION_SKIP_POS:
+            continue
+        # Skip very short lemmas (1-2 char) — usually function-y.
+        if len(lemma) <= 2:
+            continue
+        key = lemma.lower()
+        lemma_counts[key] += 1
+        lemma_positions[key].append(span.start)
+        content_word_count += 1
+
+    # Threshold scales with text length so short replies don't trigger
+    # on natural repeats and long copy doesn't drown in non-issues.
+    if content_word_count < 50:
+        threshold = 3
+    elif content_word_count < 200:
+        threshold = 4
+    else:
+        threshold = max(5, content_word_count // 60)
+
+    repeated = []
+    for lemma, count in lemma_counts.most_common():
+        if count < threshold:
+            break
+        repeated.append({
+            "lemma": lemma,
+            "count": count,
+            "positions": lemma_positions[lemma],
+        })
+
+    # 2. Passive voice — count verbs whose form is in the passive set.
+    passive_count = 0
+    passive_examples: list[str] = []
+    verb_count = 0
+    for span in spans:
+        pos = _first(list(span.partofspeech))
+        if pos != "V":
+            continue
+        verb_count += 1
+        form = _first(list(span.form))
+        if form and form in _PASSIVE_FORMS_ET:
+            passive_count += 1
+            if len(passive_examples) < 5 and span.text not in passive_examples:
+                passive_examples.append(span.text)
+    passive_ratio = (passive_count / verb_count) if verb_count else 0.0
+
+    # 3. Sentence-length variance (in content words per sentence).
+    sentence_lengths: list[int] = []
+    for sent in sentences:
+        # Count word-shaped spans within this sentence's text range.
+        wc = sum(
+            1 for s in spans
+            if s.start >= sent.start and s.end <= sent.end
+            and s.text and s.text[0].isalpha()
+        )
+        if wc > 0:
+            sentence_lengths.append(wc)
+    if sentence_lengths:
+        mean_len = sum(sentence_lengths) / len(sentence_lengths)
+        var = sum((x - mean_len) ** 2 for x in sentence_lengths) / len(sentence_lengths)
+        stddev = var ** 0.5
+        min_len = min(sentence_lengths)
+        max_len = max(sentence_lengths)
+    else:
+        mean_len = stddev = 0.0
+        min_len = max_len = 0
+
+    # 4. Hedging density.
+    hedge_matches: list[str] = []
+    for span in spans:
+        if span.text.lower() in _HEDGING_WORDS_ET:
+            hedge_matches.append(span.text)
+    total_words = sum(1 for s in spans if s.text and s.text[0].isalpha())
+    hedge_density = (len(hedge_matches) / total_words) if total_words else 0.0
+
+    # Summary lines in Estonian (so Claude can quote directly).
+    rep_et = (
+        f"Kõige sagedamini korduvad lemmad: {[r['lemma'] for r in repeated]}."
+        if repeated else "Sõnade kordumist ei tuvastatud."
+    )
+    passive_et = (
+        f"Umbisikuline tegumood: {passive_count}/{verb_count} verbi "
+        f"({round(passive_ratio*100, 1)}%)." if verb_count
+        else "Verbe ei leitud."
+    )
+    if sentence_lengths and len(sentence_lengths) > 1:
+        sl_et = (
+            f"Lausepikkus: keskmiselt {mean_len:.1f} sõna "
+            f"(min {min_len}, max {max_len}, hajuvus {stddev:.1f})."
+        )
+    elif sentence_lengths:
+        sl_et = f"Üksainus lause, {sentence_lengths[0]} sõna."
+    else:
+        sl_et = "Lauseid ei leitud."
+    hedge_et = (
+        f"Kõhklussõnu: {len(hedge_matches)}/{total_words} sõna "
+        f"({round(hedge_density*100, 1)}%)." if total_words
+        else "Sõnu ei leitud."
+    )
+
+    return {
+        "text": text,
+        "repetition": {
+            "threshold": threshold,
+            "repeated_lemmas": repeated,
+            "summary_estonian": rep_et,
+        },
+        "passive_voice": {
+            "passive_count": passive_count,
+            "total_verbs": verb_count,
+            "ratio": round(passive_ratio, 3),
+            "examples": passive_examples,
+            "summary_estonian": passive_et,
+        },
+        "sentence_length": {
+            "mean": round(mean_len, 2),
+            "stddev": round(stddev, 2),
+            "min": min_len,
+            "max": max_len,
+            "count": len(sentence_lengths),
+            "summary_estonian": sl_et,
+        },
+        "hedging": {
+            "hedge_count": len(hedge_matches),
+            "total_words": total_words,
+            "density": round(hedge_density, 3),
+            "matches": hedge_matches,
+            "summary_estonian": hedge_et,
+        },
+        "note": (
+            "Heuristic phase-1 style checker. Repetition threshold "
+            "scales with text length. Passive-voice ratio uses Vabamorf "
+            "form codes (-takse/-ti/-tud/-tav family); ~15% is a healthy "
+            "ceiling for marketing copy, <5% may read too forceful. "
+            "Hedging density >5% reads wishy-washy. Sentence length "
+            "stddev should typically be at least 30% of the mean for "
+            "natural rhythm. Quote *_estonian fields verbatim in "
+            "Estonian replies."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian style (repetition, passive, hedging, rhythm)",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def check_style(text: str) -> dict:
+    """Heuristic Estonian style metrics for newsletter / ad / email copy.
+
+    Returns four metrics that flag common writing issues, each with an
+    Estonian-language summary line for quoting verbatim:
+
+    - repetition: lemma-aware (so 'kasutab' and 'kasutamine' both count
+      under 'kasutama'). Threshold scales with text length so short
+      replies don't fire on natural repeats.
+    - passive_voice: ratio of Estonian -takse/-ti/-tud/-tav forms over
+      total verbs. Newsletter copy usually wants <15%.
+    - sentence_length: mean, stddev, min, max in content words. Low
+      stddev = monotonous rhythm.
+    - hedging: density of hedging words (võib-olla, vist, pigem, ehk,
+      ilmselt, …). >5% reads wishy-washy.
+
+    Phase-1 limitation: heuristic only. No detection of cliché phrases,
+    weasel-words beyond the curated 15 lemmas, or genre-specific style
+    drift. Input capped at 100,000 characters.
+    """
+    return _check_style(text)
 
 
 @mcp.tool(annotations=ToolAnnotations(

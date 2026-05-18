@@ -31,7 +31,8 @@ The hard rule, applied throughout this skill:
 | `tokenize` | Sentence + word boundaries. Useful before per-sentence operations. |
 | `synonyms` | Same-meaning alternatives via Estonian WordNet. Returns synsets grouped by sense. |
 | `find_related_words` | Semantically nearby words via fastText. Broader than synonyms — includes near-synonyms, related concepts, and (sometimes) antonyms. |
-| `classify_register` | Heuristic formal/colloquial score with the markers that triggered it. Useful as a "did my edit drift in tone" check. |
+| `classify_register` | Heuristic formal/colloquial score with markers + `consistency.is_mixed` flag for register-mixed text (formal + colloquial markers in the same draft = jarring). |
+| `check_style` | Four style metrics in one call — lemma-aware repetition (catches 'kasutab' / 'kasutamine' both under lemma 'kasutama'), Estonian passive-voice ratio (-takse/-ti/-tud family), sentence-length mean+stddev, hedging-word density. Use for newsletter / ad / email polish. |
 | `check_capitalization` | Algustäheortograafia (initial-letter orthography) check per EKI Reeglid. Flags weekdays, months, nationalities, and language/culture adjectives wrongly capitalized mid-sentence. Run on every Estonian text you produce. |
 | `check_compounds` | Liitsõnaõigekiri — flags common compound splits the model produces (`kooli maja` → `koolimaja`). Lexicon-based, phase 1. |
 | `check_punctuation` | Kirjavahemärgid — flags missing commas before subordinating conjunctions (et, sest, kuna, kuid, vaid, nagu, …). Phase-1 scope: the comma-before-clause rule only. |
