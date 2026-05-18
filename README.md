@@ -354,9 +354,11 @@ Terms of service for the hosted endpoint: [TERMS.md](TERMS.md).
 - WordNet is a separate ~26 MB resource (used by `synonyms`); the
   Docker image pre-downloads it at build time so the first call
   doesn't pause to fetch it.
-- The fastText model used by `find_related_words` is a separate ~22
-  MB compressed resource (CC-BY-SA-3.0; see [NOTICE](NOTICE) for
-  attribution); also pre-downloaded at image-build time.
+- The fastText model used by `find_related_words` and
+  `check_compound_familiarity` is a ~33 MB compressed resource with a
+  100K-word vocabulary (built locally from Facebook's cc.et.300 via
+  compress-fasttext, CC-BY-SA-3.0; see [NOTICE](NOTICE)); pre-downloaded
+  at image-build time.
 - Heavy neural taggers (`estnltk_neural`, BERT-based NER) are
   intentionally not pulled in; this server stays lean and fast.
 - First call after server start incurs a one-time tag-layer load

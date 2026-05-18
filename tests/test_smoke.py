@@ -122,7 +122,10 @@ check(
 )
 check(
     "kohv neighbours include a drink",
-    any(m["word"] in {"jook", "õlu", "piim", "alkohol", "tee"} for m in related["matches"]),
+    any(m["word"] in {
+        "jook", "õlu", "piim", "alkohol", "tee", "kakao", "rumm",
+        "viski", "vesi", "mahl", "limonaad",
+    } for m in related["matches"]),
     str([m["word"] for m in related["matches"]]),
 )
 try:

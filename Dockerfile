@@ -52,19 +52,18 @@ RUN set +e; \
       /opt/venv/bin/python -c "from estnltk.wordnet import Wordnet; assert Wordnet()['kasutama'], 'wordnet still not loadable after mirror fallback'" ; \
     fi
 
-# Estonian fastText word embeddings (compressed, ~22 MB). Used by the
-# find_related_words tool. Source: Liebl 2021 on Zenodo, vectors by
-# Grave et al. 2018 (CC-BY-SA-3.0). Try Zenodo first (canonical
-# upstream), fall back to our GH Release mirror on outage — Zenodo
-# 503s have caused build failures. MD5 verified after either path.
+# Estonian fastText word embeddings, compressed to ~33 MB with a 100K
+# vocabulary. Used by find_related_words + check_compound_familiarity.
+# Built locally from Facebook's cc.et.300.bin (Grave et al. 2018,
+# CC-BY-SA-3.0) via compress-fasttext (Liebl 2021) and hosted on our
+# GH Release. No Zenodo dependency — Facebook's upstream is the
+# canonical source for the underlying vectors. MD5 verified after
+# download.
 RUN mkdir -p /opt/models \
- && ( curl -fsSL --retry 3 --retry-delay 2 \
-        -o /opt/models/fasttext-et-mini \
-        "https://zenodo.org/records/4905385/files/fasttext-et-mini?download=1" \
-   || curl -fsSL --retry 3 --retry-delay 2 \
-        -o /opt/models/fasttext-et-mini \
-        "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/fasttext-et-mini" ) \
- && echo "0904bf4e96e53a727069f783a3415869  /opt/models/fasttext-et-mini" | md5sum -c -
+ && curl -fsSL --retry 3 --retry-delay 2 \
+      -o /opt/models/fasttext-et-medium \
+      "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/fasttext-et-medium" \
+ && echo "3690ee9983fc95740a61125fd58ed385  /opt/models/fasttext-et-medium" | md5sum -c -
 
 COPY server.py logo.png ./
 

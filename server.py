@@ -161,11 +161,12 @@ def _wordnet():
 
 @lru_cache(maxsize=1)
 def _embeddings():
-    """Lazy-load the compressed fastText model used by find_related_words."""
+    """Lazy-load the compressed fastText model used by find_related_words
+    and check_compound_familiarity."""
     import compress_fasttext
     path = os.environ.get(
         "ESTNLTK_MCP_FASTTEXT_PATH",
-        "/opt/models/fasttext-et-mini",
+        "/opt/models/fasttext-et-medium",
     )
     return compress_fasttext.models.CompressedFastTextKeyedVectors.load(path)
 
@@ -1566,7 +1567,12 @@ def _check_compound_familiarity(text: str) -> dict:
             neighbours = []
         top_score = float(neighbours[0][1]) if neighbours else 0.0
 
-        is_suspect = top_score < 0.55  # heuristic threshold; see note
+        # Two-tier signal with the medium (100K vocab) model:
+        #   - in-vocab → real Estonian compound, never suspect
+        #   - out-of-vocab AND weak top similarity → likely calque
+        # In-vocab covers most legitimate compounds; the score gate
+        # catches the calque case (kuldkast, score 0.537, OOV).
+        is_suspect = (not in_vocab) and top_score < 0.55
 
         compounds.append({
             "word": span.text,
