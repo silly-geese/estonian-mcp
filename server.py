@@ -1515,6 +1515,137 @@ def check_capitalization(text: str) -> dict:
     return _check_capitalization(text)
 
 
+def _check_compound_familiarity(text: str) -> dict:
+    """Surface fastText neighborhood diagnostic for compound nouns.
+
+    For each compound noun (Vabamorf root_tokens of length >= 2) in the
+    text, look up its fastText nearest neighbours. Legitimate Estonian
+    compounds tend to have semantically coherent neighbours with a
+    decent top similarity score (typically > 0.55). Calques / coined
+    compounds often have weak top similarity and/or subword-only
+    neighbours that just share letters with the input's parts.
+
+    Output is *diagnostic*, not authoritative — the underlying
+    fastText-et-mini model has a 20K-word pruned vocabulary, so some
+    legitimate but rare compounds also produce weak signal. Treat
+    flagged entries as "worth a second look" not "wrong."
+    """
+    _check_text(text)
+    Text = _Text()
+    t = Text(text)
+    t.tag_layer(["morph_analysis"])
+    kv = _embeddings()
+    vocab = kv.key_to_index
+
+    seen: set[str] = set()
+    compounds: list[dict] = []
+
+    for span in t.morph_analysis:
+        pos = _first(list(span.partofspeech))
+        if pos != "S":
+            continue
+        rt_lists = [list(rt) for rt in span.root_tokens]
+        parts = rt_lists[0] if rt_lists else []
+        if len(parts) < 2:
+            continue
+        lemma_raw = _first(list(span.lemma)) or ""
+        if not lemma_raw:
+            continue
+        # Skip proper-noun-like words (capitalized lemma).
+        if lemma_raw[0].isupper():
+            continue
+        lemma = lemma_raw.lower()
+        if lemma in seen:
+            continue
+        seen.add(lemma)
+
+        in_vocab = lemma in vocab
+        try:
+            neighbours = kv.most_similar(lemma, topn=8)
+        except KeyError:
+            neighbours = []
+        top_score = float(neighbours[0][1]) if neighbours else 0.0
+
+        is_suspect = top_score < 0.55  # heuristic threshold; see note
+
+        compounds.append({
+            "word": span.text,
+            "lemma": lemma,
+            "parts": parts,
+            "position": span.start,
+            "in_vocab": in_vocab,
+            "top_score": round(top_score, 3),
+            "top_neighbour": neighbours[0][0] if neighbours else None,
+            "neighbours": [
+                {"word": n, "score": round(float(s), 3)}
+                for n, s in neighbours[:5]
+            ],
+            "is_suspect": is_suspect,
+        })
+
+    suspects = [c for c in compounds if c["is_suspect"]]
+
+    return {
+        "text": text,
+        "compounds_analysed": len(compounds),
+        "suspect_compounds": suspects,
+        "all_compounds": compounds,
+        "summary_estonian": (
+            f"Tuvastati {len(compounds)} liitsõnanimisõna; "
+            f"{len(suspects)} neist on madala fastText-skooriga "
+            f"(tasub üle vaadata, kas neid eesti keeles "
+            f"tegelikult kasutatakse)." if compounds
+            else "Liitsõnanimisõnu analüüsiks ei leitud."
+        ),
+        "note": (
+            "Heuristic compound-familiarity check via fastText nearest "
+            "neighbours. Top similarity below 0.55 is flagged as a 'worth "
+            "a second look' signal — the bundled fastText-et-mini model "
+            "has a pruned 20K vocabulary, so legitimate but uncommon "
+            "compounds also score low. NOT authoritative; this is a hint "
+            "to verify the compound is in actual Estonian usage, not a "
+            "verdict that it's wrong. The neighbours list is included so "
+            "Claude or the user can judge: if top neighbours are mostly "
+            "subword-similar to the input's parts (sharing 'kuld-' or "
+            "'-kast' substrings), suspect a calque; if neighbours are "
+            "semantically coherent (synonyms or related concepts), the "
+            "compound is probably real. Designed for the case of Claude "
+            "inventing literal English-to-Estonian compounds like "
+            "'kuldkast' for 'money line' / 'golden line' — the lemma is "
+            "morphologically valid but not in real Estonian usage."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian compound familiarity (calque-risk diagnostic)",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def check_compound_familiarity(text: str) -> dict:
+    """fastText-based diagnostic for compound-noun familiarity in Estonian.
+
+    For each compound noun (root_tokens length >= 2), returns its
+    top fastText neighbours and a `top_score` similarity, flagging
+    compounds where the top similarity is below 0.55 as `is_suspect:
+    true` — the failure mode for AI-invented calques like `kuldkast`
+    for "money line."
+
+    Output is diagnostic, not authoritative. The bundled
+    fastText-et-mini model has a pruned 20K vocabulary so legitimate
+    but uncommon compounds (e.g. `aastaaeg`, `tervisekindlustus`)
+    can also score below the threshold. Treat suspect flags as "worth
+    a second look" and judge by the included neighbours list: if
+    neighbours are semantically coherent the compound is fine; if
+    they're subword-similar variations (mostly sharing letters with
+    the input's parts) the compound is likely translationese.
+
+    Input capped at 100,000 characters.
+    """
+    return _check_compound_familiarity(text)
+
+
 def _check_abbreviation_hyphenation(text: str) -> dict:
     """Heuristic Estonian abbreviation-case-ending hyphenation checker.
 

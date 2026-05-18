@@ -186,6 +186,31 @@ check("date pattern + correct decimal → no flag",
 check("numbers every issue has rule_estonian",
       all(i.get("rule_estonian") for i in r["issues"]))
 
+print("check_compound_familiarity")
+r = server.check_compound_familiarity(
+    "See on kuldkasti rida, mis maandab subjekti lubaduse."
+)
+check("kuldkast analysed as compound",
+      any(c["lemma"] == "kuldkast" for c in r["all_compounds"]),
+      str([c["lemma"] for c in r["all_compounds"]]))
+check("kuldkast flagged as suspect",
+      any(c["lemma"] == "kuldkast" and c["is_suspect"] for c in r["all_compounds"]),
+      str(r["suspect_compounds"]))
+r = server.check_compound_familiarity("Käisin raamatukogus ja koolimajas.")
+check("real compounds analysed", r["compounds_analysed"] == 2)
+check("real compounds NOT suspect", len(r["suspect_compounds"]) == 0,
+      str(r["suspect_compounds"]))
+r = server.check_compound_familiarity("Eile käisin poes ja ostsin leiba.")
+check("no compounds → empty analysis", r["compounds_analysed"] == 0)
+r = server.check_compound_familiarity(
+    "See on kuldkasti rida."
+)
+for c in r["all_compounds"]:
+    if c["lemma"] == "kuldkast":
+        check("neighbours list populated", len(c["neighbours"]) > 0, str(c))
+        check("top_score is float", isinstance(c["top_score"], float))
+        break
+
 print("check_abbreviation_hyphenation")
 r = server.check_abbreviation_hyphenation(
     "Jooksutasin teksti Estonian MCPst läbi."
