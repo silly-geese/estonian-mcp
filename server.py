@@ -2116,13 +2116,18 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                     "uptime_seconds": int(time.time() - _STATS_START_TS),
                     "started_at_unix": int(_STATS_START_TS),
                     "note": (
-                        "In-memory counters since process start. Counts "
-                        "reset whenever the Fly machine restarts (idle "
-                        "auto-stop, deploy, crash). For long-term trends, "
-                        "poll periodically and aggregate externally. No "
-                        "request bodies or tokens are logged or counted "
-                        "by tool — privacy posture in SECURITY.md is "
-                        "unchanged."
+                        "Aggregate counters since process start. "
+                        "Persisted to /data/metrics.json every 30 s "
+                        "when a Fly volume is mounted, so counts "
+                        "survive machine restarts; without a volume "
+                        "(local dev) they reset on each restart. "
+                        "Per-Fly-machine: with HA, each machine "
+                        "tracks its own counters and /metrics reflects "
+                        "whichever machine served the request. For "
+                        "long-term trends, poll periodically and "
+                        "aggregate externally. No request bodies or "
+                        "tokens are logged or counted by tool — privacy "
+                        "posture in SECURITY.md is unchanged."
                     ),
                 }
                 await _send_status(send, 200, payload)
