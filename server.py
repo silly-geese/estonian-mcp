@@ -131,6 +131,15 @@ mcp = FastMCP("estonian-mcp")
 mcp._mcp_server.version = SERVER_VERSION
 
 
+def _count_registered_tools() -> int:
+    """Count tools registered on the FastMCP instance. Computed once at
+    import time so /health doesn't pay the cost per request."""
+    try:
+        return len(mcp._tool_manager.list_tools())
+    except Exception:
+        return 0
+
+
 def _check_text(text: str, *, limit: int = MAX_TEXT_CHARS, name: str = "text") -> None:
     if not isinstance(text, str):
         raise TypeError(f"{name} must be a string")
@@ -2337,9 +2346,14 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
 
         try:
             # Public health endpoint — no auth, no rate limit. Used by Fly
-            # probes and uptime monitoring.
+            # probes, uptime monitoring, and quick "is the latest deploy
+            # live?" eyeballing (version + tool count surfaced here).
             if path == "/health":
-                await _send_status(send, 200, {"ok": True})
+                await _send_status(send, 200, {
+                    "ok": True,
+                    "version": SERVER_VERSION,
+                    "tools": _count_registered_tools(),
+                })
                 return
 
             # Public metrics — aggregate request counters since process

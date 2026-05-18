@@ -63,7 +63,11 @@ async def run() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
         print("health (no auth)")
         r = await c.get("/health")
-        check("200 with body", r.status_code == 200 and r.json() == {"ok": True}, str(r.status_code))
+        body = r.json()
+        check("200", r.status_code == 200, str(r.status_code))
+        check("ok=true", body.get("ok") is True, str(body))
+        check("version surfaced", isinstance(body.get("version"), str) and body["version"], str(body))
+        check("tool count surfaced", isinstance(body.get("tools"), int) and body["tools"] > 0, str(body))
 
         print("well-known server card (no auth)")
         r = await c.get("/.well-known/mcp/server-card.json")
