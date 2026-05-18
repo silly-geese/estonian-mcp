@@ -46,6 +46,7 @@ synonyms instead of inventing them.
 | `classify_register(text)` | Coarse formal/colloquial register hint with matched markers + consistency flag for register-mixed text (heuristic, phase 1) |
 | `check_style(text)` | Style metrics — lemma-aware repetition, passive-voice ratio, sentence-length variance, hedging-word density |
 | `check_object_case(text)` | Käändeõpetus — flags direct-object case errors under negation and after partitive-only verbs (armastama, vihkama, vajama, …) |
+| `check_abbreviation_hyphenation(text)` | Lühendiortograafia — flags abbreviations with case endings missing the EKI-mandated hyphen (`MCPst` → `MCP-st`, `OÜle` → `OÜ-le`) |
 | `check_capitalization(text)` | Algustäheortograafia check — flags wrongly capitalized weekdays, months, nationalities, and language/culture adjectives per EKI's Reeglid |
 | `check_compounds(text)` | Liitsõnaõigekiri — flags common AI-generated splits of words that should be a single compound (`kooli maja` → `koolimaja`) |
 | `check_punctuation(text)` | Kirjavahemärgid — flags missing commas before subordinating conjunctions (`et`, `sest`, `kuna`, `kuid`, `vaid`, `nagu`, …) |

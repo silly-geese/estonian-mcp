@@ -186,6 +186,30 @@ check("date pattern + correct decimal → no flag",
 check("numbers every issue has rule_estonian",
       all(i.get("rule_estonian") for i in r["issues"]))
 
+print("check_abbreviation_hyphenation")
+r = server.check_abbreviation_hyphenation(
+    "Jooksutasin teksti Estonian MCPst läbi."
+)
+check("flags MCPst → MCP-st",
+      any(i["word"] == "MCPst" and i["suggestion"] == "MCP-st"
+          for i in r["issues"]), str(r["issues"]))
+r = server.check_abbreviation_hyphenation(
+    "APIga ühendamine ja MCPst lugemine on lihtne."
+)
+check("flags multiple abbreviations", len(r["issues"]) == 2, str(r["issues"]))
+clean = server.check_abbreviation_hyphenation(
+    "Saatsin kirja OÜ-le ja kasutasin API-t."
+)
+check("hyphenated forms not flagged", len(clean["issues"]) == 0, str(clean["issues"]))
+nom = server.check_abbreviation_hyphenation("Tegu on MCP serveriga.")
+check("bare nominative MCP not flagged", len(nom["issues"]) == 0, str(nom["issues"]))
+plain = server.check_abbreviation_hyphenation("Käisin poes ja ostsin leiba.")
+check("plain text: no flags", len(plain["issues"]) == 0, str(plain["issues"]))
+r = server.check_abbreviation_hyphenation("Lugesin MCPst.")
+check("rule_estonian populated",
+      all(i.get("rule_estonian") for i in r["issues"]),
+      str([i.get("rule_estonian") for i in r["issues"]]))
+
 print("check_object_case")
 # Negation rule
 r = server.check_object_case("Ma ei söönud leib.")

@@ -1515,6 +1515,104 @@ def check_capitalization(text: str) -> dict:
     return _check_capitalization(text)
 
 
+def _check_abbreviation_hyphenation(text: str) -> dict:
+    """Heuristic Estonian abbreviation-case-ending hyphenation checker.
+
+    Per EKI Reeglid: case endings on Latin-letter / all-caps abbreviations
+    are separated from the stem by a hyphen (`MCP-st` not `MCPst`,
+    `API-ga` not `APIga`). Uses Vabamorf's POS + form analysis to
+    identify tokens Vabamorf recognised as abbreviations carrying a
+    case ending, then flags any that aren't already hyphenated.
+    """
+    _check_text(text)
+    Text = _Text()
+    t = Text(text)
+    t.tag_layer(["morph_analysis"])
+
+    issues: list[dict] = []
+    for span in t.morph_analysis:
+        word = span.text
+        if not word or "-" in word:
+            continue  # already hyphenated or empty
+        pos = _first(list(span.partofspeech))
+        if pos != "Y":
+            continue  # not an abbreviation per Vabamorf
+        form = _first(list(span.form)) or ""
+        if form in ("", "?", "sg n", "pl n"):
+            continue  # no case ending to hyphenate
+        ending = _first(list(span.ending)) or ""
+        if not ending or ending == "0":
+            continue
+        if not word.endswith(ending):
+            continue
+        stem = word[: -len(ending)]
+        # Stem must look like an abbreviation (all-uppercase). This
+        # filters Estonian noun lemmas like "tuba" / "mati" that
+        # might also have a case ending but aren't abbreviations.
+        if not stem or not stem.isupper():
+            continue
+        suggestion = f"{stem}-{ending}"
+        issues.append({
+            "word": word,
+            "lemma": _first(list(span.lemma)) or "",
+            "form": form,
+            "position": span.start,
+            "rule": "abbreviation-case-ending-hyphen",
+            "rule_estonian": "lühendi käändelõpu sidekriips",
+            "explanation": (
+                f"In Estonian, case endings on Latin-letter abbreviations "
+                f"are separated by a hyphen (EKI Reeglid: lühendi-"
+                f"ortograafia). '{word}' should be written as "
+                f"'{suggestion}'."
+            ),
+            "suggestion": suggestion,
+        })
+
+    return {
+        "text": text,
+        "issues": issues,
+        "summary_estonian": (
+            f"Leiti {len(issues)} lühendi käändelõpu sidekriipsu viga." if issues
+            else "Lühendiortograafia probleeme ei leitud."
+        ),
+        "note": (
+            "Heuristic checker for the EKI Reeglid rule that case "
+            "endings on abbreviations are hyphen-separated (MCP-st, "
+            "API-ga, OÜ-le). Uses Vabamorf's Y-pos tag + case form "
+            "analysis, so we only flag tokens Vabamorf actually "
+            "recognised as abbreviations carrying a case ending. "
+            "Single-letter endings on short capital sequences are not "
+            "specially filtered — relies on Vabamorf to know whether "
+            "'APIs' is an abbreviation plus inessive ending or just "
+            "an English plural. Quote rule_estonian verbatim in "
+            "Estonian replies."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian abbreviation case-ending hyphenation",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def check_abbreviation_hyphenation(text: str) -> dict:
+    """Heuristic check for the EKI Reeglid rule that case endings on
+    Latin-letter / all-caps abbreviations are separated by a hyphen.
+
+    Catches the common AI mistake of writing `MCPst`, `APIga`, `OÜle`
+    instead of `MCP-st`, `API-ga`, `OÜ-le`. Uses Vabamorf's POS+form
+    analysis to identify tokens recognised as abbreviations carrying a
+    case ending; only flags those that aren't already hyphenated.
+
+    Phase-1 scope: matches what Vabamorf tags as `Y` (abbreviation).
+    Custom acronyms Vabamorf doesn't know (your brand acronym, niche
+    industry shorthand) won't be flagged because Vabamorf doesn't see
+    them as abbreviations. Input capped at 100,000 characters.
+    """
+    return _check_abbreviation_hyphenation(text)
+
+
 def _check_object_case(text: str) -> dict:
     """Heuristic Estonian object-case-government checker.
 
