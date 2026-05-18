@@ -380,6 +380,44 @@ _PASSIVE_FORMS_ET: frozenset[str] = frozenset({
 # prose reads. Higher density = more uncertain / less assertive copy.
 # Hand-curated; single-word entries only (multi-word hedging phrases
 # left for a later round).
+# Lexicons for check_object_case — Estonian's object-case-government
+# checker. Negation markers (lemma forms) and a small curated set of
+# verbs whose direct objects are always partitive. Conservative scope:
+# better to miss real errors than to flag a lot of false positives,
+# since each flag costs the user attention.
+
+_NEGATION_LEMMAS_ET: frozenset[str] = frozenset({
+    "ei",       # main negation auxiliary
+    "pole",     # "is not" / "are not"
+    "polnud",   # "wasn't" / "weren't"
+    "ära",      # imperative negation 2sg
+    "ärge",     # imperative negation 2pl
+    "ärgu",     # imperative negation 3rd
+    "ärgem",    # imperative negation 1pl
+    "mitte",    # negation particle
+})
+
+_PARTITIVE_ONLY_VERBS_ET: frozenset[str] = frozenset({
+    "armastama", "vihkama", "vajama", "soovima", "ootama",
+    "austama", "kartma", "puudutama", "tundma",
+})
+
+# Case-form codes whose objects we'd flag (nominative + genitive).
+# These are the only realistic direct-object cases other than
+# partitive, so a noun here in a negation/partitive-verb context is a
+# candidate error.
+_DIRECT_OBJECT_CASES: frozenset[str] = frozenset({"sg n", "sg g", "pl n", "pl g"})
+
+# Case forms that are CLEARLY not direct objects (locative, temporal,
+# adverbial). Used to skip false positives.
+_NON_OBJECT_CASES: frozenset[str] = frozenset({
+    "sg ill", "sg in", "sg el", "sg all", "sg ad", "sg abl",
+    "sg tr", "sg ter", "sg es", "sg ab", "sg kom",
+    "pl ill", "pl in", "pl el", "pl all", "pl ad", "pl abl",
+    "pl tr", "pl ter", "pl es", "pl ab", "pl kom",
+})
+
+
 _HEDGING_WORDS_ET: frozenset[str] = frozenset({
     "võib-olla", "võibolla", "umbes", "vist", "pigem", "äkki",
     "ehk", "ilmselt", "arvatavasti", "tõenäoliselt", "mõnevõrra",
@@ -1469,6 +1507,167 @@ def check_capitalization(text: str) -> dict:
     follow).
     """
     return _check_capitalization(text)
+
+
+def _check_object_case(text: str) -> dict:
+    """Heuristic Estonian object-case-government checker.
+
+    Two rules:
+    1. Negation triggers partitive — any noun in nominative or
+       genitive in a sentence containing 'ei'/'pole'/'ära'/etc. is a
+       likely error.
+    2. Partitive-only verbs — a curated set of verbs always take
+       partitive direct objects; any noun in nominative or genitive
+       in the same sentence is suspicious.
+
+    Without a parser we can't tell subjects from objects, so we flag
+    on syntactic candidates and let the caller decide.
+    """
+    _check_text(text)
+    Text = _Text()
+    t = Text(text)
+    t.tag_layer(["sentences", "morph_analysis"])
+
+    spans = list(t.morph_analysis)
+    issues: list[dict] = []
+
+    for sentence in t.sentences:
+        sent_spans = [
+            s for s in spans
+            if s.start >= sentence.start and s.end <= sentence.end
+        ]
+        if not sent_spans:
+            continue
+
+        # Detect negation + partitive-only verb governance, and remember
+        # the position of whichever fires first so we only flag nouns
+        # AFTER it. Estonian SVO/SOV word order puts subjects before the
+        # verb/negation, so this cheaply skips the subject-noun FPs we'd
+        # otherwise generate.
+        has_negation = False
+        partitive_verb: str | None = None
+        trigger_index = -1
+        for idx, span in enumerate(sent_spans):
+            lemma = (_first(list(span.lemma)) or "").lower()
+            if lemma in _NEGATION_LEMMAS_ET:
+                has_negation = True
+                if trigger_index == -1:
+                    trigger_index = idx
+            if lemma in _PARTITIVE_ONLY_VERBS_ET:
+                partitive_verb = lemma
+                if trigger_index == -1:
+                    trigger_index = idx
+
+        if not (has_negation or partitive_verb):
+            continue
+
+        for idx, span in enumerate(sent_spans):
+            if idx <= trigger_index:
+                continue
+            word = span.text
+            if not word or not word[0].isalpha():
+                continue
+            pos = _first(list(span.partofspeech))
+            if pos != "S":   # phase 1: nouns only; adjectives generate too much FP
+                continue
+            form = _first(list(span.form)) or ""
+            lemma = _first(list(span.lemma)) or ""
+
+            # Skip proper nouns (likely place/person names, not common-noun
+            # direct objects).
+            if lemma and lemma[0].isupper():
+                continue
+            # Skip if already partitive (correct) or clearly non-object case.
+            if form in _NON_OBJECT_CASES:
+                continue
+            if " p" in form:   # partitive ('sg p', 'pl p', 'adt')
+                continue
+            if form not in _DIRECT_OBJECT_CASES:
+                continue
+
+            if has_negation:
+                issues.append({
+                    "word": word,
+                    "lemma": lemma,
+                    "position": span.start,
+                    "form": form,
+                    "rule": "negation-requires-partitive",
+                    "rule_estonian": "eitus nõuab osastavat",
+                    "explanation": (
+                        f"Estonian negation (ei/pole/ära/…) requires "
+                        f"direct objects in the partitive case. "
+                        f"'{word}' is in {form!r} (nominative/genitive); "
+                        f"a partitive form of '{lemma}' is likely "
+                        f"expected here."
+                    ),
+                    "suggestion_hint": f"consider partitive form of '{lemma}'",
+                })
+            elif partitive_verb:
+                issues.append({
+                    "word": word,
+                    "lemma": lemma,
+                    "position": span.start,
+                    "form": form,
+                    "verb": partitive_verb,
+                    "rule": "partitive-only-verb",
+                    "rule_estonian": "osastavat nõudev tegusõna",
+                    "explanation": (
+                        f"The verb '{partitive_verb}' takes its direct "
+                        f"object in the partitive case. '{word}' is in "
+                        f"{form!r} (nominative/genitive); a partitive "
+                        f"form of '{lemma}' is likely expected."
+                    ),
+                    "suggestion_hint": f"consider partitive form of '{lemma}'",
+                })
+
+    return {
+        "text": text,
+        "issues": issues,
+        "summary_estonian": (
+            f"Leiti {len(issues)} käändevigade kahtlust." if issues
+            else "Käändevigade kahtlust ei leitud."
+        ),
+        "note": (
+            "Heuristic phase-1 object-case checker — no syntactic parser, "
+            "so we can't distinguish subjects from objects. Flags nouns "
+            "in nominative/genitive in sentences with negation or "
+            "partitive-only verbs. Subjects of those sentences may be "
+            "false-positive flags. Treat as 'worth a second look', not "
+            "authoritative corrections. When surfacing rule labels in "
+            "Estonian replies, quote rule_estonian verbatim."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian object case (käändeõpetus)",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def check_object_case(text: str) -> dict:
+    """Heuristic Estonian object-case-government check.
+
+    Catches the single biggest class of confidently-wrong Estonian that
+    AI agents produce: direct objects in the wrong case after negation
+    or after partitive-governing verbs.
+
+    Two rules in phase 1:
+    - **Negation → partitive**: any sentence containing 'ei', 'pole',
+      'ära', 'ärge', 'ärgu', 'ärgem', or 'mitte' must have direct
+      objects in partitive. Flags nominative / genitive nouns.
+    - **Partitive-only verbs**: the verbs `armastama`, `vihkama`,
+      `vajama`, `soovima`, `ootama`, `austama`, `kartma`, `puudutama`,
+      `tundma` always take partitive direct objects. Flags any noun
+      in nominative/genitive in the same sentence.
+
+    Phase-1 limitation: no syntactic parser, so we can't perfectly
+    distinguish subject from object. Subjects in negation/partitive-verb
+    sentences may be flagged as false positives. Treat hits as "worth a
+    second look", not authoritative. Proper nouns are skipped. Input
+    capped at 100,000 characters.
+    """
+    return _check_object_case(text)
 
 
 def _check_style(text: str) -> dict:

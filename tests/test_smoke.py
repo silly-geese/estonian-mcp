@@ -186,6 +186,44 @@ check("date pattern + correct decimal → no flag",
 check("numbers every issue has rule_estonian",
       all(i.get("rule_estonian") for i in r["issues"]))
 
+print("check_object_case")
+# Negation rule
+r = server.check_object_case("Ma ei söönud leib.")
+check("negation flags non-partitive object",
+      any(i["word"] == "leib" and i["rule"] == "negation-requires-partitive"
+          for i in r["issues"]), str(r["issues"]))
+clean = server.check_object_case("Ma ei söönud leiba.")
+check("negation + correct partitive: no flag", len(clean["issues"]) == 0)
+# Partitive-only verb rule
+r = server.check_object_case("Ma armastan koogi.")
+check("partitive-only verb flags wrong-case object",
+      any(i["word"] == "koogi" and i["rule"] == "partitive-only-verb"
+          for i in r["issues"]), str(r["issues"]))
+clean = server.check_object_case("Ma armastan kooki.")
+check("partitive-only verb + correct partitive: no flag", len(clean["issues"]) == 0)
+# FP guard: subject before negation should not be flagged
+fp = server.check_object_case("Mees ei söönud leiba.")
+check("subject before negation: NOT flagged", len(fp["issues"]) == 0,
+      str(fp["issues"]))
+fp = server.check_object_case("Tüdrukud ei näinud filmi.")
+check("plural subject before negation: NOT flagged", len(fp["issues"]) == 0,
+      str(fp["issues"]))
+# Sentence with both subject and bad object: only object flagged
+mixed = server.check_object_case("Mees ei söönud leib.")
+check("only the wrong object flagged, not the subject",
+      len(mixed["issues"]) == 1 and mixed["issues"][0]["word"] == "leib",
+      str(mixed["issues"]))
+# Locative case should not trigger
+loc = server.check_object_case("Ma ei käinud poes.")
+check("locative case not flagged", len(loc["issues"]) == 0, str(loc["issues"]))
+# Proper nouns skipped
+prop = server.check_object_case("Ma armastan Marit.")
+check("proper noun not flagged", len(prop["issues"]) == 0, str(prop["issues"]))
+# Estonian rule label present
+r = server.check_object_case("Ma ei söönud leib.")
+check("rule_estonian present on each issue",
+      all(i.get("rule_estonian") for i in r["issues"]))
+
 print("check_style")
 heavy = (
     "Süsteem kasutab andmeid. Süsteemi kasutatakse osakondades. "
