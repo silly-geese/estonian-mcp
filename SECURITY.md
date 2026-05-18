@@ -88,8 +88,16 @@ defence-in-depth.
   your reverse proxy. `proxy_headers=True` and `forwarded_allow_ips="*"`
   are set so the server trusts the platform's `X-Forwarded-*` headers.
 - **Public health endpoint.** `/health` returns `{"ok": true}` with
-  no auth and is bypassed by the rate limiter; it is the only
-  unauthenticated path. Used for Fly health probes and uptime monitoring.
+  no auth and is bypassed by the rate limiter. Used for Fly health
+  probes and uptime monitoring.
+- **Public metrics endpoint.** `/metrics` returns aggregate request
+  counts (total, by HTTP status, by path) since the process started.
+  In-memory only; resets on every machine restart (Fly auto-stop,
+  deploy, crash). **No request bodies, tokens, IP addresses, or
+  per-tool breakdown are exposed** — only HTTP-level aggregate
+  counters. Privacy posture above is unchanged: we still don't log
+  what users send us; this endpoint only surfaces *that* a request
+  happened, not *what* was in it.
 - **Stateless HTTP.** `mcp.settings.stateless_http = True` so each
   request is independent — no per-client session state to grow
   unbounded.

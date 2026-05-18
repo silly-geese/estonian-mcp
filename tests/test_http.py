@@ -73,6 +73,15 @@ async def run() -> None:
         check("server-card auth required (bearer mode)", body.get("authentication", {}).get("required") is True)
         check("server-card advertises /mcp", body.get("endpoints", {}).get("streamable_http") == "/mcp")
 
+        print("metrics")
+        r = await c.get("/metrics")
+        check("metrics 200", r.status_code == 200)
+        body = r.json()
+        check("metrics has total_requests", "total_requests" in body)
+        check("metrics has by_status dict", isinstance(body.get("by_status"), dict))
+        check("metrics has by_path dict", isinstance(body.get("by_path"), dict))
+        check("metrics has uptime_seconds", "uptime_seconds" in body)
+
         print("auth")
         r = await c.post("/mcp", json={})
         check("missing token → 401", r.status_code == 401)

@@ -1893,6 +1893,31 @@ def classify_register(text: str) -> dict:
 # HTTP transport: bearer auth + rate limit
 # ---------------------------------------------------------------------------
 
+# Aggregate request counters surfaced at /metrics. In-memory, reset on
+# machine restart (Fly auto-stops idle machines). Only counts — never
+# request bodies or tokens — so the "no request logging" property in
+# SECURITY.md stays intact.
+_STATS_START_TS: float = time.time()
+_STATS: dict[str, Any] = {
+    "total": 0,
+    "by_status": {},
+    "by_path": {},
+}
+
+
+def _stats_record(status: int, path: str) -> None:
+    _STATS["total"] += 1
+    sk = str(status)
+    _STATS["by_status"][sk] = _STATS["by_status"].get(sk, 0) + 1
+    # Collapse /mcp to a single bucket; everything else (well-known
+    # paths) keeps its literal value. Keeps the bucket count bounded.
+    bucket = path if path in {
+        "/health", "/metrics", "/favicon.ico", "/favicon.svg",
+        "/favicon.png", "/.well-known/mcp/server-card.json", "/",
+    } else "/mcp" if path == "/mcp" else "other"
+    _STATS["by_path"][bucket] = _STATS["by_path"].get(bucket, 0) + 1
+
+
 class _RateLimiter:
     """Per-token leaky-bucket rate limiter (in-process, restart-resets).
 
@@ -1995,96 +2020,132 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
         inner = mcp.streamable_http_app()
     limiter = _RateLimiter(rate_limit)
 
-    async def app(scope, receive, send):
+    async def app(scope, receive, send_raw):
         if scope["type"] == "lifespan":
-            return await inner(scope, receive, send)
+            return await inner(scope, receive, send_raw)
         if scope["type"] != "http":
-            await _send_status(send, 400, {"error": "unsupported scope"})
+            await _send_status(send_raw, 400, {"error": "unsupported scope"})
             return
 
         path = scope.get("path", "")
+        # Wrap send so we can capture the final response status for
+        # /metrics without changing the inner app's contract.
+        captured = {"status": 0}
 
-        # Public health endpoint — no auth, no rate limit. Used by Fly probes
-        # and uptime monitoring.
-        if path == "/health":
-            await _send_status(send, 200, {"ok": True})
-            return
+        async def send(message):
+            if message["type"] == "http.response.start":
+                captured["status"] = message.get("status", 0)
+            await send_raw(message)
 
-        # Landing page at / — public, no auth. Tells humans what they hit
-        # and gives Google's favicon scraper the <link rel="icon"> tags
-        # it needs to find our PNG.
-        if path == "/":
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [
-                    (b"content-type", b"text/html; charset=utf-8"),
-                    (b"content-length", str(len(INDEX_HTML)).encode("ascii")),
-                    (b"cache-control", b"public, max-age=300"),
-                ],
-            })
-            await send({"type": "http.response.body", "body": INDEX_HTML})
-            return
-
-        # Favicons — public, no auth. Google's s2/favicons service rejects
-        # SVG, so /favicon.ico and /favicon.png must serve PNG bytes for
-        # the icon to appear in Anthropic's Directory + Claude tool-call
-        # UI. /favicon.svg keeps SVG for modern browsers.
-        if path in ("/favicon.ico", "/favicon.png") and FAVICON_PNG is not None:
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [
-                    (b"content-type", b"image/png"),
-                    (b"content-length", str(len(FAVICON_PNG)).encode("ascii")),
-                    (b"cache-control", b"public, max-age=86400"),
-                ],
-            })
-            await send({"type": "http.response.body", "body": FAVICON_PNG})
-            return
-        if path == "/favicon.svg" or (
-            path == "/favicon.ico" and FAVICON_PNG is None
-        ):
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [
-                    (b"content-type", b"image/svg+xml"),
-                    (b"content-length", str(len(FAVICON_SVG)).encode("ascii")),
-                    (b"cache-control", b"public, max-age=86400"),
-                ],
-            })
-            await send({"type": "http.response.body", "body": FAVICON_SVG})
-            return
-
-        # Smithery + similar registries probe this for auto-discovery.
-        # Spec: https://smithery.ai/docs/build/publish#troubleshooting
-        if path == "/.well-known/mcp/server-card.json":
-            card: dict[str, Any] = {
-                "serverInfo": {"name": "estonian-mcp", "version": SERVER_VERSION},
-                "authentication": {"required": not public_mode},
-                "endpoints": {"streamable_http": "/mcp"},
-            }
-            if not public_mode:
-                card["authentication"]["schemes"] = ["bearer"]
-            await _send_status(send, 200, card)
-            return
-
-        if public_mode:
-            bucket_key = f"ip:{_client_ip(scope)}"
-        else:
-            provided = _extract_token(scope)
-            if not provided or token is None or not secrets.compare_digest(provided, token):
-                await _send_status(send, 401, {"error": "unauthorized"})
+        try:
+            # Public health endpoint — no auth, no rate limit. Used by Fly
+            # probes and uptime monitoring.
+            if path == "/health":
+                await _send_status(send, 200, {"ok": True})
                 return
-            # Bucket on truncated token so we don't log full secrets.
-            bucket_key = provided[:8]
 
-        if not limiter.allow(bucket_key):
-            await _send_status(send, 429, {"error": "rate_limited"})
-            return
+            # Public metrics — aggregate request counters since process
+            # start. Resets on Fly machine restart (idle auto-stop,
+            # redeploy, crash). No body inspection, no token logging —
+            # only counts.
+            if path == "/metrics":
+                payload = {
+                    "total_requests": _STATS["total"],
+                    "by_status": dict(_STATS["by_status"]),
+                    "by_path": dict(_STATS["by_path"]),
+                    "uptime_seconds": int(time.time() - _STATS_START_TS),
+                    "started_at_unix": int(_STATS_START_TS),
+                    "note": (
+                        "In-memory counters since process start. Counts "
+                        "reset whenever the Fly machine restarts (idle "
+                        "auto-stop, deploy, crash). For long-term trends, "
+                        "poll periodically and aggregate externally. No "
+                        "request bodies or tokens are logged or counted "
+                        "by tool — privacy posture in SECURITY.md is "
+                        "unchanged."
+                    ),
+                }
+                await _send_status(send, 200, payload)
+                return
 
-        await inner(scope, receive, send)
+            # Landing page at / — public, no auth. Tells humans what they
+            # hit and gives Google's favicon scraper the <link rel="icon">
+            # tags it needs to find our PNG.
+            if path == "/":
+                await send({
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [
+                        (b"content-type", b"text/html; charset=utf-8"),
+                        (b"content-length", str(len(INDEX_HTML)).encode("ascii")),
+                        (b"cache-control", b"public, max-age=300"),
+                    ],
+                })
+                await send({"type": "http.response.body", "body": INDEX_HTML})
+                return
+
+            # Favicons — public, no auth. Google's s2/favicons service
+            # rejects SVG, so /favicon.ico and /favicon.png must serve
+            # PNG bytes for the icon to appear in Anthropic's Directory
+            # + Claude tool-call UI. /favicon.svg keeps SVG for modern
+            # browsers.
+            if path in ("/favicon.ico", "/favicon.png") and FAVICON_PNG is not None:
+                await send({
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [
+                        (b"content-type", b"image/png"),
+                        (b"content-length", str(len(FAVICON_PNG)).encode("ascii")),
+                        (b"cache-control", b"public, max-age=86400"),
+                    ],
+                })
+                await send({"type": "http.response.body", "body": FAVICON_PNG})
+                return
+            if path == "/favicon.svg" or (
+                path == "/favicon.ico" and FAVICON_PNG is None
+            ):
+                await send({
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [
+                        (b"content-type", b"image/svg+xml"),
+                        (b"content-length", str(len(FAVICON_SVG)).encode("ascii")),
+                        (b"cache-control", b"public, max-age=86400"),
+                    ],
+                })
+                await send({"type": "http.response.body", "body": FAVICON_SVG})
+                return
+
+            # Smithery + similar registries probe this for auto-discovery.
+            # Spec: https://smithery.ai/docs/build/publish#troubleshooting
+            if path == "/.well-known/mcp/server-card.json":
+                card: dict[str, Any] = {
+                    "serverInfo": {"name": "estonian-mcp", "version": SERVER_VERSION},
+                    "authentication": {"required": not public_mode},
+                    "endpoints": {"streamable_http": "/mcp"},
+                }
+                if not public_mode:
+                    card["authentication"]["schemes"] = ["bearer"]
+                await _send_status(send, 200, card)
+                return
+
+            if public_mode:
+                bucket_key = f"ip:{_client_ip(scope)}"
+            else:
+                provided = _extract_token(scope)
+                if not provided or token is None or not secrets.compare_digest(provided, token):
+                    await _send_status(send, 401, {"error": "unauthorized"})
+                    return
+                # Bucket on truncated token so we don't log full secrets.
+                bucket_key = provided[:8]
+
+            if not limiter.allow(bucket_key):
+                await _send_status(send, 429, {"error": "rate_limited"})
+                return
+
+            await inner(scope, receive, send)
+        finally:
+            _stats_record(captured["status"] or 0, path)
 
     return app
 
