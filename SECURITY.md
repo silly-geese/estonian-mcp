@@ -91,13 +91,16 @@ defence-in-depth.
   no auth and is bypassed by the rate limiter. Used for Fly health
   probes and uptime monitoring.
 - **Public metrics endpoint.** `/metrics` returns aggregate request
-  counts (total, by HTTP status, by path) since the process started.
-  In-memory only; resets on every machine restart (Fly auto-stop,
-  deploy, crash). **No request bodies, tokens, IP addresses, or
-  per-tool breakdown are exposed** — only HTTP-level aggregate
-  counters. Privacy posture above is unchanged: we still don't log
-  what users send us; this endpoint only surfaces *that* a request
-  happened, not *what* was in it.
+  counts (total, by HTTP status, by path) — optionally persisted to a
+  Fly volume at `/data/metrics.json` (via `ESTNLTK_MCP_METRICS_PATH`)
+  so counters survive machine restarts. If the configured path's
+  parent dir doesn't exist (local dev), persistence silently no-ops
+  and we stay in-memory. **No request bodies, tokens, IP addresses,
+  timing, or per-tool breakdown are stored** — only HTTP-level
+  aggregate counters. The persisted file is a single JSON blob with
+  `total`, `by_status`, `by_path`, `saved_at_unix`. Reading or
+  deleting `/data/metrics.json` only affects the displayed counts; it
+  doesn't reveal anything about what users sent.
 - **Stateless HTTP.** `mcp.settings.stateless_http = True` so each
   request is independent — no per-client session state to grow
   unbounded.

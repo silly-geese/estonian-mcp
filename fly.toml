@@ -47,3 +47,15 @@ kill_timeout = "5s"
   size = "shared-cpu-1x"
   memory = "1gb"      # bumped from 512mb to comfortably hold EstNLTK + fastText
   cpus = 1
+
+# Persistent volume for /metrics counters so totals survive machine
+# restarts (idle auto-stop, deploys). One-time creation per app:
+#
+#   fly volumes create estonian_mcp_data --size 1 --region ams -a <app>
+#
+# The container reads/writes /data/metrics.json. ~1 GB volume costs
+# roughly $0.15/month. Counters file is well under 1 MB; the rest of
+# the volume is headroom for any future on-disk state.
+[mounts]
+  source = "estonian_mcp_data"
+  destination = "/data"

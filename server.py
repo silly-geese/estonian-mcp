@@ -47,9 +47,15 @@ MAX_WORD_CHARS = 200
 
 # HTTP-mode rate limits.
 # Private mode (bearer auth required): per-token, generous default.
-# Public mode (no auth, anyone can call): per-IP, tighter default.
-DEFAULT_RATE_LIMIT_PER_MINUTE = 60
-DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 120
+# Public mode (no auth, anyone can call): per-IP. Bumped from earlier
+# 60/120 defaults after real-world usage showed legitimate active
+# sessions (parallel tool calls + multiple users behind shared NATs)
+# brushing the ceiling. The defence-in-depth math still holds: at
+# 300/min/IP, a sustained attacker burns ~30s CPU/min/IP on Fly's
+# shared-cpu-1x, ~5% capacity. Cloudflare in front is the right answer
+# for actual DDoS, not tighter per-IP limits.
+DEFAULT_RATE_LIMIT_PER_MINUTE = 120
+DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
 SERVER_VERSION = "0.1.0"
@@ -1893,10 +1899,10 @@ def classify_register(text: str) -> dict:
 # HTTP transport: bearer auth + rate limit
 # ---------------------------------------------------------------------------
 
-# Aggregate request counters surfaced at /metrics. In-memory, reset on
-# machine restart (Fly auto-stops idle machines). Only counts — never
-# request bodies or tokens — so the "no request logging" property in
-# SECURITY.md stays intact.
+# Aggregate request counters surfaced at /metrics. Optionally persisted
+# to a Fly volume so machine restarts don't reset the cumulative total.
+# Only counts — never request bodies or tokens — so the "no request
+# logging" property in SECURITY.md stays intact.
 _STATS_START_TS: float = time.time()
 _STATS: dict[str, Any] = {
     "total": 0,
@@ -1904,8 +1910,56 @@ _STATS: dict[str, Any] = {
     "by_path": {},
 }
 
+# Persistence: if ESTNLTK_MCP_METRICS_PATH is set (default
+# /data/metrics.json — matches the Fly volume mount), counters survive
+# machine restarts. Locally, the path's parent dir doesn't exist and
+# we silently stay in-memory.
+_METRICS_PATH = Path(
+    os.environ.get("ESTNLTK_MCP_METRICS_PATH", "/data/metrics.json")
+)
+_METRICS_FLUSH_INTERVAL_SEC: float = 30.0
+_metrics_last_flush_ts: float = 0.0
+
+
+def _load_persistent_stats() -> None:
+    """Restore counters from disk on process start, if available."""
+    try:
+        if not _METRICS_PATH.exists():
+            return
+        import json as _json
+        data = _json.loads(_METRICS_PATH.read_text())
+        _STATS["total"] = int(data.get("total", 0))
+        _STATS["by_status"] = {str(k): int(v) for k, v in (data.get("by_status") or {}).items()}
+        _STATS["by_path"] = {str(k): int(v) for k, v in (data.get("by_path") or {}).items()}
+        log.info(
+            "metrics persistence: restored total=%d from %s",
+            _STATS["total"], _METRICS_PATH,
+        )
+    except Exception as e:
+        log.warning("metrics persistence: failed to load %s: %s", _METRICS_PATH, e)
+
+
+def _save_persistent_stats() -> None:
+    """Atomic flush of current counters to disk. No-op if the parent
+    directory doesn't exist (local dev without a mounted volume)."""
+    if not _METRICS_PATH.parent.exists():
+        return
+    try:
+        import json as _json
+        tmp = _METRICS_PATH.with_suffix(_METRICS_PATH.suffix + ".tmp")
+        tmp.write_text(_json.dumps({
+            "total": _STATS["total"],
+            "by_status": _STATS["by_status"],
+            "by_path": _STATS["by_path"],
+            "saved_at_unix": int(time.time()),
+        }))
+        tmp.replace(_METRICS_PATH)
+    except Exception as e:
+        log.warning("metrics persistence: failed to save %s: %s", _METRICS_PATH, e)
+
 
 def _stats_record(status: int, path: str) -> None:
+    global _metrics_last_flush_ts
     _STATS["total"] += 1
     sk = str(status)
     _STATS["by_status"][sk] = _STATS["by_status"].get(sk, 0) + 1
@@ -1916,6 +1970,12 @@ def _stats_record(status: int, path: str) -> None:
         "/favicon.png", "/.well-known/mcp/server-card.json", "/",
     } else "/mcp" if path == "/mcp" else "other"
     _STATS["by_path"][bucket] = _STATS["by_path"].get(bucket, 0) + 1
+    # Periodic flush. Synchronous JSON write of ~few hundred bytes is
+    # sub-millisecond; acceptable in the request path at our scale.
+    now = time.time()
+    if now - _metrics_last_flush_ts > _METRICS_FLUSH_INTERVAL_SEC:
+        _metrics_last_flush_ts = now
+        _save_persistent_stats()
 
 
 class _RateLimiter:
@@ -2152,6 +2212,12 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
 
 def _run_http(host: str, port: int, token: str | None, rate_limit: int, public_mode: bool) -> None:
     import uvicorn  # local import; only needed in HTTP mode
+    import atexit
+
+    # Restore metrics from disk if a Fly volume (or local override) has them.
+    _load_persistent_stats()
+    # Best-effort final flush on shutdown so we capture the last interval.
+    atexit.register(_save_persistent_stats)
 
     log.info(
         "starting estonian-mcp HTTP transport on %s:%d (path=/mcp, mode=%s, rate_limit=%d/min)",

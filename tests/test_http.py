@@ -159,7 +159,48 @@ async def run() -> None:
         check("public: per-IP rate limit triggers 429", 429 in statuses, str(statuses))
 
 
+def metrics_persistence_test() -> None:
+    """Round-trip test for _save_persistent_stats / _load_persistent_stats.
+    Synchronous; doesn't need the async http client."""
+    import tempfile
+    from pathlib import Path
+    print("metrics persistence (round-trip)")
+    saved_path = server._METRICS_PATH
+    saved_total = server._STATS["total"]
+    saved_status = dict(server._STATS["by_status"])
+    saved_pathd = dict(server._STATS["by_path"])
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            server._METRICS_PATH = Path(d) / "metrics.json"
+            server._STATS["total"] = 12345
+            server._STATS["by_status"] = {"200": 12000, "429": 345}
+            server._STATS["by_path"] = {"/mcp": 12300, "/health": 45}
+            server._save_persistent_stats()
+            check("file written", server._METRICS_PATH.exists())
+            # wipe + restore
+            server._STATS["total"] = 0
+            server._STATS["by_status"] = {}
+            server._STATS["by_path"] = {}
+            server._load_persistent_stats()
+            check("total restored", server._STATS["total"] == 12345)
+            check("by_status restored", server._STATS["by_status"] == {"200": 12000, "429": 345})
+            check("by_path restored", server._STATS["by_path"] == {"/mcp": 12300, "/health": 45})
+            # graceful no-op when parent dir is gone (local dev path)
+            server._METRICS_PATH = Path("/this/path/does/not/exist/metrics.json")
+            try:
+                server._save_persistent_stats()
+                check("graceful no-op when parent missing", True)
+            except Exception as e:
+                check("graceful no-op when parent missing", False, str(e))
+    finally:
+        server._METRICS_PATH = saved_path
+        server._STATS["total"] = saved_total
+        server._STATS["by_status"] = saved_status
+        server._STATS["by_path"] = saved_pathd
+
+
 asyncio.run(run())
+metrics_persistence_test()
 
 if failures:
     print(f"\n{len(failures)} failure(s):")

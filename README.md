@@ -284,10 +284,13 @@ Two auth postures:
 ```sh
 fly auth login
 fly apps create my-estonian-mcp
+# one-time: persistent volume for /metrics counters (~$0.15/month)
+fly volumes create estonian_mcp_data --size 1 --region ams -a my-estonian-mcp
 fly deploy
 ```
-`fly.toml` already sets `ESTNLTK_MCP_PUBLIC_MODE=1`. Endpoint:
-`https://my-estonian-mcp.fly.dev/mcp`.
+`fly.toml` already sets `ESTNLTK_MCP_PUBLIC_MODE=1` and mounts the
+volume at `/data`, so no token needed and `/metrics` counters survive
+machine restarts. Endpoint: `https://my-estonian-mcp.fly.dev/mcp`.
 
 **Fly.io with bearer auth** — remove
 `ESTNLTK_MCP_PUBLIC_MODE` from `fly.toml`'s `[env]` block, then:
@@ -321,12 +324,12 @@ to a bearer-mode setup.
 - **stdio mode**: pure local subprocess. No network egress, no shell
   exec, no fs writes, no telemetry.
 - **HTTP / public mode**: no auth required (intentional for the free
-  public service). Per-IP rate limit (120/min default). Same hardening
+  public service). Per-IP rate limit (300/min default). Same hardening
   as bearer mode: no shell exec, no fs writes, no telemetry,
   size-bounded inputs.
 - **HTTP / bearer mode**: `ESTNLTK_MCP_AUTH_TOKEN` (≥16 chars)
   required, server refuses to start without it. Bearer auth on every
-  request, constant-time comparison, per-token rate limit (60/min).
+  request, constant-time comparison, per-token rate limit (120/min).
 - **Common to all HTTP**: `/health` is the only unauthenticated path.
   No request or token logging. `proxy_headers=True` so client IPs
   reflect the originator, not the platform's edge.
