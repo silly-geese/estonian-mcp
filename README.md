@@ -366,6 +366,51 @@ Terms of service for the hosted endpoint: [TERMS.md](TERMS.md).
 - The hosted Fly instance scales to zero when idle; the first request
   after a quiet period takes ~5 s, then everything is fast again.
 
+## 🤝 Contributing
+
+Contributions are welcome — especially from Estonian speakers who can
+sharpen the linguistic rules. Here's how to get started:
+
+1. **Fork** the repo and clone your fork.
+2. **Set up** the environment (Python 3.10–3.13):
+   ```sh
+   uv sync
+   # the fastText-backed tools need the embedding model for tests:
+   curl -fsSL -o ~/.cache/estnltk-mcp/fasttext-et-medium --create-dirs \
+     "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/fasttext-et-medium"
+   export ESTNLTK_MCP_FASTTEXT_PATH=~/.cache/estnltk-mcp/fasttext-et-medium
+   ```
+3. **Create a feature branch** (`git checkout -b feature/my-feature`).
+4. **Run the tests** — both must pass:
+   ```sh
+   uv run python tests/test_smoke.py   # tool behaviour
+   uv run python tests/test_http.py    # transport, auth, /metrics
+   ```
+5. **Commit** and open a pull request against `master`. CI (smoke on
+   Python 3.11 + 3.13, plus a Docker build/boot check) must be green
+   before merge.
+
+**Please open an issue first for major changes** so we can discuss the
+approach before you invest the work.
+
+### Especially wanted: linguistic corrections
+
+The heuristic tools lean on small hand-curated lexicons in
+[`server.py`](server.py) — marked/archaic words, register markers,
+compound-split pairs, partitive-governing verbs, and the EKI
+orthography rule sets. These are deliberately conservative and
+incomplete. If you're a fluent Estonian speaker and spot a gap or a
+wrong entry, that's the highest-value contribution you can make:
+
+- A missing calque AI agents produce, with the idiomatic native form
+- A verb that governs the partitive but isn't in the list
+- A compound that should (or shouldn't) be flagged
+- A register marker that's miscategorised
+
+Open an issue with the English source (if it's a calque), the bad
+Estonian, and the better Estonian — or send a PR adding the entry to
+the relevant lexicon with a one-line test case.
+
 ## License
 
 [Apache-2.0](LICENSE) for the source. EstNLTK is dual-licensed
