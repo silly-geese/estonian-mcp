@@ -1,7 +1,7 @@
 [project]
 name = "estonian-mcp"
 version = "0.1.0"
-description = "Local MCP server that wraps EstNLTK so AI agents can write better Estonian — morphology, lemmas, spell-check, NER, syllabification."
+description = "Offline MCP server wrapping EstNLTK + EKI Reeglid so AI agents write better Estonian. 20 tools: spell-check, morphology, paradigm, synonyms, related-words, register, style, orthography (capitalisation, compounds, commas, numbers), case-government, calque-risk."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = "Apache-2.0"
