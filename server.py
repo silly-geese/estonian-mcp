@@ -2505,6 +2505,30 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                 return
 
             await inner(scope, receive, send)
+        except Exception as exc:
+            # Defence-in-depth. The MCP SDK already converts tool
+            # exceptions into JSON-RPC error responses, so reaching here
+            # means something failed OUTSIDE normal dispatch (transport,
+            # a pre-dispatch parse failure, or this wrapper itself).
+            #
+            # Log a minimal, PII-free breadcrumb — exception type + path
+            # only, never the request body or token — so a recurrence is
+            # greppable in `fly logs` without weakening the privacy
+            # posture. Then, if the response hasn't started yet, return a
+            # clean 500 instead of letting it surface as a raw crash.
+            #
+            # We catch Exception, NOT BaseException: asyncio.CancelledError
+            # (the client disconnecting from a long-lived SSE GET) is a
+            # BaseException, so it passes through here and normal stream
+            # teardown proceeds untouched.
+            log.error("unhandled error on %s: %s", path, type(exc).__name__)
+            if captured["status"] == 0:
+                await _send_status(send, 500, {"error": "internal_error"})
+            else:
+                # Response already in flight (e.g. mid-SSE-stream); we
+                # can't cleanly send a 500, so let the server framework
+                # close the half-sent connection.
+                raise
         finally:
             _stats_record(captured["status"] or 0, path)
 

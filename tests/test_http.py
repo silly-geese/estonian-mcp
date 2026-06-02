@@ -57,6 +57,20 @@ async def stub_inner(scope, receive, send):
     await send({"type": "http.response.body", "body": body})
 
 
+async def boom_inner(scope, receive, send):
+    """ASGI app that raises before sending anything — simulates an
+    unhandled failure escaping the inner MCP app."""
+    if scope["type"] == "lifespan":
+        msg = await receive()
+        while msg["type"] != "lifespan.shutdown":
+            if msg["type"] == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+            msg = await receive()
+        await send({"type": "lifespan.shutdown.complete"})
+        return
+    raise RuntimeError("simulated inner-app failure")
+
+
 async def run() -> None:
     app = server._build_http_app(TOKEN, rate_limit=5, inner=stub_inner)
     transport = httpx.ASGITransport(app=app)
@@ -175,6 +189,14 @@ async def run() -> None:
             if r.status_code == 429:
                 break
         check("public: per-IP rate limit triggers 429", 429 in statuses, str(statuses))
+
+    print("unhandled-error guard")
+    boom_app = server._build_http_app(token=None, rate_limit=50, public_mode=True, inner=boom_inner)
+    transport2 = httpx.ASGITransport(app=boom_app)
+    async with httpx.AsyncClient(transport=transport2, base_url="http://t") as c:
+        r = await c.post("/mcp", json={})
+        check("inner exception → clean 500 (not a raw crash)", r.status_code == 500, str(r.status_code))
+        check("500 body is structured", r.json().get("error") == "internal_error", str(r.json()))
 
 
 def metrics_persistence_test() -> None:
