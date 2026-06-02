@@ -14,6 +14,17 @@ this project's Apache-2.0 license.
 POS tag inventory and morphological categories are produced by Vabamorf
 and follow the conventions documented in EstNLTK.
 
+This product bundles the Estonian Wordnet (estwn-et, version
+estwn-et-2.7.0), used by the `synonyms` tool, distributed under the
+Creative Commons Attribution-ShareAlike 4.0 license (CC-BY-SA-4.0).
+The Estonian Wordnet is developed by the Institute of the Estonian
+Language and obtained via the EstNLTK resource catalogue. estonian-mcp
+also re-hosts an unmodified copy of this data as a GitHub Release
+asset (wordnet_2026-02-13.zip) for build-time download resilience.
+Anyone redistributing this data must preserve attribution and apply
+CC-BY-SA-4.0 share-alike to it; the obligation applies to the Wordnet
+data only, not to estonian-mcp's Apache-2.0 source code.
+
 This product also bundles compressed Estonian fastText word embeddings
 (file: /opt/models/fasttext-et-medium in the Docker image, ~33 MB,
 100K vocab) used by find_related_words and check_compound_familiarity.

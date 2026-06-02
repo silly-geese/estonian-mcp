@@ -413,10 +413,17 @@ the relevant lexicon with a one-line test case.
 
 ## License
 
-[Apache-2.0](LICENSE) for the source. EstNLTK is dual-licensed
-GPL-2.0 OR Apache-2.0 (we use the Apache-2.0 option). The bundled
-Vabamorf analyzer is LGPL-2.1 with a separate commercial-use license.
-The bundled Estonian fastText model file (used by `find_related_words`)
-is CC-BY-SA-3.0 — its share-alike obligation applies to the model
-file only, not the rest of the project. See [NOTICE](NOTICE) for full
-attribution and obligations when redistributing.
+[Apache-2.0](LICENSE) for the source. Bundled data + models keep their
+own (copyleft) licenses — these apply to those files only, not to the
+Apache-2.0 code:
+
+- **EstNLTK** — dual-licensed GPL-2.0 OR Apache-2.0 (we use Apache-2.0).
+- **Vabamorf** analyzer — LGPL-2.1 with a separate commercial-use license.
+- **Estonian fastText** model (`find_related_words`,
+  `check_compound_familiarity`) — CC-BY-SA-3.0.
+- **Estonian Wordnet** (`synonyms`) — CC-BY-SA-4.0.
+
+The CC-BY-SA model + Wordnet data carry share-alike obligations on
+those files when you redistribute them (the Docker image includes
+both). See [NOTICE](NOTICE) for full attribution and redistribution
+terms.
