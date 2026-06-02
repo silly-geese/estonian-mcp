@@ -77,6 +77,20 @@ async def run() -> None:
         check("server-card auth required (bearer mode)", body.get("authentication", {}).get("required") is True)
         check("server-card advertises /mcp", body.get("endpoints", {}).get("streamable_http") == "/mcp")
 
+        print("browser GET /mcp redirect")
+        r = await c.get("/mcp", headers={"Accept": "text/html,application/xhtml+xml"})
+        check("browser GET /mcp → 302", r.status_code == 302, str(r.status_code))
+        check("redirect points to /", r.headers.get("location") == "/", r.headers.get("location"))
+        # A real MCP client carrying text/event-stream must NOT be redirected;
+        # it reaches the inner app (stub returns ok:stub here).
+        r = await c.get("/mcp", headers={"Accept": "text/event-stream"})
+        check("MCP GET (event-stream) not redirected", r.status_code != 302, str(r.status_code))
+
+        print("/sse helpful 404")
+        r = await c.get("/sse")
+        check("/sse → 404", r.status_code == 404, str(r.status_code))
+        check("/sse points to /mcp", r.json().get("endpoint") == "/mcp", str(r.json()))
+
         print("metrics")
         r = await c.get("/metrics")
         check("metrics 200", r.status_code == 200)

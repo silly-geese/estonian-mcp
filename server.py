@@ -2293,6 +2293,25 @@ async def _send_status(send, status: int, body: dict[str, Any]) -> None:
     await send({"type": "http.response.body", "body": payload})
 
 
+async def _send_redirect(send, location: str) -> None:
+    await send({
+        "type": "http.response.start",
+        "status": 302,
+        "headers": [
+            (b"location", location.encode("latin1")),
+            (b"content-length", b"0"),
+        ],
+    })
+    await send({"type": "http.response.body", "body": b""})
+
+
+def _accept_header(scope: dict) -> str:
+    for k, v in scope.get("headers", []):
+        if k.decode("latin1").lower() == "accept":
+            return v.decode("latin1").lower()
+    return ""
+
+
 def _client_ip(scope: dict) -> str:
     """Best-effort originator IP. uvicorn(proxy_headers=True) populates
     scope["client"] from X-Forwarded-For when running behind Fly/Smithery."""
@@ -2353,6 +2372,31 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                     "ok": True,
                     "version": SERVER_VERSION,
                     "tools": _count_registered_tools(),
+                })
+                return
+
+            # A human pasting the /mcp URL into a browser otherwise gets a
+            # cryptic JSON-RPC 406 ("Client must accept text/event-stream").
+            # If this looks like a browser (GET, wants HTML, not the SSE
+            # stream a real MCP client opens), send them to the landing
+            # page instead. Real MCP GETs carry Accept: text/event-stream
+            # and pass straight through.
+            if path == "/mcp" and scope.get("method") == "GET":
+                accept = _accept_header(scope)
+                if "text/event-stream" not in accept and "text/html" in accept:
+                    await _send_redirect(send, "/")
+                    return
+
+            # Old SSE-transport clients hit /sse. We only speak Streamable
+            # HTTP now; return a clear pointer instead of a bare 404.
+            if path in ("/sse", "/sse/"):
+                await _send_status(send, 404, {
+                    "error": "not_found",
+                    "message": (
+                        "This server uses MCP Streamable HTTP, not the "
+                        "deprecated SSE transport. Connect to /mcp instead."
+                    ),
+                    "endpoint": "/mcp",
                 })
                 return
 
