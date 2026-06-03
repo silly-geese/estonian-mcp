@@ -119,5 +119,25 @@ jobs:
             -H 'Content-Type: application/json' \
             -H 'Accept: application/json, text/event-stream' \
             -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}')" = "200"
+
+          # Actually CALL the resource-backed tools inside the container.
+          # These exercise the bundled WordNet (synonyms) and fastText
+          # (find_related_words) under the non-root runtime user — the
+          # exact path that broke in production with EACCES on the
+          # root-owned resources dir. initialize alone never caught it.
+          call_tool () {
+            curl -s -X POST http://127.0.0.1:8081/mcp \
+              -H "Authorization: Bearer $TOKEN" \
+              -H 'Content-Type: application/json' \
+              -H 'Accept: application/json, text/event-stream' \
+              -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}"
+          }
+          echo "--- tools/call synonyms (WordNet, must not error)"
+          call_tool synonyms '{"word":"kasutama"}' \
+            | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',{}); assert not r.get('isError'), 'synonyms errored: '+str(r); print('synonyms OK')"
+          echo "--- tools/call find_related_words (fastText, must not error)"
+          call_tool find_related_words '{"word":"kohv"}' \
+            | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',{}); assert not r.get('isError'), 'find_related_words errored: '+str(r); print('find_related_words OK')"
+
           docker logs mcp | tail -20
           docker rm -f mcp

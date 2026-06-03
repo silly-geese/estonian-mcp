@@ -87,6 +87,13 @@ COPY --from=builder /opt/models /opt/models
 COPY --from=builder /app/server.py /app/server.py
 COPY --from=builder /app/logo.png /app/logo.png
 
+# EstNLTK's WordNet opens its bundled SQLite DB read-write at query time
+# (SQLite must create a journal file alongside the DB), so the resources
+# dir has to be writable by the non-root runtime user. It's root-owned
+# from the build stage, so hand it to `app` before dropping privileges —
+# otherwise the `synonyms` tool fails at runtime with EACCES.
+RUN chown -R app:app /opt/venv/lib/python3.13/site-packages/estnltk/estnltk_resources
+
 USER app
 EXPOSE 8081
 
