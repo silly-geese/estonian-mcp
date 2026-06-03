@@ -7,17 +7,48 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-03
+
+21 tools (up from 20), a bigger embedding model, request-count
+persistence, and a round of transport/robustness hardening. No
+breaking changes — drop-in over 0.1.0.
+
+### Added
+
 - **New tool: `check_redundancy`** — pleonasm / semantic-doubling
   check (`samuti ka` → "also also", `kõige optimaalsem` → "most
-  optimal", fixed redundant phrases). Brings the tool count to **21**.
+  optimal", plus fixed redundant phrases). Brings the count to **21**.
+- `scripts/build_fasttext.py` — the recipe for the compressed fastText
+  artifact, in-repo so the model is reproducible from source.
+- `CONTRIBUTING` section in the README, with a call for native-speaker
+  corrections to the linguistic lexicons.
+- `/health` now returns `version` and `tools` count alongside `ok`.
+
+### Changed
+
 - fastText model upgraded from the 20K-vocab `mini` build to a
-  100K-vocab `medium` build (~33 MB), cutting calque-detection false
-  positives on legitimate-but-uncommon compounds.
-- `scripts/build_fasttext.py` brought into the repo so the fastText
-  artifact is reproducible from source by anyone with the repo
-  checked out.
-- `/health` enriched: now returns `version` and `tools` count
-  alongside `ok` so a single curl confirms which build is live.
+  100K-vocab `medium` build (~33 MB) — far fewer calque-detection
+  false positives on legitimate-but-uncommon compounds.
+- Public-mode rate limit raised 30 → 300/min per IP, bearer-mode
+  60 → 120/min per token (data showed zero throttling at the old caps).
+- `/metrics` counters now persist to a Fly volume, surviving machine
+  restarts.
+
+### Fixed / hardened
+
+- Browser `GET /mcp` now redirects to the landing page instead of
+  returning a cryptic 406; `/sse` returns a helpful pointer to `/mcp`.
+- Unhandled errors in the HTTP wrapper return a clean structured 500
+  with a PII-free log breadcrumb, instead of a raw crash.
+- Estonian Wordnet (CC-BY-SA-4.0) attribution added to NOTICE — it was
+  bundled and re-hosted but previously undocumented.
+- Security: `idna` 3.13 → 3.16 (CVE-2026-45409).
+
+### Skill
+
+- `estonian-writing-assistant` updated: don't editorialize about the
+  MCP inside deliverable copy; reference native-speaker intuition
+  neutrally (`emakeele kõneleja`, not gendered framing).
 
 ## [0.1.0] — 2026-05-18
 
