@@ -7,9 +7,15 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- `scripts/build_fasttext.py` brought into the repo so the 100K-vocab
-  fastText artifact is reproducible from source by anyone with the
-  repo checked out.
+- **New tool: `check_redundancy`** — pleonasm / semantic-doubling
+  check (`samuti ka` → "also also", `kõige optimaalsem` → "most
+  optimal", fixed redundant phrases). Brings the tool count to **21**.
+- fastText model upgraded from the 20K-vocab `mini` build to a
+  100K-vocab `medium` build (~33 MB), cutting calque-detection false
+  positives on legitimate-but-uncommon compounds.
+- `scripts/build_fasttext.py` brought into the repo so the fastText
+  artifact is reproducible from source by anyone with the repo
+  checked out.
 - `/health` enriched: now returns `version` and `tools` count
   alongside `ok` so a single curl confirms which build is live.
 
