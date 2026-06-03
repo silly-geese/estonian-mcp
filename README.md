@@ -45,6 +45,7 @@ synonyms instead of inventing them.
 | `find_related_words(word)` | Top-N semantically nearby words via fastText embeddings (semantically related, not always synonymous) |
 | `classify_register(text)` | Coarse formal/colloquial register hint with matched markers + consistency flag for register-mixed text (heuristic, phase 1) |
 | `check_style(text)` | Style metrics — lemma-aware repetition, passive-voice ratio, sentence-length variance, hedging-word density |
+| `check_redundancy(text)` | Pleonasm check — flags semantic doubling like `samuti ka` (also+also), `kõige optimaalsem` (most+optimal), and fixed redundant phrases |
 | `check_object_case(text)` | Käändeõpetus — flags direct-object case errors under negation and after partitive-only verbs (armastama, vihkama, vajama, …) |
 | `check_abbreviation_hyphenation(text)` | Lühendiortograafia — flags abbreviations with case endings missing the EKI-mandated hyphen (`MCPst` → `MCP-st`, `OÜle` → `OÜ-le`) |
 | `check_compound_familiarity(text)` | Calque-risk diagnostic — for each compound noun, returns top fastText neighbours and flags compounds with weak similarity (`mõtteliin`-style translationese, e.g. literal English "train of thought" → real Estonian is `mõttekäik`) for second-look review |

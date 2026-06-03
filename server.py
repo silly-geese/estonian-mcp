@@ -486,6 +486,44 @@ _COMMA_BEFORE: frozenset[str] = frozenset({
 })
 
 
+# Lexicons for check_redundancy — semantic doubling that's
+# grammatically fine but reads redundant to a native speaker. Kept
+# deliberately high-precision: better to miss than to flag legitimate
+# phrasing, since each flag costs the user attention.
+
+# Sets of adverbs/particles that all mean roughly the same thing
+# ("also / too / likewise"). Two DIFFERENT members appearing adjacent
+# is the classic pleonasm — e.g. "samuti ka", "ka samuti".
+_ALSO_PARTICLES_ET: frozenset[str] = frozenset({"samuti", "ka", "ühtlasi"})
+
+# Adjectives that are already absolute / non-gradable: putting "kõige"
+# (most) in front is a double superlative — "kõige optimaalsem" is
+# wrong the way "most optimal" is. Matched by STEM PREFIX rather than
+# lemma, because Vabamorf lemmatizes the comparative form to itself
+# (optimaalsem → lemma 'optimaalsem', POS C) instead of to the base
+# adjective, so the comparative/superlative forms that actually follow
+# "kõige" wouldn't match a base-lemma set. Stems are distinctive and
+# only checked immediately after "kõige", so false positives are
+# negligible. Deliberately excludes gradable-in-practice words like
+# "parim" (kõige parim is idiomatic Estonian).
+_NON_GRADABLE_STEMS_ET: tuple[str, ...] = (
+    "optimaal", "ideaal", "maksimaal", "minimaal", "täiusli",
+    "identse", "identne", "universaal", "lõpli", "absoluut",
+    "totaal", "ammendav",
+)
+
+# Fixed pleonasm phrases (lowercased, surface-adjacent). Each maps to a
+# short Estonian note on why it's redundant. High-confidence only.
+_PLEONASM_PHRASES_ET: dict[tuple[str, ...], str] = {
+    ("ajaline", "periood"): "periood on juba ajaline mõiste",
+    ("väike", "nüanss"): "nüanss on juba väike erinevus",
+    ("üldine", "konsensus"): "konsensus tähendab juba üldist nõusolekut",
+    ("esmakordne", "debüüt"): "debüüt on juba esmakordne",
+    ("praegune", "status"): "tarbetu võõrsõna; piisab 'praegune olukord'",
+    ("tagasi", "taanduma"): "taanduma sisaldab juba 'tagasi' tähendust",
+}
+
+
 _COLLOQUIAL_MARKERS: frozenset[str] = frozenset({
     # Discourse particles / interjections of casual speech
     "noh", "nojah", "nojaa", "vot", "ahsoo", "mhm",
@@ -1921,6 +1959,129 @@ def check_object_case(text: str) -> dict:
     capped at 100,000 characters.
     """
     return _check_object_case(text)
+
+
+def _check_redundancy(text: str) -> dict:
+    """Heuristic pleonasm / semantic-doubling checker. Flags phrasing
+    that is grammatically valid but redundant to a native speaker —
+    e.g. 'samuti ka' (also also), 'kõige optimaalsem' (most optimal)."""
+    _check_text(text)
+    Text = _Text()
+    t = Text(text)
+    t.tag_layer(["morph_analysis"])
+    spans = list(t.morph_analysis)
+
+    issues: list[dict] = []
+
+    for i, span in enumerate(spans):
+        word = span.text
+        lower = word.lower()
+        lemma = (_first(list(span.lemma)) or "").lower()
+
+        # 1. Adjacent "also" particles: samuti ka / ka samuti / ...
+        if i + 1 < len(spans):
+            nxt = spans[i + 1]
+            nxt_lower = nxt.text.lower()
+            if (
+                lower in _ALSO_PARTICLES_ET
+                and nxt_lower in _ALSO_PARTICLES_ET
+                and lower != nxt_lower
+            ):
+                issues.append({
+                    "phrase": f"{word} {nxt.text}",
+                    "position": span.start,
+                    "rule": "doubled-also",
+                    "rule_estonian": "topeldatud rõhumäärsõna",
+                    "explanation": (
+                        f"'{lower}' ja '{nxt_lower}' tähendavad mõlemad "
+                        f"'samuti / ka' — koos on tautoloogia. Vali üks."
+                    ),
+                    "suggestion": f"jäta alles kas '{lower}' VÕI '{nxt_lower}', mitte mõlemad",
+                })
+
+        # 2. Double superlative: kõige + already-absolute adjective.
+        # Stem-prefix match on the surface form so comparative
+        # (optimaalsem) and superlative (optimaalseim) forms are caught,
+        # not just the base lemma.
+        if lower == "kõige" and i + 1 < len(spans):
+            nxt = spans[i + 1]
+            nxt_lower = nxt.text.lower()
+            if any(nxt_lower.startswith(stem) for stem in _NON_GRADABLE_STEMS_ET):
+                issues.append({
+                    "phrase": f"{word} {nxt.text}",
+                    "position": span.start,
+                    "rule": "double-superlative",
+                    "rule_estonian": "topeltülivõrre",
+                    "explanation": (
+                        f"'{nxt.text}' on juba absoluutne omadus — 'kõige' "
+                        f"ette ei sobi (nagu inglise 'most optimal'). "
+                        f"Piisab sõnast '{nxt.text}'."
+                    ),
+                    "suggestion": nxt.text,
+                })
+
+        # 3. Fixed pleonasm phrases (lemma-adjacent).
+        if i + 1 < len(spans):
+            nxt = spans[i + 1]
+            nxt_lemma = (_first(list(nxt.lemma)) or "").lower()
+            key = (lemma, nxt_lemma)
+            if key in _PLEONASM_PHRASES_ET:
+                issues.append({
+                    "phrase": f"{word} {nxt.text}",
+                    "position": span.start,
+                    "rule": "fixed-pleonasm",
+                    "rule_estonian": "liiasus (pleonasm)",
+                    "explanation": _PLEONASM_PHRASES_ET[key],
+                    "suggestion": f"sõnasta ümber: {_PLEONASM_PHRASES_ET[key]}",
+                })
+
+    return {
+        "text": text,
+        "issues": issues,
+        "summary_estonian": (
+            f"Leiti {len(issues)} liiasuse (pleonasmi) kahtlust."
+            if issues else "Liiasust ei tuvastatud."
+        ),
+        "note": (
+            "Heuristic pleonasm checker — flags high-confidence semantic "
+            "doubling: adjacent 'also' particles (samuti ka), double "
+            "superlatives (kõige optimaalsem), and a small set of fixed "
+            "redundant phrases. Deliberately conservative; it does NOT "
+            "catch every redundancy a native speaker would hear, so "
+            "absence of flags is not proof the text is tight. Quote "
+            "rule_estonian verbatim in Estonian replies."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian redundancy / pleonasm",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+def check_redundancy(text: str) -> dict:
+    """Heuristic Estonian pleonasm / semantic-doubling check.
+
+    Flags phrasing that is grammatically valid but reads redundant to a
+    native speaker — the class of error AI agents produce when they
+    stack synonyms. Phase-1 rules, all high-precision:
+
+    - **Doubled 'also' particles**: `samuti ka`, `ka samuti`,
+      `ühtlasi ka` — both words mean "also/too", so together they're a
+      tautology. (This is the exact `samuti ka suvesärgid` case.)
+    - **Double superlative**: `kõige` before an already-absolute
+      adjective (`optimaalne`, `ideaalne`, `maksimaalne`, `täiuslik`,
+      `ainus`, …) — like English "most optimal". Lemma-matched, so all
+      inflected forms count.
+    - **Fixed pleonasm phrases**: a small curated set (`ajaline
+      periood`, `väike nüanss`, `üldine konsensus`, …).
+
+    Conservative by design — it catches the obvious, high-confidence
+    cases, not every redundancy. Absence of flags is not proof the
+    prose is tight. Input capped at 100,000 characters.
+    """
+    return _check_redundancy(text)
 
 
 def _check_style(text: str) -> dict:

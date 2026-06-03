@@ -33,6 +33,7 @@ The hard rule, applied throughout this skill:
 | `find_related_words` | Semantically nearby words via fastText. Broader than synonyms — includes near-synonyms, related concepts, and (sometimes) antonyms. |
 | `classify_register` | Heuristic formal/colloquial score with markers + `consistency.is_mixed` flag for register-mixed text (formal + colloquial markers in the same draft = jarring). |
 | `check_style` | Four style metrics in one call — lemma-aware repetition (catches 'kasutab' / 'kasutamine' both under lemma 'kasutama'), Estonian passive-voice ratio (-takse/-ti/-tud family), sentence-length mean+stddev, hedging-word density. Use for newsletter / ad / email polish. |
+| `check_redundancy` | Pleonasm / semantic-doubling check — flags `samuti ka` (also+also), `kõige optimaalsem` (most+optimal), and fixed redundant phrases. Run it before claiming a redundancy "the MCP can't catch" — it catches the common ones. |
 | `check_object_case` | Käändeõpetus heuristic — catches the most common confidently-wrong Estonian: direct-object case after negation (must be partitive) and after partitive-only verbs (`armastama`, `vihkama`, `vajama`, …). Lexicon-based, no syntactic parser; only flags nouns AFTER the trigger so subject-noun false positives are minimal. |
 | `check_abbreviation_hyphenation` | Lühendiortograafia — flags abbreviations carrying a case ending without the EKI-mandated hyphen (`MCPst` → `MCP-st`, `OÜle` → `OÜ-le`, `APIga` → `API-ga`). Uses Vabamorf's POS+form analysis to filter to actual abbreviations. |
 | `check_compound_familiarity` | Calque-risk diagnostic — surfaces fastText nearest-neighbour data for each compound noun. Suspect flag = top similarity < 0.55. **Critically**, the threshold also flags some legitimate-but-uncommon compounds (small fastText vocab). Read the `neighbours` list to judge: subword-similar neighbours = likely calque; semantically coherent neighbours = real compound. Run on any Estonian compound you yourself produced (rather than verbatim user input) — if flagged, search for a more idiomatic native phrasing before sending. |
@@ -268,6 +269,23 @@ casual than the original. Want me to keep it formal?"*
 **Don't use the surface form when you mean the lemma.** When the
 user asks "what does this word mean," look up the lemma in
 `synonyms`/dictionaries, not the inflected surface form.
+
+**Don't editorialize about the MCP inside the deliverable.** Keep
+tool mechanics out of the copy you hand the user. Lines like "the MCP
+heuristic doesn't catch this, but..." belong in your working notes,
+not in the polished output — they break the fourth wall and read as
+hedging. If you spotted something a tool missed, just make the
+correction cleanly. (And if you think a tool *should* have caught it,
+check first: `check_redundancy` catches `samuti ka`-style doubling,
+`check_compound_familiarity` catches calques, etc. — the gap you
+assume may not exist.)
+
+**Don't invoke "the Estonian man".** When you reference native-speaker
+intuition, do it neutrally and professionally: *"emakeelena kõneleja
+tajub seda kohe"* or *"eestlasele hakkab see kohe kõrva"*. Never
+*"eesti mees kuuleb seda"* — it's gendered, leans on a folksy
+stereotype, and reads unprofessional in client copy. Native-speaker
+intuition isn't male.
 
 ## Calling pattern reminders
 

@@ -279,6 +279,27 @@ r = server.check_object_case("Ma ei söönud leib.")
 check("rule_estonian present on each issue",
       all(i.get("rule_estonian") for i in r["issues"]))
 
+print("check_redundancy")
+# The exact case from the field: "Samuti ka suvesärgid" — samuti + ka
+# both mean "also", a tautology.
+r = server.check_redundancy("Samuti ka suvesärgid.")
+check("flags 'samuti ka' doubling",
+      any(i["rule"] == "doubled-also" for i in r["issues"]), str(r["issues"]))
+# Double superlative (comparative form after kõige)
+r = server.check_redundancy("See on kõige optimaalsem lahendus.")
+check("flags 'kõige optimaalsem'",
+      any(i["rule"] == "double-superlative" for i in r["issues"]), str(r["issues"]))
+# Fixed pleonasm
+r = server.check_redundancy("Pikk ajaline periood möödus.")
+check("flags 'ajaline periood'",
+      any(i["rule"] == "fixed-pleonasm" for i in r["issues"]), str(r["issues"]))
+# Idiomatic — must NOT flag
+clean = server.check_redundancy("See on kõige parim lahendus. Nüüd ka suvesärgid.")
+check("'kõige parim' + lone 'ka' not flagged", len(clean["issues"]) == 0, str(clean["issues"]))
+# Estonian rule label present
+r = server.check_redundancy("Samuti ka.")
+check("rule_estonian present", all(i.get("rule_estonian") for i in r["issues"]))
+
 print("check_style")
 heavy = (
     "Süsteem kasutab andmeid. Süsteemi kasutatakse osakondades. "
