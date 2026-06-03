@@ -1,0 +1,89 @@
+name: metrics-snapshot
+
+# Daily snapshot of live usage counters into metrics-history.csv on a
+# dedicated `metrics` branch, turning the cumulative /metrics odometer
+# into a chartable trend over time.
+#
+# Why a separate branch (not master):
+#   - master is protected (required status checks) and the github-actions
+#     bot isn't an admin, so a direct push to master would be rejected.
+#   - the `metrics` branch is unprotected, doesn't trigger the CI workflow
+#     (which only runs on master/main + PRs), and keeps the data log out
+#     of the code history.
+#
+# Assumes a SINGLE Fly machine (`fly scale count 1`). With >1 machine the
+# curl hits whichever one Fly routes to, so the numbers would jump between
+# per-machine counters. One machine => /metrics is authoritative.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 06:00 UTC daily
+  workflow_dispatch:        # allow manual runs
+
+permissions:
+  contents: write
+
+concurrency:
+  group: metrics-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: true
+
+      - name: Snapshot /metrics onto the metrics branch
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+        run: |
+          set -euo pipefail
+          URL="https://estonian-mcp.fly.dev"
+
+          # Warm the machine (cold start ~10s), then read the counters.
+          curl -fsS --max-time 30 "$URL/health" >/dev/null || true
+          METRICS_JSON=$(curl -fsS --max-time 30 "$URL/metrics")
+          export METRICS_JSON
+
+          # Switch to the metrics branch (create as orphan on first run).
+          if git ls-remote --exit-code --heads origin metrics >/dev/null 2>&1; then
+            git fetch origin metrics
+            git checkout metrics
+          else
+            git checkout --orphan metrics
+            git rm -rf --cached . >/dev/null 2>&1 || true
+            find . -maxdepth 1 ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+          fi
+
+          python3 <<'PY'
+          import json, os, datetime, pathlib
+          m = json.loads(os.environ["METRICS_JSON"])
+          date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+          row = ",".join([
+              date,
+              str(m.get("tool_calls_total", "")),
+              str(m.get("by_path", {}).get("/mcp", "")),
+              str(m.get("total_requests", "")),
+          ])
+          header = "date,tool_calls_total,mcp_requests,total_requests"
+          f = pathlib.Path("metrics-history.csv")
+          lines = f.read_text().splitlines() if f.exists() else [header]
+          # Idempotent: drop any existing row for today before appending.
+          body = [l for l in lines[1:] if not l.startswith(date + ",")]
+          body.append(row)
+          f.write_text(header + "\n" + "\n".join(body) + "\n")
+          print("recorded:", row)
+          PY
+
+          git add metrics-history.csv
+          if git diff --cached --quiet; then
+            echo "no change"
+          else
+            git commit -m "metrics: daily usage snapshot"
+            git push origin metrics
+          fi

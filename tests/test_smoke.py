@@ -426,6 +426,17 @@ try:
 except ValueError:
     check("syllabify rejects whitespace", True)
 
+print("tool-call counter")
+# Every tool exercised above should have registered in _TOOL_CALLS.
+check("counter recorded calls", sum(server._TOOL_CALLS.values()) > 0, str(server._TOOL_CALLS))
+check("spell_check counted", server._TOOL_CALLS.get("spell_check", 0) > 0)
+check("paradigm counted", server._TOOL_CALLS.get("paradigm", 0) > 0)
+# Counter increments by exactly one per call.
+before = server._TOOL_CALLS.get("tokenize", 0)
+server.tokenize("Üks lause.")
+check("increments by exactly 1", server._TOOL_CALLS.get("tokenize", 0) == before + 1,
+      f"{before} -> {server._TOOL_CALLS.get('tokenize', 0)}")
+
 if failures:
     print(f"\n{len(failures)} failure(s):")
     for f in failures:

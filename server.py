@@ -547,6 +547,29 @@ def _first(values: list[Any] | None) -> Any:
     return values[0]
 
 
+# Per-tool invocation counters. Incremented only when a tool function
+# actually runs — NOT on initialize / tools/list / SSE stream opens, so
+# this counts real tool calls rather than all /mcp protocol traffic.
+# Records tool NAME + count only; never arguments (the Estonian text),
+# so the no-request-content privacy posture is preserved. Surfaced at
+# /metrics and persisted to the Fly volume alongside the HTTP counters.
+_TOOL_CALLS: dict[str, int] = {}
+
+
+def _counted(fn):
+    """Decorator: bump _TOOL_CALLS[fn.__name__] each time the tool runs.
+    functools.wraps preserves the signature + annotations + docstring so
+    FastMCP's schema generation is unaffected."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        _TOOL_CALLS[fn.__name__] = _TOOL_CALLS.get(fn.__name__, 0) + 1
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
@@ -557,6 +580,7 @@ def _first(values: list[Any] | None) -> Any:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def tokenize(text: str) -> dict:
     """Split Estonian text into sentences and words.
 
@@ -593,6 +617,7 @@ def _usage_note(lemma: str | None, pos: str | None) -> tuple[str | None, str | N
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def analyze_morphology(text: str, all_analyses: bool = False) -> list[dict]:
     """Run full morphological analysis on Estonian text.
 
@@ -763,6 +788,7 @@ def _paradigm(word: str) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def paradigm(word: str) -> dict:
     """Generate the full inflection paradigm for an Estonian word.
 
@@ -790,6 +816,7 @@ def paradigm(word: str) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def lemmatize(text: str) -> list[dict]:
     """Return lemma (dictionary form) for each word in the text.
 
@@ -812,6 +839,7 @@ def lemmatize(text: str) -> list[dict]:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def pos_tag(text: str) -> list[dict]:
     """Return part-of-speech tag for each word.
 
@@ -835,6 +863,7 @@ def pos_tag(text: str) -> list[dict]:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def spell_check(text: str, suggestions: bool = True) -> list[dict]:
     """Check Estonian spelling for each word and optionally return suggestions.
 
@@ -858,6 +887,7 @@ def spell_check(text: str, suggestions: bool = True) -> list[dict]:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def syllabify(word: str) -> list[dict]:
     """Split a single Estonian word into syllables with quantity and accent.
 
@@ -877,6 +907,7 @@ def syllabify(word: str) -> list[dict]:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def named_entities(text: str) -> list[dict]:
     """Extract named entities (PER/LOC/ORG) using EstNLTK's CRF model.
 
@@ -904,6 +935,7 @@ def named_entities(text: str) -> list[dict]:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def find_related_words(word: str, n: int = 10) -> dict:
     """Find Estonian words semantically similar to the input via fastText.
 
@@ -952,6 +984,7 @@ def find_related_words(word: str, n: int = 10) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def synonyms(word: str, max_synsets: int = 5) -> dict:
     """Look up Estonian synonyms via WordNet.
 
@@ -1261,6 +1294,7 @@ def _check_compounds(text: str) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def check_compounds(text: str) -> dict:
     """Heuristic Estonian compound-word check (liitsõnaõigekiri).
 
@@ -1339,6 +1373,7 @@ def _check_punctuation(text: str) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def check_punctuation(text: str) -> dict:
     """Heuristic Estonian punctuation check — comma-before-clause rule.
 
@@ -1421,6 +1456,7 @@ def _check_hyphenation(word: str) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def check_hyphenation(word: str) -> dict:
     """Return safe line-break positions for an Estonian word (poolitamine).
 
@@ -1510,6 +1546,7 @@ def _check_numbers(text: str) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def check_numbers(text: str) -> dict:
     """Heuristic Estonian number-writing check.
 
@@ -1533,6 +1570,7 @@ def check_numbers(text: str) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def check_capitalization(text: str) -> dict:
     """Heuristic Estonian capitalization checker (Algustäheortograafia).
 
@@ -1678,6 +1716,7 @@ def _check_compound_familiarity(text: str) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def check_compound_familiarity(text: str) -> dict:
     """fastText-based diagnostic for compound-noun familiarity in Estonian.
 
@@ -1783,6 +1822,7 @@ def _check_abbreviation_hyphenation(text: str) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def check_abbreviation_hyphenation(text: str) -> dict:
     """Heuristic check for the EKI Reeglid rule that case endings on
     Latin-letter / all-caps abbreviations are separated by a hyphen.
@@ -1936,6 +1976,7 @@ def _check_object_case(text: str) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def check_object_case(text: str) -> dict:
     """Heuristic Estonian object-case-government check.
 
@@ -2060,6 +2101,7 @@ def _check_redundancy(text: str) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def check_redundancy(text: str) -> dict:
     """Heuristic Estonian pleonasm / semantic-doubling check.
 
@@ -2252,6 +2294,7 @@ def _check_style(text: str) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def check_style(text: str) -> dict:
     """Heuristic Estonian style metrics for newsletter / ad / email copy.
 
@@ -2281,6 +2324,7 @@ def check_style(text: str) -> dict:
     idempotentHint=True,
     openWorldHint=False,
 ))
+@_counted
 def classify_register(text: str) -> dict:
     """Heuristic register classifier for Estonian (formal vs colloquial).
 
@@ -2339,9 +2383,11 @@ def _load_persistent_stats() -> None:
         _STATS["total"] = int(data.get("total", 0))
         _STATS["by_status"] = {str(k): int(v) for k, v in (data.get("by_status") or {}).items()}
         _STATS["by_path"] = {str(k): int(v) for k, v in (data.get("by_path") or {}).items()}
+        _TOOL_CALLS.clear()
+        _TOOL_CALLS.update({str(k): int(v) for k, v in (data.get("tool_calls") or {}).items()})
         log.info(
-            "metrics persistence: restored total=%d from %s",
-            _STATS["total"], _METRICS_PATH,
+            "metrics persistence: restored total=%d, tool_calls=%d from %s",
+            _STATS["total"], sum(_TOOL_CALLS.values()), _METRICS_PATH,
         )
     except Exception as e:
         log.warning("metrics persistence: failed to load %s: %s", _METRICS_PATH, e)
@@ -2359,6 +2405,7 @@ def _save_persistent_stats() -> None:
             "total": _STATS["total"],
             "by_status": _STATS["by_status"],
             "by_path": _STATS["by_path"],
+            "tool_calls": _TOOL_CALLS,
             "saved_at_unix": int(time.time()),
         }))
         tmp.replace(_METRICS_PATH)
@@ -2570,21 +2617,24 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                     "total_requests": _STATS["total"],
                     "by_status": dict(_STATS["by_status"]),
                     "by_path": dict(_STATS["by_path"]),
+                    "tool_calls_total": sum(_TOOL_CALLS.values()),
+                    "tool_calls": dict(_TOOL_CALLS),
                     "uptime_seconds": int(time.time() - _STATS_START_TS),
                     "started_at_unix": int(_STATS_START_TS),
                     "note": (
-                        "Aggregate counters since process start. "
-                        "Persisted to /data/metrics.json every 30 s "
-                        "when a Fly volume is mounted, so counts "
-                        "survive machine restarts; without a volume "
-                        "(local dev) they reset on each restart. "
-                        "Per-Fly-machine: with HA, each machine "
-                        "tracks its own counters and /metrics reflects "
-                        "whichever machine served the request. For "
-                        "long-term trends, poll periodically and "
-                        "aggregate externally. No request bodies or "
-                        "tokens are logged or counted by tool — privacy "
-                        "posture in SECURITY.md is unchanged."
+                        "tool_calls counts ONLY real tool executions (not "
+                        "initialize / tools-list / SSE opens, which inflate "
+                        "the /mcp path bucket) — use tool_calls_total as the "
+                        "true usage number. Counters persist to "
+                        "/data/metrics.json every 30 s when a Fly volume is "
+                        "mounted, surviving restarts; without a volume "
+                        "(local dev) they reset. Counts are per-Fly-machine, "
+                        "so with >1 machine each tracks its own and /metrics "
+                        "reflects whichever served the request. started_at_unix "
+                        "is the process start, NOT when tracking began — the "
+                        "counts span all persisted history. Records tool NAME "
+                        "+ count only, never arguments; privacy posture in "
+                        "SECURITY.md is unchanged."
                     ),
                 }
                 await _send_status(send, 200, payload)
