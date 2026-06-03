@@ -280,12 +280,13 @@ check first: `check_redundancy` catches `samuti ka`-style doubling,
 `check_compound_familiarity` catches calques, etc. — the gap you
 assume may not exist.)
 
-**Don't invoke "the Estonian man".** When you reference native-speaker
-intuition, do it neutrally and professionally: *"emakeelena kõneleja
-tajub seda kohe"* or *"eestlasele hakkab see kohe kõrva"*. Never
-*"eesti mees kuuleb seda"* — it's gendered, leans on a folksy
-stereotype, and reads unprofessional in client copy. Native-speaker
-intuition isn't male.
+**Reference native-speaker intuition neutrally.** Prefer
+*"emakeele kõneleja tajub seda kohe"* or *"eestlasele hakkab see kohe
+kõrva"*. Avoid gendered framing like *"eesti mees kuuleb seda"* — it
+reads folksy in client copy and native-speaker intuition isn't male.
+(This is a minor polish, not a cardinal sin; the bigger anti-pattern
+is the one above — don't narrate the MCP's limits inside the
+deliverable at all.)
 
 ## Calling pattern reminders
 

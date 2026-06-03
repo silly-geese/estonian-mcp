@@ -293,9 +293,14 @@ check("flags 'kõige optimaalsem'",
 r = server.check_redundancy("Pikk ajaline periood möödus.")
 check("flags 'ajaline periood'",
       any(i["rule"] == "fixed-pleonasm" for i in r["issues"]), str(r["issues"]))
-# Idiomatic — must NOT flag
-clean = server.check_redundancy("See on kõige parim lahendus. Nüüd ka suvesärgid.")
-check("'kõige parim' + lone 'ka' not flagged", len(clean["issues"]) == 0, str(clean["issues"]))
+# Idiomatic — must NOT flag. "kõige parem" is the everyday analytic
+# superlative (far more common than the synthetic "parim"); both are
+# correct Estonian and neither is a redundancy, so neither should fire.
+for phrase in ("See on kõige parem lahendus. Nüüd ka suvesärgid.",
+               "See on kõige parim lahendus."):
+    clean = server.check_redundancy(phrase)
+    check(f"idiomatic superlative not flagged: {phrase!r}",
+          len(clean["issues"]) == 0, str(clean["issues"]))
 # Estonian rule label present
 r = server.check_redundancy("Samuti ka.")
 check("rule_estonian present", all(i.get("rule_estonian") for i in r["issues"]))
