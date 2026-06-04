@@ -63,7 +63,32 @@ md5sum .context/models/fasttext-et-medium    # update Dockerfile + CI hash
 
 Then bump the MD5 in `Dockerfile` and `.github/workflows/ci.yml`.
 
-### License
+## `eval_inflection.py`
+
+Benchmarks estonian-mcp's morphology engine (Vabamorf, the synthesizer
+behind the `paradigm` tool) against TalTechNLP's
+[`inflection_et`](https://huggingface.co/datasets/TalTechNLP/inflection_et)
+dataset — the noun-phrase inflection task from EKI's
+[Keelemudelite mõõdupuu](https://moodupuu.eki.ee/).
+
+estonian-mcp is a tool server, not an LLM, so it can't be ranked on the
+model leaderboard. This instead scores our synthesis directly against
+the benchmark's gold data: given a base noun phrase + number + case,
+can we produce the correct inflected form?
+
+```sh
+uv pip install datasets   # dev-only, not a server dependency
+uv run python scripts/eval_inflection.py
+```
+
+Reports any-candidate and first-candidate accuracy, a per-(number, case)
+breakdown, and sample misses. Latest run: **98.1% any-candidate,
+95.6% first-candidate** over 1,400 items (4 cases × sg/pl). The
+residual misses cluster on indeclinable adjectives (e.g. `täis`,
+`tuntud`) that Vabamorf inflects but standard Estonian leaves in base
+form.
+
+## License
 
 cc.et.300 is CC-BY-SA-3.0 (Grave et al., LREC 2018). The compressed
 artifact this script produces inherits CC-BY-SA-3.0. See
