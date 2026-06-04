@@ -88,6 +88,29 @@ residual misses cluster on indeclinable adjectives (e.g. `täis`,
 `tuntud`) that Vabamorf inflects but standard Estonian leaves in base
 form.
 
+## `eval_coverage.py`
+
+Coverage probes for two TalTechNLP datasets that — unlike
+`inflection_et` — don't map to a clean accuracy score, because they're
+generation/comprehension tasks while our tools are detectors/lookups:
+
+```sh
+uv run python scripts/eval_coverage.py 500   # sample size
+```
+
+- **grammar_et** (sentence correction): we report *detection recall* —
+  on what fraction of erroneous sentences does any `check_*`/`spell_check`
+  tool flag something. Latest: **~26%** on a 500 sample. Low by design —
+  our lexicons are small and precision-oriented, not a broad grammar
+  checker; read it as a floor, not a ceiling.
+- **word_meanings_et** (word→definition): we report *WordNet vocabulary
+  coverage* — fraction of target words with an Estonian WordNet entry
+  via `synonyms`. Latest: **~65%** on a 500 sample.
+
+The honest takeaway: deterministic morphology (`inflection_et`,
+96.5%/99.1%) is our home turf; full-sentence correction and free-text
+definitions are only partially served by detector/lookup tools.
+
 ## License
 
 cc.et.300 is CC-BY-SA-3.0 (Grave et al., LREC 2018). The compressed
