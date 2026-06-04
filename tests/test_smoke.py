@@ -52,6 +52,13 @@ check(
     "ambiguity surfaced via analyses_count + is_ambiguous fields",
     all("analyses_count" in row and "is_ambiguous" in row for row in morph),
 )
+# indeclinable flag: lexical indeclinable + -tud/-nud participle = True,
+# normal declinable adjective = False.
+r = server.analyze_morphology("täis pudel tuntud laulja kollane lill")
+flags = {row["word"]: row.get("indeclinable") for row in r}
+check("'täis' flagged indeclinable", flags.get("täis") is True, str(flags))
+check("'tuntud' (-tud participle) flagged indeclinable", flags.get("tuntud") is True, str(flags))
+check("'kollane' NOT indeclinable", flags.get("kollane") is False, str(flags))
 # Marked-usage lexicon: 'tarvitama' should be tagged archaic.
 r = server.analyze_morphology("Ma tarvitan programmi.")
 tarv = next((row for row in r if row.get("lemma") == "tarvitama"), None)

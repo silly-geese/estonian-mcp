@@ -611,6 +611,34 @@ def _usage_note(lemma: str | None, pos: str | None) -> tuple[str | None, str | N
     return None, None
 
 
+# A small set of lexically indeclinable (muutumatu) Estonian adjectives —
+# they keep one form regardless of the noun's case/number. Conservative
+# and high-confidence; extend as real cases turn up.
+_INDECLINABLE_ADJ_ET: frozenset[str] = frozenset({
+    "täis", "eri", "väärt", "katki", "lahti", "valmis", "puru", "segi",
+})
+
+
+def _is_indeclinable_attr(word: str) -> bool:
+    """True if a word does NOT inflect when used attributively (before a
+    noun), so adjective-noun agreement should leave it in base form.
+
+    Two cases, both verified against EKI's inflection_et benchmark:
+    - lexical indeclinables (täis, eri, väärt, ...)
+    - past participles in -tud / -dud / -nud, which are invariant in
+      attributive position (`tuntud laulja` → `tuntud laulja` in the
+      genitive, not *tuntu laulja). Detected by ending because Vabamorf
+      often misanalyses them (e.g. hajutatud → noun 'hajutatu').
+
+    NOT flagged: -v present participles (rahuldav → rahuldava), which do
+    agree normally.
+    """
+    w = word.lower()
+    if w in _INDECLINABLE_ADJ_ET:
+        return True
+    return w.endswith(("tud", "dud", "nud"))
+
+
 @mcp.tool(annotations=ToolAnnotations(
     title="Estonian morphological analysis",
     readOnlyHint=True,
@@ -639,6 +667,11 @@ def analyze_morphology(text: str, all_analyses: bool = False) -> list[dict]:
       - usage_note_estonian: human-readable Estonian rendering of the
         same flag (quote this verbatim in Estonian replies; do NOT
         translate the English usage_note yourself)
+      - indeclinable: True for words that stay in base form when used
+        attributively (lexical indeclinables like `täis`, and -tud/-nud
+        past participles like `tuntud`) — i.e. they do NOT take the
+        noun's case ending in agreement. Use this before inflecting a
+        noun phrase so you don't wrongly decline an invariant adjective.
 
     Input is capped at 100,000 characters.
     """
@@ -659,6 +692,7 @@ def analyze_morphology(text: str, all_analyses: bool = False) -> list[dict]:
         analyses_count = len(lemmas)
         is_ambiguous = analyses_count > 1
         code, et = _usage_note(_first(lemmas), _first(pos))
+        indeclinable = _is_indeclinable_attr(word)
         if all_analyses:
             analyses = [
                 {
@@ -679,6 +713,7 @@ def analyze_morphology(text: str, all_analyses: bool = False) -> list[dict]:
                 "is_ambiguous": is_ambiguous,
                 "usage_note": code,
                 "usage_note_estonian": et,
+                "indeclinable": indeclinable,
             })
         else:
             out.append({
@@ -694,6 +729,7 @@ def analyze_morphology(text: str, all_analyses: bool = False) -> list[dict]:
                 "is_ambiguous": is_ambiguous,
                 "usage_note": code,
                 "usage_note_estonian": et,
+                "indeclinable": indeclinable,
             })
     return out
 

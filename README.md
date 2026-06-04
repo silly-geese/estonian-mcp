@@ -20,6 +20,14 @@ in ground truth so it stops guessing on the mechanical layer
 (spelling, case forms, conjugation) and gives it real Estonian
 synonyms instead of inventing them.
 
+> **Benchmark:** on EKI's [`inflection_et`](https://huggingface.co/datasets/TalTechNLP/inflection_et)
+> gold dataset (the noun-phrase inflection task behind
+> [Keelemudelite mõõdupuu](https://moodupuu.eki.ee/)), our morphology
+> engine scores **96.5% first-candidate / 99.1% any-candidate** over
+> 1,400 items. Reproduce: `uv run python scripts/eval_inflection.py`.
+> (We're a tool server, not a rankable LLM — this scores our tools
+> against the same gold data the leaderboard uses.)
+
 **Three ways to use it:**
 
 1. 👉 **Paste a URL into your Claude app** — the easiest path, no

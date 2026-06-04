@@ -33,6 +33,11 @@ from collections import defaultdict
 from datasets import load_dataset
 from estnltk.vabamorf.morf import Vabamorf
 
+# Reuse the MCP's own indeclinability knowledge so the score reflects a
+# real capability the server has, not an eval-only special case.
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+from server import _is_indeclinable_attr  # noqa: E402
+
 # Estonian number / case names (as used in inflection_et) → Vabamorf
 # form codes. The illative maps to BOTH the long (ill) and the short /
 # aditiiv (adt) form, since the dataset accepts both as gold.
@@ -74,8 +79,13 @@ def main() -> None:
         by_key_total[key] += 1
 
         # Candidate surfaces per word, across all acceptable form codes.
+        # Indeclinable attributives (täis, -tud/-nud participles) keep
+        # their base form — the MCP knows this via _is_indeclinable_attr.
         per_word: list[set[str]] = []
         for w in words:
+            if _is_indeclinable_attr(w):
+                per_word.append({w})
+                continue
             cands: set[str] = set()
             for form in forms:
                 cands.update(synth(vm, w, form))
@@ -90,9 +100,11 @@ def main() -> None:
                 misses.append((phrase, row["plurality"], row["case"],
                                sorted(gold)[:2], sorted(predicted)[:2]))
 
-        # First-candidate: top synth of the first (primary) form per word.
+        # First-candidate: top synth of the first (primary) form per word
+        # (indeclinables kept in base form).
         first = " ".join(
-            (synth(vm, w, forms[0]) or [w])[0] for w in words
+            w if _is_indeclinable_attr(w) else (synth(vm, w, forms[0]) or [w])[0]
+            for w in words
         )
         if first in gold:
             first_ok += 1
