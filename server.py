@@ -1912,6 +1912,7 @@ def _check_object_case(text: str) -> dict:
         # verb/negation, so this cheaply skips the subject-noun FPs we'd
         # otherwise generate.
         has_negation = False
+        has_olema = False
         partitive_verb: str | None = None
         trigger_index = -1
         for idx, span in enumerate(sent_spans):
@@ -1920,10 +1921,25 @@ def _check_object_case(text: str) -> dict:
                 has_negation = True
                 if trigger_index == -1:
                     trigger_index = idx
+            if lemma == "olema":
+                has_olema = True
             if lemma in _PARTITIVE_ONLY_VERBS_ET:
                 partitive_verb = lemma
                 if trigger_index == -1:
                     trigger_index = idx
+
+        # Predicative after a negated copula stays NOMINATIVE, not
+        # partitive ("see EI OLE raamat", not *raamatut) — so a negated
+        # `olema` clause is not an object-case context. We can't reliably
+        # tell the copula use ("X ei ole Y") from the existential/
+        # possessive use ("mul ei ole raamatut", which IS partitive)
+        # without parsing, so we suppress the negation rule whenever
+        # olema is the negated verb. Trade-off: avoids the common
+        # false positive on predicatives at the cost of missing the
+        # narrower existential-object case. The partitive-only-verb rule
+        # is unaffected.
+        if has_negation and has_olema:
+            has_negation = False
 
         if not (has_negation or partitive_verb):
             continue

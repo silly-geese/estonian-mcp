@@ -256,6 +256,10 @@ check("negation flags non-partitive object",
           for i in r["issues"]), str(r["issues"]))
 clean = server.check_object_case("Ma ei söönud leiba.")
 check("negation + correct partitive: no flag", len(clean["issues"]) == 0)
+# Copula: predicative after negated 'olema' stays nominative (correct),
+# so it must NOT be flagged as an object-case error.
+cop = server.check_object_case("See ei ole raamat, vaid ajakiri.")
+check("negated copula predicative NOT flagged", len(cop["issues"]) == 0, str(cop["issues"]))
 # Partitive-only verb rule
 r = server.check_object_case("Ma armastan koogi.")
 check("partitive-only verb flags wrong-case object",
