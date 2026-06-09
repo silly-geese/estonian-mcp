@@ -125,7 +125,26 @@ INDEX_HTML = b"""<!DOCTYPE html>
 
 log = logging.getLogger("estonian-mcp")
 
-mcp = FastMCP("estonian-mcp")
+# Server-level description / system prompt. Surfaced in the MCP
+# `initialize` response (`instructions`), which registries like Smithery
+# read as the server description, and which gives an LLM client context
+# on what the server is for and how to use it.
+SERVER_INSTRUCTIONS = (
+    "Estonian NLP tools for AI agents that write, edit, or proofread "
+    "Estonian. Provides spell-check, morphological analysis, lemmatization, "
+    "POS tagging, tokenization, syllabification, named-entity recognition, "
+    "WordNet synonyms, fastText related words, full inflection paradigms, and "
+    "EKI-Reeglid orthography checks (capitalization, compound writing, "
+    "commas, number formatting, abbreviation hyphenation), plus object-case, "
+    "register, style, redundancy and calque-risk checks. "
+    "Use these tools as ground truth rather than guessing Estonian spelling, "
+    "case forms, or inflections — language models routinely hallucinate "
+    "plausible-but-wrong Estonian morphology. All tools are read-only and "
+    "operate on Estonian text; results are returned in UTF-8 (preserve "
+    "õ/ä/ö/ü/š/ž)."
+)
+
+mcp = FastMCP("estonian-mcp", instructions=SERVER_INSTRUCTIONS)
 # FastMCP's constructor doesn't accept a server-version kwarg, so reach
 # into the underlying MCPServer to override the SDK-default version that
 # would otherwise show up in `initialize` responses (and Smithery's UI).
@@ -2825,7 +2844,12 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
             # Spec: https://smithery.ai/docs/build/publish#troubleshooting
             if path == "/.well-known/mcp/server-card.json":
                 card: dict[str, Any] = {
-                    "serverInfo": {"name": "estonian-mcp", "version": SERVER_VERSION},
+                    "serverInfo": {
+                        "name": "estonian-mcp",
+                        "version": SERVER_VERSION,
+                        "description": SERVER_INSTRUCTIONS,
+                    },
+                    "description": SERVER_INSTRUCTIONS,
                     "authentication": {"required": not public_mode},
                     "endpoints": {"streamable_http": "/mcp"},
                 }
