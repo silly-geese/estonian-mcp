@@ -31,10 +31,11 @@ import sys
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, TypedDict
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -571,6 +572,86 @@ def _counted(fn):
 
 
 # ---------------------------------------------------------------------------
+# Output-schema types. total=False so every field is optional — this
+# advertises a structured output schema to clients (Smithery quality
+# score) without FastMCP rejecting a return that conditionally omits a
+# key. Inner shapes stay loose (list[dict]/dict) on purpose; the
+# top-level schema is what matters.
+# ---------------------------------------------------------------------------
+
+class _TokenizeResult(TypedDict, total=False):
+    sentences: list[str]
+    words: list[str]
+
+
+class _ParadigmResult(TypedDict, total=False):
+    input: str
+    lemma: str
+    partofspeech: str
+    word_class: str
+    forms: list[dict]
+    summary_estonian: str
+    note: str
+
+
+class _RelatedWordsResult(TypedDict, total=False):
+    word: str
+    matches: list[dict]
+
+
+class _SynonymsResult(TypedDict, total=False):
+    word: str
+    synsets: list[dict]
+    synset_count: int
+
+
+class _HyphenationResult(TypedDict, total=False):
+    word: str
+    breaks: list[int]
+    preferred: str
+    syllable_count: int
+    summary_estonian: str
+    note: str
+
+
+class _CompoundFamiliarityResult(TypedDict, total=False):
+    text: str
+    compounds_analysed: int
+    suspect_compounds: list[dict]
+    all_compounds: list[dict]
+    summary_estonian: str
+    note: str
+
+
+class _StyleResult(TypedDict, total=False):
+    text: str
+    repetition: dict
+    passive_voice: dict
+    sentence_length: dict
+    hedging: dict
+    note: str
+
+
+class _RegisterResult(TypedDict, total=False):
+    tier: str
+    tier_estonian: str
+    score: float
+    formal_markers: list[str]
+    colloquial_markers: list[str]
+    consistency: dict
+    word_count: int
+    note: str
+
+
+class _CheckResult(TypedDict, total=False):
+    """Shared output shape for the issue-list orthography/grammar checks."""
+    text: str
+    issues: list[dict]
+    summary_estonian: str
+    note: str
+
+
+# ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
 
@@ -581,7 +662,7 @@ def _counted(fn):
     openWorldHint=False,
 ))
 @_counted
-def tokenize(text: str) -> dict:
+def tokenize(text: Annotated[str, Field(description="Estonian text to split into sentences and words.")]) -> _TokenizeResult:
     """Split Estonian text into sentences and words.
 
     Returns a dict with `sentences` (list of strings) and `words` (list of strings).
@@ -646,7 +727,7 @@ def _is_indeclinable_attr(word: str) -> bool:
     openWorldHint=False,
 ))
 @_counted
-def analyze_morphology(text: str, all_analyses: bool = False) -> list[dict]:
+def analyze_morphology(text: Annotated[str, Field(description="Estonian text to analyse morphologically.")], all_analyses: Annotated[bool, Field(description="Return every ambiguous analysis per word instead of only the most likely one.")] = False) -> list[dict]:
     """Run full morphological analysis on Estonian text.
 
     For each word returns lemma(s), part-of-speech, grammatical form, root,
@@ -825,7 +906,7 @@ def _paradigm(word: str) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def paradigm(word: str) -> dict:
+def paradigm(word: Annotated[str, Field(description="A single Estonian word (lemma or inflected form) to generate the full paradigm for.")]) -> _ParadigmResult:
     """Generate the full inflection paradigm for an Estonian word.
 
     For nominals (nouns, adjectives, pronouns, numerals): produces all 14
@@ -853,7 +934,7 @@ def paradigm(word: str) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def lemmatize(text: str) -> list[dict]:
+def lemmatize(text: Annotated[str, Field(description="Estonian text to reduce to dictionary-form lemmas.")]) -> list[dict]:
     """Return lemma (dictionary form) for each word in the text.
 
     Concise output: `[{"word": ..., "lemma": ...}, ...]`. Input is capped at
@@ -876,7 +957,7 @@ def lemmatize(text: str) -> list[dict]:
     openWorldHint=False,
 ))
 @_counted
-def pos_tag(text: str) -> list[dict]:
+def pos_tag(text: Annotated[str, Field(description="Estonian text to part-of-speech tag.")]) -> list[dict]:
     """Return part-of-speech tag for each word.
 
     POS tag set: S=noun, V=verb, A=adj, P=pron, D=adv, K=adp, J=conj,
@@ -900,7 +981,7 @@ def pos_tag(text: str) -> list[dict]:
     openWorldHint=False,
 ))
 @_counted
-def spell_check(text: str, suggestions: bool = True) -> list[dict]:
+def spell_check(text: Annotated[str, Field(description="Estonian text to spell-check.")], suggestions: Annotated[bool, Field(description="Include correction suggestions for misspelled words.")] = True) -> list[dict]:
     """Check Estonian spelling for each word and optionally return suggestions.
 
     Returns one entry per word with `text`, `spelling` (bool), and
@@ -924,7 +1005,7 @@ def spell_check(text: str, suggestions: bool = True) -> list[dict]:
     openWorldHint=False,
 ))
 @_counted
-def syllabify(word: str) -> list[dict]:
+def syllabify(word: Annotated[str, Field(description="A single Estonian word (no whitespace) to split into syllables.")]) -> list[dict]:
     """Split a single Estonian word into syllables with quantity and accent.
 
     Each syllable entry: `{"syllable": str, "quantity": int, "accent": int}`.
@@ -944,7 +1025,7 @@ def syllabify(word: str) -> list[dict]:
     openWorldHint=False,
 ))
 @_counted
-def named_entities(text: str) -> list[dict]:
+def named_entities(text: Annotated[str, Field(description="Estonian text to extract named entities (people, places, organisations) from.")]) -> list[dict]:
     """Extract named entities (PER/LOC/ORG) using EstNLTK's CRF model.
 
     Returns `[{"text": ..., "type": ..., "start": ..., "end": ...}, ...]`.
@@ -972,7 +1053,7 @@ def named_entities(text: str) -> list[dict]:
     openWorldHint=False,
 ))
 @_counted
-def find_related_words(word: str, n: int = 10) -> dict:
+def find_related_words(word: Annotated[str, Field(description="A single Estonian word to find semantically related words for.")], n: Annotated[int, Field(description="How many nearest-neighbour words to return (1-50).")] = 10) -> _RelatedWordsResult:
     """Find Estonian words semantically similar to the input via fastText.
 
     Returns the top-n nearest neighbours by cosine similarity over a
@@ -1021,7 +1102,7 @@ def find_related_words(word: str, n: int = 10) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def synonyms(word: str, max_synsets: int = 5) -> dict:
+def synonyms(word: Annotated[str, Field(description="A single Estonian word to look up WordNet synonyms for.")], max_synsets: Annotated[int, Field(description="Maximum number of word-sense synsets to return.")] = 5) -> _SynonymsResult:
     """Look up Estonian synonyms via WordNet.
 
     Returns synsets (groups of synonymous lemmas) for the input word, each
@@ -1331,7 +1412,7 @@ def _check_compounds(text: str) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def check_compounds(text: str) -> dict:
+def check_compounds(text: Annotated[str, Field(description="Estonian text to check for wrongly split compound words.")]) -> _CheckResult:
     """Heuristic Estonian compound-word check (liitsõnaõigekiri).
 
     Scans for common AI-generated splits of words that should be written
@@ -1410,7 +1491,7 @@ def _check_punctuation(text: str) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def check_punctuation(text: str) -> dict:
+def check_punctuation(text: Annotated[str, Field(description="Estonian text to check for missing commas before subordinating conjunctions.")]) -> _CheckResult:
     """Heuristic Estonian punctuation check — comma-before-clause rule.
 
     Flags missing commas before subordinating conjunctions where Estonian
@@ -1493,7 +1574,7 @@ def _check_hyphenation(word: str) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def check_hyphenation(word: str) -> dict:
+def check_hyphenation(word: Annotated[str, Field(description="A single Estonian word (no whitespace) to find safe line-break positions for.")]) -> _HyphenationResult:
     """Return safe line-break positions for an Estonian word (poolitamine).
 
     Different from `syllabify` (which is phonological): this returns
@@ -1583,7 +1664,7 @@ def _check_numbers(text: str) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def check_numbers(text: str) -> dict:
+def check_numbers(text: Annotated[str, Field(description="Estonian text to check for number-formatting (decimal comma, thousands space).")]) -> _CheckResult:
     """Heuristic Estonian number-writing check.
 
     Flags two clear-cut cases per EKI Reeglid:
@@ -1607,7 +1688,7 @@ def check_numbers(text: str) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def check_capitalization(text: str) -> dict:
+def check_capitalization(text: Annotated[str, Field(description="Estonian text to check for capitalization errors (Algustäheortograafia).")]) -> _CheckResult:
     """Heuristic Estonian capitalization checker (Algustäheortograafia).
 
     Scans Estonian text for the most common AI-generated capitalization
@@ -1753,7 +1834,7 @@ def _check_compound_familiarity(text: str) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def check_compound_familiarity(text: str) -> dict:
+def check_compound_familiarity(text: Annotated[str, Field(description="Estonian text whose compound nouns are checked for calque / translationese risk.")]) -> _CompoundFamiliarityResult:
     """fastText-based diagnostic for compound-noun familiarity in Estonian.
 
     For each compound noun (root_tokens length >= 2), returns its top
@@ -1859,7 +1940,7 @@ def _check_abbreviation_hyphenation(text: str) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def check_abbreviation_hyphenation(text: str) -> dict:
+def check_abbreviation_hyphenation(text: Annotated[str, Field(description="Estonian text to check for abbreviation case-ending hyphenation (MCPst → MCP-st).")]) -> _CheckResult:
     """Heuristic check for the EKI Reeglid rule that case endings on
     Latin-letter / all-caps abbreviations are separated by a hyphen.
 
@@ -2029,7 +2110,7 @@ def _check_object_case(text: str) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def check_object_case(text: str) -> dict:
+def check_object_case(text: Annotated[str, Field(description="Estonian text to check for direct-object case errors under negation and partitive-governing verbs.")]) -> _CheckResult:
     """Heuristic Estonian object-case-government check.
 
     Catches the single biggest class of confidently-wrong Estonian that
@@ -2154,7 +2235,7 @@ def _check_redundancy(text: str) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def check_redundancy(text: str) -> dict:
+def check_redundancy(text: Annotated[str, Field(description="Estonian text to check for pleonasm / redundant word pairs.")]) -> _CheckResult:
     """Heuristic Estonian pleonasm / semantic-doubling check.
 
     Flags phrasing that is grammatically valid but reads redundant to a
@@ -2347,7 +2428,7 @@ def _check_style(text: str) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def check_style(text: str) -> dict:
+def check_style(text: Annotated[str, Field(description="Estonian text to compute style metrics for (repetition, passive voice, sentence length, hedging).")]) -> _StyleResult:
     """Heuristic Estonian style metrics for newsletter / ad / email copy.
 
     Returns four metrics that flag common writing issues, each with an
@@ -2377,7 +2458,7 @@ def check_style(text: str) -> dict:
     openWorldHint=False,
 ))
 @_counted
-def classify_register(text: str) -> dict:
+def classify_register(text: Annotated[str, Field(description="Estonian text to classify by register (formal vs colloquial).")]) -> _RegisterResult:
     """Heuristic register classifier for Estonian (formal vs colloquial).
 
     Returns a tier label (English in `tier`, correct Estonian in
