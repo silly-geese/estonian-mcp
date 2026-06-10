@@ -232,6 +232,30 @@ response on that — no more hallucinated lemmas or invented case forms.
 client's Connectors UI. "Local-install path" = clone the repo and
 point the client at `python server.py`.
 
+## Reducing permission prompts
+
+Claude clients ask for confirmation before calling a tool from a
+custom/third-party connector — that's the client's security default,
+not something the server controls (there's no MCP field a server can
+send to suppress it). You'll especially see it right after adding or
+updating the connector, since the client re-checks tools it hasn't
+seen before.
+
+Good news: **all 21 tools are marked `readOnlyHint: true`** (they only
+read text, never write or call out), so any well-behaved client can
+safely let you allow them once and stop asking:
+
+- **Claude Desktop / Cowork / claude.ai** — when the prompt appears,
+  choose **"Always allow"** for the connector (or toggle it in the
+  connector's settings). One time, then it's quiet.
+- **Claude Code** — run `/permissions` and allow the estonian-mcp
+  tools, or allow the whole server at once.
+
+Re-releasing or updating the connector can reset that "always allow"
+state (the client sees changed tools and re-asks) — just allow it
+again. A verified listing in the Anthropic Connectors Directory also
+gets smoother permission UX than an unverified custom connector.
+
 ---
 
 ## Self-host (advanced)
