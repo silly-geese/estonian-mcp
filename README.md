@@ -115,12 +115,28 @@ If it doesn't, you have an older Desktop that needs a JSON config
 file edit — see [Self-host (advanced)](#self-host-advanced) for the
 local-stdio path, which works on every version.
 
+### In Claude Code (CLI)
+
+One command — no clone, no Python, no `uv`. Point Claude Code at the
+hosted server over HTTP:
+
+```sh
+claude mcp add --transport http estnltk https://estonian-mcp.fly.dev/mcp
+```
+
+Then run `/mcp` inside a session to confirm `estnltk` shows as
+connected. The tools are live immediately — ask Claude to proofread
+or lemmatize Estonian text and it'll reach for them.
+
+Want a fully local, zero-network setup instead? See the stdio path
+in [Self-host (advanced)](#self-host-advanced).
+
 ### Don't see your client here?
 
 Any tool that supports MCP over HTTPS can connect — just point it at
 `https://estonian-mcp.fly.dev/mcp` with no auth. If your client only
-speaks stdio (Cursor, VS Code MCP, Continue, Zed, Claude Code), jump
-to the local-install path in [Self-host](#self-host-advanced).
+speaks stdio (Cursor, VS Code MCP, Continue, Zed), jump to the
+local-install path in [Self-host](#self-host-advanced).
 
 ---
 
@@ -224,7 +240,7 @@ response on that — no more hallucinated lemmas or invented case forms.
 | **Claude Cowork** | ✅ Paste URL | ✅ stdio via JSON |
 | **Claude Desktop** | ✅ Paste URL (newer) | ✅ stdio via JSON |
 | **claude.ai web** | ✅ Paste URL | — |
-| **Claude Code** (CLI) | — | ✅ `claude mcp add ...` |
+| **Claude Code** (CLI) | ✅ `claude mcp add --transport http` | ✅ `claude mcp add ...` (stdio) |
 | **Cursor** | — | ✅ stdio via JSON |
 | **VS Code MCP / Continue / Zed** | — | ✅ stdio via JSON |
 
