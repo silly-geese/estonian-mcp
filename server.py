@@ -2514,6 +2514,12 @@ _STATS: dict[str, Any] = {
     "by_path": {},
 }
 
+# Ring buffer of recent 5xx errors so they're inspectable at /metrics
+# without depending on Fly's short-lived log tail. PII-free: only
+# timestamp, path, status, and (when known) the exception type — never
+# request bodies. Persisted with the counters so they survive restarts.
+_recent_errors: collections.deque = collections.deque(maxlen=20)
+
 # Persistence: if ESTNLTK_MCP_METRICS_PATH is set (default
 # /data/metrics.json — matches the Fly volume mount), counters survive
 # machine restarts. Locally, the path's parent dir doesn't exist and
@@ -2537,6 +2543,9 @@ def _load_persistent_stats() -> None:
         _STATS["by_path"] = {str(k): int(v) for k, v in (data.get("by_path") or {}).items()}
         _TOOL_CALLS.clear()
         _TOOL_CALLS.update({str(k): int(v) for k, v in (data.get("tool_calls") or {}).items()})
+        _recent_errors.clear()
+        for e in (data.get("recent_errors") or []):
+            _recent_errors.append(e)
         log.info(
             "metrics persistence: restored total=%d, tool_calls=%d from %s",
             _STATS["total"], sum(_TOOL_CALLS.values()), _METRICS_PATH,
@@ -2558,11 +2567,22 @@ def _save_persistent_stats() -> None:
             "by_status": _STATS["by_status"],
             "by_path": _STATS["by_path"],
             "tool_calls": _TOOL_CALLS,
+            "recent_errors": list(_recent_errors),
             "saved_at_unix": int(time.time()),
         }))
         tmp.replace(_METRICS_PATH)
     except Exception as e:
         log.warning("metrics persistence: failed to save %s: %s", _METRICS_PATH, e)
+
+
+def _record_error(path: str, status: int, error: str | None) -> None:
+    """Append a PII-free breadcrumb for a 5xx response to the ring buffer."""
+    _recent_errors.append({
+        "ts": int(time.time()),
+        "path": path,
+        "status": status,
+        "error": error,
+    })
 
 
 def _stats_record(status: int, path: str) -> None:
@@ -2716,11 +2736,17 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
         path = scope.get("path", "")
         # Wrap send so we can capture the final response status for
         # /metrics without changing the inner app's contract.
-        captured = {"status": 0}
+        captured: dict[str, Any] = {"status": 0, "error": None}
 
         async def send(message):
             if message["type"] == "http.response.start":
-                captured["status"] = message.get("status", 0)
+                status = message.get("status", 0)
+                captured["status"] = status
+                # Record any 5xx — covers both exceptions our wrapper
+                # catches (error type set below) AND 500s the inner MCP
+                # app returns on its own (error stays None).
+                if status >= 500:
+                    _record_error(path, status, captured.get("error"))
             await send_raw(message)
 
         try:
@@ -2771,6 +2797,7 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                     "by_path": dict(_STATS["by_path"]),
                     "tool_calls_total": sum(_TOOL_CALLS.values()),
                     "tool_calls": dict(_TOOL_CALLS),
+                    "recent_errors": list(_recent_errors),
                     "uptime_seconds": int(time.time() - _STATS_START_TS),
                     "started_at_unix": int(_STATS_START_TS),
                     "note": (
@@ -2784,8 +2811,12 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                         "so with >1 machine each tracks its own and /metrics "
                         "reflects whichever served the request. started_at_unix "
                         "is the process start, NOT when tracking began — the "
-                        "counts span all persisted history. Records tool NAME "
-                        "+ count only, never arguments; privacy posture in "
+                        "counts span all persisted history. recent_errors is a "
+                        "ring buffer of the last 20 5xx responses (ts, path, "
+                        "status, exception type) so failures are inspectable "
+                        "here without Fly's short-lived log tail; it persists "
+                        "with the counters. Records tool NAME + count only, "
+                        "never arguments; PII-free; privacy posture in "
                         "SECURITY.md is unchanged."
                     ),
                 }
@@ -2890,12 +2921,17 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
             # BaseException, so it passes through here and normal stream
             # teardown proceeds untouched.
             log.error("unhandled error on %s: %s", path, type(exc).__name__)
+            # Stash the exception type so the send wrapper records it on the
+            # ring buffer when the 500 below goes out.
+            captured["error"] = type(exc).__name__
             if captured["status"] == 0:
                 await _send_status(send, 500, {"error": "internal_error"})
             else:
-                # Response already in flight (e.g. mid-SSE-stream); we
-                # can't cleanly send a 500, so let the server framework
-                # close the half-sent connection.
+                # Response already in flight (e.g. mid-SSE-stream); we can't
+                # cleanly send a 500, so let the server framework close the
+                # half-sent connection. No new http.response.start will fire,
+                # so record the breadcrumb directly here.
+                _record_error(path, captured["status"], type(exc).__name__)
                 raise
         finally:
             _stats_record(captured["status"] or 0, path)
