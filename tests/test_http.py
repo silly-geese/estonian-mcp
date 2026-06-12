@@ -113,6 +113,7 @@ async def run() -> None:
         check("metrics has by_status dict", isinstance(body.get("by_status"), dict))
         check("metrics has by_path dict", isinstance(body.get("by_path"), dict))
         check("metrics has uptime_seconds", "uptime_seconds" in body)
+        check("metrics has recent_errors list", isinstance(body.get("recent_errors"), list))
 
         print("auth")
         r = await c.post("/mcp", json={})
@@ -191,12 +192,25 @@ async def run() -> None:
         check("public: per-IP rate limit triggers 429", 429 in statuses, str(statuses))
 
     print("unhandled-error guard")
+    server._recent_errors.clear()
     boom_app = server._build_http_app(token=None, rate_limit=50, public_mode=True, inner=boom_inner)
     transport2 = httpx.ASGITransport(app=boom_app)
     async with httpx.AsyncClient(transport=transport2, base_url="http://t") as c:
         r = await c.post("/mcp", json={})
         check("inner exception → clean 500 (not a raw crash)", r.status_code == 500, str(r.status_code))
         check("500 body is structured", r.json().get("error") == "internal_error", str(r.json()))
+
+        # The 500 should leave a PII-free breadcrumb in the ring buffer,
+        # visible at /metrics, with the exception type captured.
+        r = await c.get("/metrics")
+        errs = r.json().get("recent_errors", [])
+        check("recent_errors captured the 500", len(errs) >= 1, str(errs))
+        if errs:
+            last = errs[-1]
+            check("recent_error path is /mcp", last.get("path") == "/mcp", str(last))
+            check("recent_error status is 500", last.get("status") == 500, str(last))
+            check("recent_error type is RuntimeError", last.get("error") == "RuntimeError", str(last))
+            check("recent_error has ts", isinstance(last.get("ts"), int), str(last))
 
 
 def metrics_persistence_test() -> None:
@@ -209,22 +223,28 @@ def metrics_persistence_test() -> None:
     saved_total = server._STATS["total"]
     saved_status = dict(server._STATS["by_status"])
     saved_pathd = dict(server._STATS["by_path"])
+    saved_errors = list(server._recent_errors)
     try:
         with tempfile.TemporaryDirectory() as d:
             server._METRICS_PATH = Path(d) / "metrics.json"
             server._STATS["total"] = 12345
             server._STATS["by_status"] = {"200": 12000, "429": 345}
             server._STATS["by_path"] = {"/mcp": 12300, "/health": 45}
+            server._recent_errors.clear()
+            server._recent_errors.append({"ts": 1700000000, "path": "/mcp", "status": 500, "error": "RuntimeError"})
             server._save_persistent_stats()
             check("file written", server._METRICS_PATH.exists())
             # wipe + restore
             server._STATS["total"] = 0
             server._STATS["by_status"] = {}
             server._STATS["by_path"] = {}
+            server._recent_errors.clear()
             server._load_persistent_stats()
             check("total restored", server._STATS["total"] == 12345)
             check("by_status restored", server._STATS["by_status"] == {"200": 12000, "429": 345})
             check("by_path restored", server._STATS["by_path"] == {"/mcp": 12300, "/health": 45})
+            check("recent_errors restored", list(server._recent_errors) == [
+                {"ts": 1700000000, "path": "/mcp", "status": 500, "error": "RuntimeError"}], str(list(server._recent_errors)))
             # graceful no-op when parent dir is gone (local dev path)
             server._METRICS_PATH = Path("/this/path/does/not/exist/metrics.json")
             try:
@@ -237,6 +257,8 @@ def metrics_persistence_test() -> None:
         server._STATS["total"] = saved_total
         server._STATS["by_status"] = saved_status
         server._STATS["by_path"] = saved_pathd
+        server._recent_errors.clear()
+        server._recent_errors.extend(saved_errors)
 
 
 asyncio.run(run())
