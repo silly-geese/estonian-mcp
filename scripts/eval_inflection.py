@@ -1,6 +1,6 @@
 """Benchmark estonian-mcp's morphology engine against TalTechNLP's
-`inflection_et` dataset — the noun-phrase inflection task from EKI's
-Keelemudelite mõõdupuu (https://moodupuu.eki.ee/).
+`inflection_et` dataset — a noun-phrase inflection benchmark
+(Lillepalu & Alumäe, https://arxiv.org/abs/2510.21193v2).
 
 estonian-mcp is a tool server, not a language model, so it can't be
 "ranked on the leaderboard". Instead this scores our morphological

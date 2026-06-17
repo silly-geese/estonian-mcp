@@ -68,8 +68,8 @@ Then bump the MD5 in `Dockerfile` and `.github/workflows/ci.yml`.
 Benchmarks estonian-mcp's morphology engine (Vabamorf, the synthesizer
 behind the `paradigm` tool) against TalTechNLP's
 [`inflection_et`](https://huggingface.co/datasets/TalTechNLP/inflection_et)
-dataset — the noun-phrase inflection task from EKI's
-[Keelemudelite mõõdupuu](https://moodupuu.eki.ee/).
+dataset — a noun-phrase inflection benchmark (Lillepalu & Alumäe,
+[arXiv:2510.21193](https://arxiv.org/abs/2510.21193v2)).
 
 estonian-mcp is a tool server, not an LLM, so it can't be ranked on the
 model leaderboard. This instead scores our synthesis directly against
