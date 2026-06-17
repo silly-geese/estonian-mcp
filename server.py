@@ -727,7 +727,7 @@ def _is_indeclinable_attr(word: str) -> bool:
     """True if a word does NOT inflect when used attributively (before a
     noun), so adjective-noun agreement should leave it in base form.
 
-    Two cases, both verified against EKI's inflection_et benchmark:
+    Two cases, both verified against TalTech's inflection_et benchmark:
     - lexical indeclinables (täis, eri, väärt, ...)
     - past participles in -tud / -dud / -nud, which are invariant in
       attributive position (`tuntud laulja` → `tuntud laulja` in the
