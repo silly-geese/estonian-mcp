@@ -7,6 +7,36 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-06-17
+
+A small quality release: sharper AI-coinage detection and a persistent
+error log at `/metrics`. No breaking changes — drop-in over 0.2.0.
+
+### Added
+
+- **Persistent recent-errors log at `/metrics`.** The last 20 5xx
+  responses (timestamp, path, status, exception type) are kept in a ring
+  buffer exposed at `/metrics` and persisted alongside the counters, so
+  failures stay inspectable without relying on Fly's short-lived log tail.
+  PII-free — no request bodies, no tokens.
+
+### Changed
+
+- **`check_compound_familiarity` now catches more AI coinages.** The
+  suspect-flag logic was a single score gate at 0.55, which let coinages
+  like `toortõlkeoht` (top similarity 0.571) slip through. It now flags an
+  out-of-vocab compound when its top similarity is below **0.60** OR its
+  fastText neighbours are mostly scrape-artifact tokens (the `mõtteliin`
+  failure mode). Each compound gains a `neighbour_quality` breakdown and,
+  when suspect, a human-readable `reasons` list. The decision is a pure
+  function (`_familiarity_verdict`), unit-tested against real model output
+  without loading the 33 MB model (`tests/test_familiarity.py`).
+- **Guidance against trusting `spell_check` blindly.** Vabamorf accepts any
+  morphologically valid compound — including coined ones — so `spell_check`
+  returning `spelling: true` does not prove a word is real Estonian. The
+  `spell_check` docstring and the server instructions now say so and point
+  to `check_compound_familiarity` for coined or unusual compounds.
+
 ## [0.2.0] — 2026-06-03
 
 21 tools (up from 20), a bigger embedding model, request-count
