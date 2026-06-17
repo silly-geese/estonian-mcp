@@ -139,7 +139,11 @@ SERVER_INSTRUCTIONS = (
     "register, style, redundancy and calque-risk checks. "
     "Use these tools as ground truth rather than guessing Estonian spelling, "
     "case forms, or inflections — language models routinely hallucinate "
-    "plausible-but-wrong Estonian morphology. All tools are read-only and "
+    "plausible-but-wrong Estonian morphology. Note that spell_check passing "
+    "does NOT prove a word is real Estonian: Vabamorf accepts any "
+    "morphologically valid compound, including ones you just coined, so "
+    "verify coined or unusual compounds with check_compound_familiarity "
+    "before using them. All tools are read-only and "
     "operate on Estonian text; results are returned in UTF-8 (preserve "
     "õ/ä/ö/ü/š/ž)."
 )
@@ -1006,6 +1010,13 @@ def spell_check(text: Annotated[str, Field(description="Estonian text to spell-c
     Returns one entry per word with `text`, `spelling` (bool), and
     `suggestions` (list of correction candidates) when `suggestions=True`.
     Input is capped at 100,000 characters.
+
+    CAVEAT: Vabamorf accepts ANY morphologically well-formed word,
+    including compounds you just invented (e.g. `toortõlkeoht`) — it
+    splits them into valid roots and reports `spelling: true`. So passing
+    spell_check does NOT mean a word is real, attested Estonian. For a
+    coined or unusual compound, confirm it with `check_compound_familiarity`
+    before trusting it.
     """
     _check_text(text)
     Text = _Text()
@@ -1737,18 +1748,89 @@ def check_capitalization(text: Annotated[str, Field(description="Estonian text t
     return _check_capitalization(text)
 
 
+# Familiarity-verdict thresholds. The fastText nearest-neighbour score
+# is a fuzzy proxy for "is this compound actually used in Estonian"; these
+# gates turn it into a recall-favouring "worth a second look" flag.
+# Tuned against real model output (see tests/test_familiarity.py):
+# coinages toortõlkeoht (top 0.571) and mõtteliin (0.536) MUST flag,
+# while real OOV compounds tervisekindlustus (0.71) and allalaadimisnupp
+# (0.66) must NOT. The old single gate sat at 0.55 — toortõlkeoht slipped
+# through at 0.571, which is exactly the miss that motivated this.
+_FAMILIARITY_SUSPECT_SCORE = 0.60
+_FAMILIARITY_JUNK_RATIO = 0.4
+
+
+def _looks_like_scrape_junk(word: str) -> bool:
+    """True for concatenated web-scrape tokens the compressed model's
+    vocabulary carries (e.g. 'KoolKudumidPolosärgidTriiksärgid'). An
+    uppercase letter anywhere but the first position never occurs in a
+    normal Estonian word, so such a neighbour means fastText fell back to
+    character n-grams because the input compound is unfamiliar."""
+    return any(ch.isupper() for ch in word[1:])
+
+
+def _familiarity_verdict(
+    in_vocab: bool,
+    top_score: float,
+    neighbours: list,
+    parts: list,
+) -> tuple[bool, list[str], dict]:
+    """Decide whether a compound is a suspect coinage. Pure (no model I/O)
+    so the heuristic is unit-testable against captured fastText output
+    without loading the 33 MB model.
+
+    `neighbours` is a list of (word, score) pairs; `parts` is the input
+    compound's morphemes (Vabamorf root_tokens). Returns
+    (is_suspect, reasons, neighbour_quality).
+
+    in-vocab → never suspect (the word is among the 100K most frequent,
+    i.e. attested). Out-of-vocab → suspect when the top neighbour score is
+    weak OR the neighbours are dominated by scrape-artifact tokens (the
+    mõtteliin failure mode, 4/5 junk). Subword-echo overlap is COUNTED and
+    surfaced but never triggers on its own: real sibling compounds share a
+    head morpheme too (tervisekindlustus ↔ ravikindlustus), so echoes
+    don't discriminate coinages from rare-but-real compounds."""
+    names = [n for n, _ in neighbours]
+    n = len(names)
+    junk = sum(1 for w in names if _looks_like_scrape_junk(w))
+    echoes = sum(
+        1 for w in names
+        if any(len(p) >= 4 and p in w.lower() for p in parts)
+    )
+    quality = {"neighbours": n, "scrape_junk": junk, "subword_echoes": echoes}
+
+    if in_vocab:
+        return False, [], quality
+
+    reasons: list[str] = []
+    if top_score < _FAMILIARITY_SUSPECT_SCORE:
+        reasons.append(
+            f"out-of-vocabulary with weak top similarity "
+            f"({top_score:.3f} < {_FAMILIARITY_SUSPECT_SCORE})"
+        )
+    if n and (junk / n) >= _FAMILIARITY_JUNK_RATIO:
+        reasons.append(
+            f"{junk}/{n} nearest neighbours are scrape-artifact tokens, "
+            "not real Estonian words"
+        )
+    return bool(reasons), reasons, quality
+
+
 def _check_compound_familiarity(text: str) -> dict:
     """Surface fastText neighborhood diagnostic for compound nouns.
 
     For each compound noun (Vabamorf root_tokens of length >= 2) in the
     text, look up its fastText nearest neighbours. Legitimate Estonian
-    compounds tend to have semantically coherent neighbours with a
-    decent top similarity score (typically > 0.55). Calques / coined
-    compounds often have weak top similarity and/or subword-only
-    neighbours that just share letters with the input's parts.
+    compounds are either in-vocab or have semantically coherent neighbours
+    with a decent top similarity score (typically >= 0.60). Calques /
+    coined compounds tend to be out-of-vocab with a weak top score and/or
+    neighbours that are subword echoes of the input's own morphemes or
+    web-scrape junk tokens. The suspect decision lives in
+    `_familiarity_verdict` (a pure function, unit-tested without the
+    model).
 
     Output is *diagnostic*, not authoritative — the underlying
-    fastText-et-mini model has a 20K-word pruned vocabulary, so some
+    fastText-et-medium model has a 100K-word pruned vocabulary, so some
     legitimate but rare compounds also produce weak signal. Treat
     flagged entries as "worth a second look" not "wrong."
     """
@@ -1788,13 +1870,15 @@ def _check_compound_familiarity(text: str) -> dict:
             neighbours = []
         top_score = float(neighbours[0][1]) if neighbours else 0.0
 
-        # Two-tier signal with the medium (100K vocab) model:
-        #   - in-vocab → real Estonian compound, never suspect
-        #   - out-of-vocab AND weak top similarity → likely calque
-        # In-vocab covers most legitimate compounds; the score gate
-        # catches the calque case (mõtteliin — literal English
-        # "train of thought" — score 0.536, OOV).
-        is_suspect = (not in_vocab) and top_score < 0.55
+        # Suspect-coinage decision (pure, see _familiarity_verdict): an
+        # in-vocab lemma is real; an OOV lemma is flagged when its top
+        # similarity is weak OR its neighbours are scrape junk. This
+        # catches both mõtteliin (weak score 0.536) and toortõlkeoht
+        # (0.571 — over the old 0.55 gate, but OOV with subword-echo /
+        # junk neighbours, so still a coinage).
+        is_suspect, reasons, quality = _familiarity_verdict(
+            in_vocab, top_score, neighbours, parts
+        )
 
         compounds.append({
             "word": span.text,
@@ -1808,7 +1892,9 @@ def _check_compound_familiarity(text: str) -> dict:
                 {"word": n, "score": round(float(s), 3)}
                 for n, s in neighbours[:5]
             ],
+            "neighbour_quality": quality,
             "is_suspect": is_suspect,
+            "reasons": reasons,
         })
 
     suspects = [c for c in compounds if c["is_suspect"]]
@@ -1820,28 +1906,32 @@ def _check_compound_familiarity(text: str) -> dict:
         "all_compounds": compounds,
         "summary_estonian": (
             f"Tuvastati {len(compounds)} liitsõnanimisõna; "
-            f"{len(suspects)} neist on madala fastText-skooriga "
-            f"(tasub üle vaadata, kas neid eesti keeles "
-            f"tegelikult kasutatakse)." if compounds
+            f"{len(suspects)} märgiti kahtlaseks (tasub üle vaadata, "
+            f"kas tegu on tegeliku eesti keele sõnaga)." if compounds
             else "Liitsõnanimisõnu analüüsiks ei leitud."
         ),
         "note": (
             "Heuristic compound-familiarity check via fastText nearest "
-            "neighbours, using a 100K-vocab compressed model. Two-tier "
-            "signal: in-vocab compounds are treated as real Estonian and "
-            "never flagged; out-of-vocab compounds whose top similarity "
-            "is below 0.55 are flagged as suspect (likely calque or "
-            "coined term). NOT authoritative — even at 100K vocab a few "
-            "legitimate but rare compounds will be OOV with weak signal. "
-            "The neighbours list is included so callers can judge close "
-            "calls: if top neighbours mostly share letters with the "
-            "input's parts (subword-similar), suspect a calque; if they "
-            "are semantically coherent (synonyms or related concepts), "
-            "the compound is probably real. Designed for the case of "
-            "Claude inventing literal English-to-Estonian compounds like "
-            "'mõtteliin' (English: 'train of thought'; real Estonian: "
-            "'mõttekäik') — the lemma is morphologically valid but not "
-            "in real Estonian usage."
+            "neighbours, using a 100K-vocab compressed model. in-vocab "
+            "compounds are treated as real Estonian and never flagged. An "
+            "out-of-vocab compound is flagged as suspect when EITHER its "
+            "top neighbour similarity is below 0.60 OR at least 40% of its "
+            "neighbours are scrape-artifact tokens (per-entry `reasons` "
+            "says which). The 0.60 gate catches coinages like "
+            "'toortõlkeoht' (top 0.571) that the older 0.55 gate missed; "
+            "the junk-neighbour gate catches calques like 'mõtteliin' "
+            "whose neighbours are mostly web-scrape junk. `neighbour_"
+            "quality` reports the neighbour, scrape_junk and subword_echo "
+            "counts. NOT authoritative — even at 100K vocab some legitimate "
+            "but rare compounds are OOV; the rule favours recall (a flagged "
+            "real compound just gets a second look, a missed coinage "
+            "ships). Use the neighbours list to judge: semantically "
+            "coherent neighbours (synonyms / related concepts, e.g. "
+            "tervisekindlustus → ravikindlustus, elukindlustus) mean the "
+            "compound is real; neighbours that just recycle the input's "
+            "morphemes or are junk tokens mean a likely coinage. Designed "
+            "for Claude inventing literal compounds like 'mõtteliin' "
+            "(English 'train of thought'; real Estonian 'mõttekäik')."
         ),
     }
 
@@ -1857,20 +1947,21 @@ def check_compound_familiarity(text: Annotated[str, Field(description="Estonian 
     """fastText-based diagnostic for compound-noun familiarity in Estonian.
 
     For each compound noun (root_tokens length >= 2), returns its top
-    fastText neighbours and a `top_score` similarity, flagging
-    compounds that are out-of-vocab AND have top similarity below 0.55
-    as `is_suspect: true` — the failure mode for AI-invented calques
-    like `mõtteliin` (literal English "train of thought"; real Estonian
-    is `mõttekäik`).
+    fastText neighbours, a `top_score` similarity, a `neighbour_quality`
+    breakdown, and `is_suspect: true` + human-readable `reasons` when the
+    compound is out-of-vocab AND its top similarity is below 0.60 OR its
+    neighbours are mostly scrape-artifact tokens. This catches both
+    `toortõlkeoht` (OOV, top 0.571 — over the old 0.55 gate but a coinage)
+    and `mõtteliin` (literal English "train of thought"; real Estonian is
+    `mõttekäik`).
 
     Output is diagnostic, not authoritative. Even with the 100K-vocab
     medium model, some legitimate but rare compounds (e.g.
-    `tervisekindlustus`) can still be OOV with weak signal. Treat
-    suspect flags as "worth a second look" and judge by the included
-    neighbours list: if neighbours are semantically coherent the
-    compound is fine; if they're subword-similar variations (mostly
-    sharing letters with
-    the input's parts) the compound is likely translationese.
+    `tervisekindlustus`) can still be OOV; the rule favours recall, so a
+    flagged real compound just earns a second look. Judge by the included
+    neighbours: semantically coherent neighbours (related real words) mean
+    the compound is fine; neighbours that recycle the input's morphemes or
+    are junk tokens mean a likely coinage.
 
     Input capped at 100,000 characters.
     """
