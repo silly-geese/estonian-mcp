@@ -7,6 +7,19 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-06-17
+
+A small quality release: sharper AI-coinage detection and a persistent
+error log at `/metrics`. No breaking changes — drop-in over 0.2.0.
+
+### Added
+
+- **Persistent recent-errors log at `/metrics`.** The last 20 5xx
+  responses (timestamp, path, status, exception type) are kept in a ring
+  buffer exposed at `/metrics` and persisted alongside the counters, so
+  failures stay inspectable without relying on Fly's short-lived log tail.
+  PII-free — no request bodies, no tokens.
+
 ### Changed
 
 - **`check_compound_familiarity` now catches more AI coinages.** The
