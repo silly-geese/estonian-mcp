@@ -71,6 +71,33 @@ async def boom_inner(scope, receive, send):
     raise RuntimeError("simulated inner-app failure")
 
 
+async def echo_inner(scope, receive, send):
+    """ASGI app that drains the full request body and echoes it back. Used
+    to prove the session-counter's body peek replays the stream byte-for-
+    byte to the inner app."""
+    if scope["type"] == "lifespan":
+        msg = await receive()
+        while msg["type"] != "lifespan.shutdown":
+            if msg["type"] == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+            msg = await receive()
+        await send({"type": "lifespan.shutdown.complete"})
+        return
+    body = b""
+    while True:
+        msg = await receive()
+        body += msg.get("body", b"")
+        if not msg.get("more_body", False):
+            break
+    await send({
+        "type": "http.response.start",
+        "status": 200,
+        "headers": [(b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii"))],
+    })
+    await send({"type": "http.response.body", "body": body})
+
+
 async def run() -> None:
     app = server._build_http_app(TOKEN, rate_limit=5, inner=stub_inner)
     transport = httpx.ASGITransport(app=app)
@@ -114,6 +141,7 @@ async def run() -> None:
         check("metrics has by_path dict", isinstance(body.get("by_path"), dict))
         check("metrics has uptime_seconds", "uptime_seconds" in body)
         check("metrics has recent_errors list", isinstance(body.get("recent_errors"), list))
+        check("metrics has sessions_total int", isinstance(body.get("sessions_total"), int))
 
         print("auth")
         r = await c.post("/mcp", json={})
@@ -224,12 +252,14 @@ def metrics_persistence_test() -> None:
     saved_status = dict(server._STATS["by_status"])
     saved_pathd = dict(server._STATS["by_path"])
     saved_errors = list(server._recent_errors)
+    saved_sessions = server._STATS.get("sessions", 0)
     try:
         with tempfile.TemporaryDirectory() as d:
             server._METRICS_PATH = Path(d) / "metrics.json"
             server._STATS["total"] = 12345
             server._STATS["by_status"] = {"200": 12000, "429": 345}
             server._STATS["by_path"] = {"/mcp": 12300, "/health": 45}
+            server._STATS["sessions"] = 678
             server._recent_errors.clear()
             server._recent_errors.append({"ts": 1700000000, "path": "/mcp", "status": 500, "error": "RuntimeError"})
             server._save_persistent_stats()
@@ -238,11 +268,13 @@ def metrics_persistence_test() -> None:
             server._STATS["total"] = 0
             server._STATS["by_status"] = {}
             server._STATS["by_path"] = {}
+            server._STATS["sessions"] = 0
             server._recent_errors.clear()
             server._load_persistent_stats()
             check("total restored", server._STATS["total"] == 12345)
             check("by_status restored", server._STATS["by_status"] == {"200": 12000, "429": 345})
             check("by_path restored", server._STATS["by_path"] == {"/mcp": 12300, "/health": 45})
+            check("sessions restored", server._STATS["sessions"] == 678, str(server._STATS["sessions"]))
             check("recent_errors restored", list(server._recent_errors) == [
                 {"ts": 1700000000, "path": "/mcp", "status": 500, "error": "RuntimeError"}], str(list(server._recent_errors)))
             # graceful no-op when parent dir is gone (local dev path)
@@ -257,12 +289,60 @@ def metrics_persistence_test() -> None:
         server._STATS["total"] = saved_total
         server._STATS["by_status"] = saved_status
         server._STATS["by_path"] = saved_pathd
+        server._STATS["sessions"] = saved_sessions
         server._recent_errors.clear()
         server._recent_errors.extend(saved_errors)
 
 
+def is_initialize_unit_test() -> None:
+    """Pure checks for the initialize detector — the heart of the session
+    counter. Critically, a tool call whose text merely contains the word
+    'initialize' must NOT be counted."""
+    print("_is_initialize_request (unit)")
+    init = b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"x"}}'
+    check("initialize → True", server._is_initialize_request(init) is True)
+    tool = b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"spell_check"}}'
+    check("tools/call → False", server._is_initialize_request(tool) is False)
+    sneaky = b'{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"spell_check","arguments":{"text":"please initialize the session"}}}'
+    check("tool call mentioning 'initialize' in text → False",
+          server._is_initialize_request(sneaky) is False)
+    check("empty body → False", server._is_initialize_request(b"") is False)
+    check("malformed JSON → False", server._is_initialize_request(b'{not json initialize') is False)
+    batch = b'[{"jsonrpc":"2.0","id":1,"method":"initialize"},{"jsonrpc":"2.0","method":"ping"}]'
+    check("batch with initialize → True", server._is_initialize_request(batch) is True)
+
+
+async def session_counter_test() -> None:
+    """End-to-end: an initialize POST bumps sessions_total AND the body is
+    replayed to the inner app byte-for-byte; a non-initialize POST does not
+    bump it. Uses echo_inner to prove the replay."""
+    print("session counter")
+    app = server._build_http_app(token=None, rate_limit=100, public_mode=True, inner=echo_inner)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        base = server._STATS["sessions"]
+
+        init_body = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                     "params": {"protocolVersion": "2025-06-18", "capabilities": {}}}
+        r = await c.post("/mcp", json=init_body)
+        check("initialize → 200", r.status_code == 200, str(r.status_code))
+        check("initialize body replayed to inner verbatim", r.json() == init_body, r.text)
+        check("initialize bumped sessions by 1",
+              server._STATS["sessions"] == base + 1, str(server._STATS["sessions"]))
+
+        call_body = {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                     "params": {"name": "spell_check", "arguments": {"text": "tere"}}}
+        r = await c.post("/mcp", json=call_body)
+        check("tools/call → 200", r.status_code == 200, str(r.status_code))
+        check("tools/call body replayed verbatim", r.json() == call_body, r.text)
+        check("tools/call did NOT bump sessions",
+              server._STATS["sessions"] == base + 1, str(server._STATS["sessions"]))
+
+
 asyncio.run(run())
 metrics_persistence_test()
+is_initialize_unit_test()
+asyncio.run(session_counter_test())
 
 if failures:
     print(f"\n{len(failures)} failure(s):")

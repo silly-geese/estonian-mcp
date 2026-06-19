@@ -59,7 +59,7 @@ DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.2.1"
+SERVER_VERSION = "0.2.2"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -2603,6 +2603,11 @@ _STATS: dict[str, Any] = {
     "total": 0,
     "by_status": {},
     "by_path": {},
+    # Count of MCP `initialize` calls — a privacy-safe proxy for client
+    # connections / session-starts. NOT a user count: a client that
+    # reconnects counts again, and automated probes count too. No identity,
+    # no IP, no body is stored — only the fact that an initialize occurred.
+    "sessions": 0,
 }
 
 # Ring buffer of recent 5xx errors so they're inspectable at /metrics
@@ -2632,6 +2637,7 @@ def _load_persistent_stats() -> None:
         _STATS["total"] = int(data.get("total", 0))
         _STATS["by_status"] = {str(k): int(v) for k, v in (data.get("by_status") or {}).items()}
         _STATS["by_path"] = {str(k): int(v) for k, v in (data.get("by_path") or {}).items()}
+        _STATS["sessions"] = int(data.get("sessions", 0))
         _TOOL_CALLS.clear()
         _TOOL_CALLS.update({str(k): int(v) for k, v in (data.get("tool_calls") or {}).items()})
         _recent_errors.clear()
@@ -2657,6 +2663,7 @@ def _save_persistent_stats() -> None:
             "total": _STATS["total"],
             "by_status": _STATS["by_status"],
             "by_path": _STATS["by_path"],
+            "sessions": _STATS["sessions"],
             "tool_calls": _TOOL_CALLS,
             "recent_errors": list(_recent_errors),
             "saved_at_unix": int(time.time()),
@@ -2664,6 +2671,60 @@ def _save_persistent_stats() -> None:
         tmp.replace(_METRICS_PATH)
     except Exception as e:
         log.warning("metrics persistence: failed to save %s: %s", _METRICS_PATH, e)
+
+
+def _is_initialize_request(body: bytes) -> bool:
+    """True if an MCP request body is a JSON-RPC `initialize` call.
+
+    Used to count client connections (sessions) at /metrics. We parse only
+    to read the `method` field — never the params/clientInfo — and store
+    nothing from the body. The cheap substring gate skips the JSON parse
+    for the overwhelming majority of requests (tool calls), and parsing
+    the method (rather than substring-matching) means a tool call whose
+    text argument merely contains the word "initialize" is NOT counted."""
+    if b"initialize" not in body:
+        return False
+    try:
+        msg = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    if isinstance(msg, list):  # JSON-RPC batch
+        return any(isinstance(m, dict) and m.get("method") == "initialize" for m in msg)
+    return isinstance(msg, dict) and msg.get("method") == "initialize"
+
+
+async def _drain_body(receive):
+    """Consume an ASGI HTTP request stream, returning (messages, body).
+
+    `messages` is the exact list of events consumed, so they can be replayed
+    to the inner app unchanged; `body` is the concatenated request body for
+    a one-time peek. Bodies on /mcp are small JSON-RPC payloads."""
+    messages = []
+    body = b""
+    while True:
+        message = await receive()
+        messages.append(message)
+        if message["type"] == "http.request":
+            body += message.get("body", b"")
+            if not message.get("more_body", False):
+                break
+        elif message["type"] == "http.disconnect":
+            break
+    return messages, body
+
+
+def _replay_receive(messages, receive):
+    """Return a receive() that re-emits already-consumed messages in order,
+    then defers to the original receive (e.g. for a later disconnect), so
+    the inner app sees a byte-for-byte-identical request stream."""
+    queue = list(messages)
+
+    async def _receive():
+        if queue:
+            return queue.pop(0)
+        return await receive()
+
+    return _receive
 
 
 def _record_error(path: str, status: int, error: str | None) -> None:
@@ -2888,6 +2949,7 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                     "by_path": dict(_STATS["by_path"]),
                     "tool_calls_total": sum(_TOOL_CALLS.values()),
                     "tool_calls": dict(_TOOL_CALLS),
+                    "sessions_total": _STATS["sessions"],
                     "recent_errors": list(_recent_errors),
                     "uptime_seconds": int(time.time() - _STATS_START_TS),
                     "started_at_unix": int(_STATS_START_TS),
@@ -2895,7 +2957,14 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                         "tool_calls counts ONLY real tool executions (not "
                         "initialize / tools-list / SSE opens, which inflate "
                         "the /mcp path bucket) — use tool_calls_total as the "
-                        "true usage number. Counters persist to "
+                        "true usage number. sessions_total counts MCP "
+                        "initialize calls — a privacy-safe proxy for client "
+                        "connections, NOT a user count: a client that "
+                        "reconnects counts again and automated probes count "
+                        "too. No identity, IP, or request body is ever stored "
+                        "— only the fact of an initialize. Daily connections "
+                        "= the day-over-day delta in the metrics snapshot. "
+                        "Counters persist to "
                         "/data/metrics.json every 30 s when a Fly volume is "
                         "mounted, surviving restarts; without a volume "
                         "(local dev) they reset. Counts are per-Fly-machine, "
@@ -2994,7 +3063,21 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                 await _send_status(send, 429, {"error": "rate_limited"})
                 return
 
-            await inner(scope, receive, send)
+            # Count MCP `initialize` calls as a privacy-safe session proxy.
+            # Only an authorized, non-rate-limited POST /mcp can carry one;
+            # for those we buffer the small JSON-RPC body to peek at the
+            # method, then replay it to the inner app byte-for-byte. Nothing
+            # from the body is stored — only _STATS["sessions"] is bumped on
+            # the fact of an initialize. All other traffic (GET SSE streams,
+            # other paths) passes straight through with the original receive.
+            receive_for_inner = receive
+            if scope.get("method") == "POST" and path in ("/mcp", "/mcp/"):
+                consumed, body = await _drain_body(receive)
+                if _is_initialize_request(body):
+                    _STATS["sessions"] += 1
+                receive_for_inner = _replay_receive(consumed, receive)
+
+            await inner(scope, receive_for_inner, send)
         except Exception as exc:
             # Defence-in-depth. The MCP SDK already converts tool
             # exceptions into JSON-RPC error responses, so reaching here
