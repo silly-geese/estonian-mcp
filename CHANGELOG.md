@@ -7,6 +7,18 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-06-19
+
+### Added
+
+- **`sessions_total` at `/metrics`** — a count of MCP `initialize` calls,
+  a privacy-safe proxy for client connections. It is **not** a user count:
+  a client that reconnects counts again, and automated probes count too. No
+  identity, IP, or request body is stored — the wrapper peeks the small
+  JSON-RPC body only to read the `method`, then replays it to the inner app
+  byte-for-byte. The daily snapshot records it, so day-over-day deltas give
+  "connections/day". Privacy posture in SECURITY.md is unchanged.
+
 ## [0.2.1] — 2026-06-17
 
 A small quality release: sharper AI-coinage detection and a persistent

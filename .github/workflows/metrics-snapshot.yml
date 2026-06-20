@@ -69,8 +69,12 @@ jobs:
               str(m.get("tool_calls_total", "")),
               str(m.get("by_path", {}).get("/mcp", "")),
               str(m.get("total_requests", "")),
+              str(m.get("sessions_total", "")),
           ])
-          header = "date,tool_calls_total,mcp_requests,total_requests"
+          # sessions_total appended as a trailing column; rows logged before
+          # the counter existed simply omit it (4 fields), which DictReader
+          # tolerates. Daily connections = the day-over-day delta.
+          header = "date,tool_calls_total,mcp_requests,total_requests,sessions_total"
           f = pathlib.Path("metrics-history.csv")
           lines = f.read_text().splitlines() if f.exists() else [header]
           # Idempotent: drop any existing row for today before appending.
