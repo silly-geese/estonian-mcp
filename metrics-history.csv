@@ -1,4 +1,4 @@
-date,tool_calls_total,mcp_requests,total_requests
+date,tool_calls_total,mcp_requests,total_requests,sessions_total
 2026-06-04,29,7940,26566
 2026-06-05,74,9087,30003
 2026-06-06,123,10335,33671
@@ -16,3 +16,4 @@ date,tool_calls_total,mcp_requests,total_requests
 2026-06-18,586,43170,97859
 2026-06-19,648,45913,103582
 2026-06-20,726,49067,109596
+2026-06-21,812,51353,114815,821
