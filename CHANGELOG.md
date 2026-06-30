@@ -7,6 +7,19 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-06-29
+
+### Changed
+
+- **Inner-returned 500s now carry an exception type in `recent_errors`.**
+  When the MCP SDK hits an unhandled error in request handling it logs the
+  exception and returns its own 500, so it never reached our wrapper and the
+  `/metrics` breadcrumb showed `error: null` (a blind spot — two such 500s on
+  Jun 21 were unattributable). A small logging handler now captures the
+  exception TYPE name the SDK logs (type only — never the message or
+  traceback) and the ring buffer labels the 500 with it. Best-effort and
+  bounded by a freshness window; PII-free; SECURITY.md posture unchanged.
+
 ## [0.2.2] — 2026-06-19
 
 ### Added
