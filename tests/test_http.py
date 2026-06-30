@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -92,6 +93,32 @@ async def echo_inner(scope, receive, send):
     await send({
         "type": "http.response.start",
         "status": 200,
+        "headers": [(b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii"))],
+    })
+    await send({"type": "http.response.body", "body": body})
+
+
+async def logging_boom_inner(scope, receive, send):
+    """Mimics the MCP SDK's inner-500 path: log the exception via the `mcp.*`
+    logger (carrying exc_info) and then return its OWN 500 — the exception
+    does NOT propagate to our wrapper. Verifies we borrow the logged type."""
+    if scope["type"] == "lifespan":
+        msg = await receive()
+        while msg["type"] != "lifespan.shutdown":
+            if msg["type"] == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+            msg = await receive()
+        await send({"type": "lifespan.shutdown.complete"})
+        return
+    try:
+        raise KeyError("simulated inner protocol error")
+    except Exception:
+        logging.getLogger("mcp.server.streamable_http").exception("Error handling POST request")
+    body = b'{"jsonrpc":"2.0","error":{"code":-32603}}'
+    await send({
+        "type": "http.response.start",
+        "status": 500,
         "headers": [(b"content-type", b"application/json"),
                     (b"content-length", str(len(body)).encode("ascii"))],
     })
@@ -312,6 +339,31 @@ def is_initialize_unit_test() -> None:
     check("batch with initialize → True", server._is_initialize_request(batch) is True)
 
 
+async def inner_exc_capture_test() -> None:
+    """An inner-returned 500 (SDK logs the exception, then returns 500 itself)
+    should be labelled in the ring buffer with the logged exception type,
+    not error=None."""
+    print("inner-500 exception-type capture")
+    server._recent_errors.clear()
+    server._last_inner_exc["type"] = None  # reset the capture slot
+    app = server._build_http_app(token=None, rate_limit=100, public_mode=True,
+                                 inner=logging_boom_inner)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post("/mcp", json={})
+        check("inner 500 status", r.status_code == 500, str(r.status_code))
+        errs = list(server._recent_errors)
+        check("inner 500 recorded in buffer", len(errs) >= 1, str(errs))
+        if errs:
+            last = errs[-1]
+            check("inner 500 labelled with type (not None)",
+                  last.get("error") == "KeyError", str(last))
+            check("inner 500 path/status correct",
+                  last.get("path") == "/mcp" and last.get("status") == 500, str(last))
+    # Stale-guard: an old logged type must not leak onto a later 5xx.
+    server._last_inner_exc["ts"] = 0.0
+    check("stale exception type ignored", server._inner_exc_type() is None)
+
+
 async def session_counter_test() -> None:
     """End-to-end: an initialize POST bumps sessions_total AND the body is
     replayed to the inner app byte-for-byte; a non-initialize POST does not
@@ -343,6 +395,7 @@ asyncio.run(run())
 metrics_persistence_test()
 is_initialize_unit_test()
 asyncio.run(session_counter_test())
+asyncio.run(inner_exc_capture_test())
 
 if failures:
     print(f"\n{len(failures)} failure(s):")

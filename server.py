@@ -59,7 +59,7 @@ DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.2.2"
+SERVER_VERSION = "0.2.3"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -2727,6 +2727,50 @@ def _replay_receive(messages, receive):
     return _receive
 
 
+# When the MCP SDK hits an unhandled error in POST-request handling it logs
+# it via logger.exception(...) and returns its OWN HTTP 500 — the exception
+# never propagates to our wrapper's except block, so those 500s landed in
+# the ring buffer with error=None (a blind spot). We attach a handler to the
+# SDK's logger that stashes ONLY the exception type name (never the message
+# or traceback) the instant it's logged; the send wrapper then borrows it to
+# label an inner-returned 500. The logger.exception() runs synchronously just
+# before the 500 is sent, in the same task, so the slot is fresh and correct
+# for that request. A short freshness window guards against a later 5xx
+# reusing a stale type.
+_last_inner_exc: dict[str, Any] = {"type": None, "ts": 0.0}
+_INNER_EXC_FRESH_SECONDS = 5.0
+
+
+class _InnerExcCapture(logging.Handler):
+    """Records the exception type name from any log record carrying exc_info.
+    Type name only — PII-free, no message, no stack."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        exc_info = record.exc_info
+        if exc_info and exc_info[0] is not None:
+            _last_inner_exc["type"] = exc_info[0].__name__
+            _last_inner_exc["ts"] = time.time()
+
+
+def _install_inner_exc_capture() -> None:
+    """Attach the capture handler to the `mcp` logger once (idempotent).
+    Hooks the parent `mcp` logger so it keeps working if the SDK renames
+    the streamable_http submodule. Additive — does not suppress the SDK's
+    own logging."""
+    lg = logging.getLogger("mcp")
+    if not any(isinstance(h, _InnerExcCapture) for h in lg.handlers):
+        handler = _InnerExcCapture()
+        handler.setLevel(logging.ERROR)
+        lg.addHandler(handler)
+
+
+def _inner_exc_type() -> str | None:
+    """Return the most-recently-logged exception type if fresh, else None."""
+    if _last_inner_exc["type"] and (time.time() - _last_inner_exc["ts"]) < _INNER_EXC_FRESH_SECONDS:
+        return _last_inner_exc["type"]
+    return None
+
+
 def _record_error(path: str, status: int, error: str | None) -> None:
     """Append a PII-free breadcrumb for a 5xx response to the ring buffer."""
     _recent_errors.append({
@@ -2859,6 +2903,9 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
 
     `inner` defaults to FastMCP's streamable-http app; tests inject a stub.
     """
+    # Start capturing the exception type the MCP SDK logs-then-swallows on
+    # an inner 500, so the recent-errors buffer can label it.
+    _install_inner_exc_capture()
     if inner is None:
         from mcp.server.transport_security import TransportSecuritySettings
 
@@ -2894,11 +2941,12 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
             if message["type"] == "http.response.start":
                 status = message.get("status", 0)
                 captured["status"] = status
-                # Record any 5xx — covers both exceptions our wrapper
-                # catches (error type set below) AND 500s the inner MCP
-                # app returns on its own (error stays None).
+                # Record any 5xx. Exceptions our wrapper catches set
+                # captured["error"] below; for a 500 the inner MCP app
+                # returns on its own, borrow the exception type the SDK
+                # logged-then-swallowed (best effort) instead of None.
                 if status >= 500:
-                    _record_error(path, status, captured.get("error"))
+                    _record_error(path, status, captured.get("error") or _inner_exc_type())
             await send_raw(message)
 
         try:
@@ -2975,9 +3023,14 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                         "ring buffer of the last 20 5xx responses (ts, path, "
                         "status, exception type) so failures are inspectable "
                         "here without Fly's short-lived log tail; it persists "
-                        "with the counters. Records tool NAME + count only, "
-                        "never arguments; PII-free; privacy posture in "
-                        "SECURITY.md is unchanged."
+                        "with the counters. The exception type is captured both "
+                        "for errors this wrapper catches and for 500s the MCP "
+                        "SDK returns on its own (borrowed from the type it logs "
+                        "internally); it may still be null if the SDK didn't log "
+                        "a typed exception. Records tool NAME + count and "
+                        "exception TYPE only, never arguments, messages, or "
+                        "tracebacks; PII-free; privacy posture in SECURITY.md is "
+                        "unchanged."
                     ),
                 }
                 await _send_status(send, 200, payload)
