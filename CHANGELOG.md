@@ -7,6 +7,20 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-07-04
+
+### Security
+
+- Dependency refresh resolving 15 Dependabot advisories, no API or
+  behaviour change: **starlette** 1.0.1 → 1.3.1 (2 high), **pyjwt**
+  2.12.1 → 2.13.0 (1 high), **python-multipart** 0.0.27 → 0.0.31 (1 high),
+  **cryptography** 48.0.0 → 48.0.1 (1 high), **pydantic-settings** 2.14.0 →
+  2.14.2 (1 medium). One advisory is knowingly left open: **nltk**
+  (GHSA-p4gq-832x-fm9v) has no upstream patch, and its vulnerable
+  `nltk.data.load()` path-traversal is not reachable from user input here
+  (estnltk only ever calls it with a hardcoded resource path) — monitored
+  pending a fix.
+
 ## [0.2.3] — 2026-06-29
 
 ### Changed
