@@ -7,6 +7,30 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-06
+
+### Added
+
+- **Two legal-Estonian tools (tool count 21 → 23)** — for working with
+  Estonian legal texts, offline and PII-free so confidential documents
+  never leave the machine:
+  - **`check_legalese`** — plain-language simplification aid. Flags archaic
+    'kantseliit' filler (`käesolev` → `see`, `juhul kui` → `kui`) and
+    over-long / over-nested sentences to split, while listing the legal
+    **terms of art** in the text that must be preserved verbatim (a general
+    synonym would change the legal meaning).
+  - **`check_defined_terms`** — structural map for long documents: extracts
+    `(edaspidi «X»)` definitions and their usage, `§` / `lõige` / `punkt`
+    cross-references, and flags defined-but-unused or doubly-defined terms.
+    Input cap raised to 500,000 chars so whole contracts fit.
+
+### Changed
+
+- **`check_compound_familiarity` no longer false-flags legal compounds.** A
+  curated legal terms-of-art list suppresses the ~15% of legal compounds
+  (`õigussuhe`, `solidaarvõlgnik`, `abieluvaraleping`) that the general-web
+  fastText vocabulary mistook for coinages.
+
 ## [0.2.4] — 2026-07-04
 
 ### Security

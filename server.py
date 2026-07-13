@@ -26,6 +26,7 @@ import collections
 import json
 import logging
 import os
+import re
 import secrets
 import sys
 import time
@@ -45,6 +46,9 @@ from pydantic import Field
 # prompt can't OOM the host or freeze the client.
 MAX_TEXT_CHARS = 100_000
 MAX_WORD_CHARS = 200
+# Structural tools (defined-term / cross-reference tracking) need the whole
+# document at once, and legal texts run long. Parsing is cheap, so allow more.
+MAX_DOC_CHARS = 500_000
 
 # HTTP-mode rate limits.
 # Private mode (bearer auth required): per-token, generous default.
@@ -59,7 +63,7 @@ DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.2.4"
+SERVER_VERSION = "0.3.0"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -136,7 +140,10 @@ SERVER_INSTRUCTIONS = (
     "WordNet synonyms, fastText related words, full inflection paradigms, and "
     "EKI-Reeglid orthography checks (capitalization, compound writing, "
     "commas, number formatting, abbreviation hyphenation), plus object-case, "
-    "register, style, redundancy and calque-risk checks. "
+    "register, style, redundancy and calque-risk checks. For legal Estonian, "
+    "check_legalese aids plain-language simplification while listing the "
+    "terms of art that must be preserved, and check_defined_terms maps "
+    "defined terms and cross-references in long documents. "
     "Use these tools as ground truth rather than guessing Estonian spelling, "
     "case forms, or inflections — language models routinely hallucinate "
     "plausible-but-wrong Estonian morphology. Note that spell_check passing "
@@ -548,6 +555,62 @@ _PLEONASM_PHRASES_ET: dict[tuple[str, ...], str] = {
 }
 
 
+# --- Legal / legalese support --------------------------------------------
+# Curated STARTER lexicons for Estonian legal text. Native speakers are
+# invited to expand these (see CONTRIBUTING) — they are precision-first,
+# not exhaustive.
+
+# Archaic "kantseliit" filler whose plain equivalent does NOT change legal
+# meaning. Matched by surface-prefix so inflected forms are caught. Terms
+# of ART (below) are deliberately NOT here — those must survive simplification.
+_LEGALESE_STEMS_ET: dict[str, tuple[str, str]] = {
+    "käesolev": ("see", "ametlik täitesõna; igapäevakeeles piisab 'see'"),
+    "alljärgnev": ("järgnev", "kantseliit; piisab 'järgnev'"),
+    "eelnimetatud": ("eespool nimetatud", "kantseliit"),
+    "ülalnimetatud": ("eespool nimetatud", "kantseliit"),
+    "eelpoolnimetatud": ("eespool nimetatud", "kantseliit"),
+    "eeltoodu": ("eelnev", "kantseliit"),
+    "tulenevalt": ("tõttu / kuna", "kantseliitlik side; 'sellest tulenevalt' → 'seetõttu'"),
+    "seonduvalt": ("seoses / kohta", "kantseliit"),
+}
+
+# Fixed legalese phrases (lowercased surface pairs) → (plain, why).
+_LEGALESE_PHRASES_ET: dict[tuple[str, str], tuple[str, str]] = {
+    ("juhul", "kui"): ("kui", "'juhul kui' → lihtsalt 'kui'"),
+    ("antud", "juhul"): ("sel juhul", "'antud' on toortõlge (given); 'sel juhul'"),
+    ("sellest", "tulenevalt"): ("seetõttu", "kantseliit; 'seetõttu'"),
+}
+
+# Specialised Estonian legal terms of art. Used to (1) protect them from
+# over-eager simplification, (2) suppress compound-familiarity false
+# 'coinage' flags on legal compounds, (3) mark legal register. STARTER SET.
+_LEGAL_TERMS_OF_ART_ET: frozenset[str] = frozenset({
+    "hagi", "hageja", "kostja", "võlgnik", "võlausaldaja", "võlasuhe",
+    "õigussuhe", "solidaarvõlgnik", "käendus", "käendaja", "menetlus",
+    "kohtumenetlus", "tsiviilkohtumenetlus", "kriminaalmenetlus",
+    "haldusmenetlus", "hagimenetlus", "menetlusosaline", "tõendamiskoormis",
+    "aegumistähtaeg", "sundtäitmine", "kahjuhüvitis", "hüvitamiskohustus",
+    "pandiõigus", "hüpoteek", "servituut", "pärandvara", "pärand", "pärija",
+    "abieluvaraleping", "esindusõigus", "õigusvastane", "seadusjärgne",
+    "tühistatav", "tühine", "riigilõiv", "käsundusleping", "töövõtuleping",
+    "üürileping", "kohtuotsus", "kohtumäärus", "määruskaebus", "tsiviilhagi",
+    "apellatsioonkaebus", "kassatsioonkaebus", "tagaseljaotsus",
+    "tehing", "leping", "kohustus", "nõue", "vastutus", "hüvitis", "tagatis",
+    "testament", "kaashagi", "hagiavaldus", "kohtuistung",
+})
+
+
+def _is_legal_term(word: str) -> bool:
+    """True if a token is a specialised Estonian legal term of art — matched
+    by exact membership or as the head of a legal compound (e.g. hagiavaldus,
+    kohtuistung). Used to protect terms of art and de-noise other tools."""
+    w = word.lower().strip(".,;:()«»„“”\"'")
+    if w in _LEGAL_TERMS_OF_ART_ET:
+        return True
+    # Compound whose first element is a longer legal stem.
+    return any(w.startswith(t) and len(t) >= 6 for t in _LEGAL_TERMS_OF_ART_ET)
+
+
 _COLLOQUIAL_MARKERS: frozenset[str] = frozenset({
     # Discourse particles / interjections of casual speech
     "noh", "nojah", "nojaa", "vot", "ahsoo", "mhm",
@@ -669,6 +732,25 @@ class _RegisterResult(TypedDict, total=False):
 class _CheckResult(TypedDict, total=False):
     """Shared output shape for the issue-list orthography/grammar checks."""
     text: str
+    issues: list[dict]
+    summary_estonian: str
+    note: str
+
+
+class _LegaleseResult(TypedDict, total=False):
+    """Output of check_legalese: simplification hints + terms to preserve."""
+    text: str
+    issues: list[dict]
+    terms_of_art: list[dict]
+    summary_estonian: str
+    note: str
+
+
+class _DefinedTermsResult(TypedDict, total=False):
+    """Output of check_defined_terms: defined-term map + cross-references."""
+    text: str
+    defined_terms: list[dict]
+    cross_references: list[dict]
     issues: list[dict]
     summary_estonian: str
     note: str
@@ -1879,6 +1961,14 @@ def _check_compound_familiarity(text: str) -> dict:
         is_suspect, reasons, quality = _familiarity_verdict(
             in_vocab, top_score, neighbours, parts
         )
+        # De-noise legal register: specialised legal compounds (õigussuhe,
+        # solidaarvõlgnik, abieluvaraleping) are OOV in the general-web
+        # fastText vocab and were false-flagged as coinages (~15% of legal
+        # compounds). A known term of art is real by definition.
+        if is_suspect and _is_legal_term(lemma):
+            is_suspect = False
+            reasons = []
+            quality = {**quality, "legal_term": True}
 
         compounds.append({
             "word": span.text,
@@ -2367,6 +2457,240 @@ def check_redundancy(text: Annotated[str, Field(description="Estonian text to ch
     prose is tight. Input capped at 100,000 characters.
     """
     return _check_redundancy(text)
+
+
+def _check_legalese(text: str) -> dict:
+    """Heuristic Estonian legalese-simplification aid. Flags archaic
+    'kantseliit' filler with plain equivalents, flags over-long/over-nested
+    sentences, and — crucially — lists the legal TERMS OF ART that must be
+    preserved verbatim when simplifying (a general synonym would change the
+    legal meaning)."""
+    _check_text(text)
+    Text = _Text()
+    t = Text(text)
+    t.tag_layer(["sentences", "morph_analysis"])
+    spans = list(t.morph_analysis)
+
+    issues: list[dict] = []
+    terms: list[dict] = []
+    seen: set[str] = set()
+
+    for i, span in enumerate(spans):
+        surface = span.text
+        low = surface.lower()
+        lemma = (_first(list(span.lemma)) or "").lower()
+
+        # Terms of art: preserve, never treat as filler.
+        if _is_legal_term(surface):
+            key = lemma or low
+            if key not in seen:
+                seen.add(key)
+                terms.append({"word": surface, "lemma": lemma or low, "position": span.start})
+            continue
+
+        # Archaic filler (surface-prefix match so inflected forms are caught).
+        for stem, (plain, why) in _LEGALESE_STEMS_ET.items():
+            if low.startswith(stem):
+                issues.append({
+                    "word": surface,
+                    "position": span.start,
+                    "rule": "archaic-filler",
+                    "rule_estonian": "kantseliitlik täitesõna",
+                    "explanation": why,
+                    "suggestion": plain,
+                })
+                break
+
+        # Fixed legalese phrases (adjacent surface pair).
+        if i + 1 < len(spans):
+            pair = (low, spans[i + 1].text.lower())
+            if pair in _LEGALESE_PHRASES_ET:
+                plain, why = _LEGALESE_PHRASES_ET[pair]
+                issues.append({
+                    "phrase": f"{surface} {spans[i + 1].text}",
+                    "position": span.start,
+                    "rule": "legalese-phrase",
+                    "rule_estonian": "kantseliitlik väljend",
+                    "explanation": why,
+                    "suggestion": plain,
+                })
+
+    # Sentence-level complexity: long or heavily-subordinated sentences that
+    # can be split for readability without touching any legal term.
+    for sent in t.sentences:
+        s_text = sent.enclosing_text
+        n_words = len(s_text.split())
+        n_commas = s_text.count(",")
+        if n_words >= 34 or n_commas >= 4:
+            issues.append({
+                "phrase": (s_text[:60] + "…") if len(s_text) > 60 else s_text,
+                "position": sent.start,
+                "rule": "complex-sentence",
+                "rule_estonian": "liiga pikk/keeruline lause",
+                "explanation": (
+                    f"Lause on {n_words} sõna ja {n_commas} koma — kaalu "
+                    f"jagamist lühemateks lauseteks, termineid muutmata."
+                ),
+                "suggestion": "jaga lause lühemateks osadeks",
+            })
+
+    return {
+        "text": text,
+        "issues": issues,
+        "terms_of_art": terms,
+        "summary_estonian": (
+            f"Leiti {len(issues)} lihtsustamiskohta; säilitada tuleb "
+            f"{len(terms)} juriidilist terminit." if (issues or terms)
+            else "Kantseliiti ega juriidilisi termineid ei tuvastatud."
+        ),
+        "note": (
+            "Heuristic legalese-simplification aid. `issues` flags archaic "
+            "'kantseliit' filler (käesolev → see, juhul kui → kui) and "
+            "over-long / over-nested sentences that can be split — WITHOUT "
+            "changing legal meaning. `terms_of_art` lists specialised legal "
+            "terms detected that MUST be preserved verbatim when simplifying: "
+            "replacing e.g. 'vastutus' or 'hagi' with a general synonym would "
+            "change the legal meaning. STARTER lexicons, precision-first and "
+            "not exhaustive — absence of flags is not proof the text is plain, "
+            "and terms_of_art will miss terms not yet in the list. Quote "
+            "rule_estonian verbatim in Estonian replies."
+        ),
+    }
+
+
+# Definition markers: '(edaspidi «Müüja»)', '(edaspidi ühiselt "Pooled")',
+# '(edaspidi nimetatud Leping)'.
+_EDASPIDI_QUOTED_RE = re.compile(
+    r"edaspidi(?:\s+ühiselt)?(?:\s+nimetatud)?\s*[«„\"“]\s*([^»\"”“]+?)\s*[»\"”]",
+    re.IGNORECASE,
+)
+_EDASPIDI_BARE_RE = re.compile(
+    r"edaspidi(?:\s+ühiselt)?(?:\s+nimetatud)?\s+([A-ZÄÖÜÕŠŽ][\wäöüõšžÄÖÜÕŠŽ-]{1,40})",
+)
+_XREF_RE = re.compile(
+    r"(§\s*\d+(?:\s*lg\s*\d+)?|"
+    r"(?:lõige|lõiget|lõikes|lõike|punkt|punkti|punktis|artikkel|artikli)\s+\d+)",
+    re.IGNORECASE,
+)
+
+
+def _count_word_occurrences(term: str, text: str) -> int:
+    """Case-sensitive whole-token occurrence count, Estonian-letter aware
+    (Python \\b is ASCII-only, so use explicit non-letter boundaries)."""
+    pat = r"(?<![\wäöüõšžÄÖÜÕŠŽ])" + re.escape(term) + r"(?![\wäöüõšžÄÖÜÕŠŽ])"
+    return len(re.findall(pat, text))
+
+
+def _check_defined_terms(text: str) -> dict:
+    """Structural aid for LONG legal documents: extract the terms defined
+    with '(edaspidi «X»)', map their usage, extract section cross-references,
+    and flag defined-but-unused or doubly-defined terms. Pure regex, so it
+    scales to whole contracts / statutes (cap raised to MAX_DOC_CHARS)."""
+    _check_text(text, limit=MAX_DOC_CHARS)
+
+    defs: dict[str, dict] = {}
+    for rx in (_EDASPIDI_QUOTED_RE, _EDASPIDI_BARE_RE):
+        for m in rx.finditer(text):
+            term = m.group(1).strip().strip("«»„“”\"' ")
+            if not term:
+                continue
+            d = defs.setdefault(term, {"position": m.start(), "definitions": 0})
+            d["definitions"] += 1
+
+    issues: list[dict] = []
+    defined_terms: list[dict] = []
+    for term, d in sorted(defs.items(), key=lambda kv: kv[1]["position"]):
+        uses = _count_word_occurrences(term, text)
+        defined_terms.append({
+            "term": term, "position": d["position"],
+            "definitions": d["definitions"], "total_occurrences": uses,
+        })
+        if d["definitions"] > 1:
+            issues.append({
+                "term": term, "position": d["position"],
+                "rule": "duplicate-definition",
+                "rule_estonian": "korduv mõistemääratlus",
+                "explanation": f"Mõiste «{term}» on defineeritud {d['definitions']} korda.",
+            })
+        if uses <= d["definitions"]:
+            issues.append({
+                "term": term, "position": d["position"],
+                "rule": "defined-but-unused",
+                "rule_estonian": "kasutamata mõiste",
+                "explanation": f"Mõiste «{term}» on defineeritud, kuid edaspidi tekstis ei kasutata.",
+            })
+
+    xrefs = [{"reference": m.group(0).strip(), "position": m.start()}
+             for m in _XREF_RE.finditer(text)]
+
+    return {
+        "text": text if len(text) <= 2000 else text[:2000] + "…",
+        "defined_terms": defined_terms,
+        "cross_references": xrefs,
+        "issues": issues,
+        "summary_estonian": (
+            f"Leiti {len(defined_terms)} defineeritud mõistet, {len(xrefs)} "
+            f"viidet ja {len(issues)} probleemi."
+        ),
+        "note": (
+            "Structural check for long legal documents. defined_terms maps "
+            "each '(edaspidi «X»)' definition to how many times the term "
+            "actually occurs; cross_references lists § / lõige / punkt / "
+            "artikkel references (surfaced, not validated). issues flags "
+            "defined-but-unused and doubly-defined terms. Regex-based and "
+            "PII-free (nothing stored); input cap is raised to 500,000 chars "
+            "so whole contracts fit. `text` is truncated to a 2,000-char "
+            "preview in the response. Quote rule_estonian verbatim in "
+            "Estonian replies."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Simplify Estonian legalese (keep terms of art)",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+@_counted
+def check_legalese(text: Annotated[str, Field(description="Estonian legal text to lint for plain-language simplification while protecting legal terms of art.")]) -> _LegaleseResult:
+    """Aid for simplifying Estonian legal text WITHOUT losing legal precision.
+
+    Returns two things:
+    - `issues`: archaic 'kantseliit' filler with plain equivalents
+      (`käesolev` → `see`, `juhul kui` → `kui`), plus over-long / heavily
+      subordinated sentences worth splitting.
+    - `terms_of_art`: specialised legal terms detected in the text that
+      MUST be kept verbatim when rewriting — swapping `hagi` or `vastutus`
+      for a general synonym changes the legal meaning. Use this as a
+      do-not-touch list while you simplify.
+
+    Heuristic, precision-first, backed by curated starter lexicons (not
+    exhaustive). Input capped at 100,000 characters.
+    """
+    return _check_legalese(text)
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Track defined terms & cross-references in a legal document",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+@_counted
+def check_defined_terms(text: Annotated[str, Field(description="A long Estonian legal document to map defined terms ('edaspidi «X»') and § / lõige / punkt cross-references.")]) -> _DefinedTermsResult:
+    """Structural map of a long Estonian legal document.
+
+    Extracts every term defined with `(edaspidi «X»)`, counts how often each
+    is actually used, lists `§` / `lõige` / `punkt` / `artikkel`
+    cross-references, and flags defined-but-unused or doubly-defined terms —
+    the consistency errors that creep into long contracts and statutes.
+
+    Regex-based and PII-free (nothing is stored). Input cap is raised to
+    500,000 characters so a whole contract fits in one call; the echoed
+    `text` is truncated to a 2,000-character preview.
+    """
+    return _check_defined_terms(text)
 
 
 def _check_style(text: str) -> dict:

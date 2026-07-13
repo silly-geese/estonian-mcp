@@ -62,6 +62,8 @@ synonyms instead of inventing them.
 | `check_punctuation(text)` | Kirjavahemärgid — flags missing commas before subordinating conjunctions (`et`, `sest`, `kuna`, `kuid`, `vaid`, `nagu`, …) |
 | `check_hyphenation(word)` | Poolitamine — safe line-break positions for an Estonian word, syllable-boundary based with no-orphan-edge rule |
 | `check_numbers(text)` | Numbrite õigekirjutus — flags decimal separators (`3.14` → `3,14`) and thousands separators (`1,000,000` → `1 000 000`) |
+| `check_legalese(text)` | Legal plain-language aid — flags archaic `kantseliit` filler (`käesolev` → `see`, `juhul kui` → `kui`) and over-long sentences to simplify, while listing the **terms of art** that must be preserved so simplification doesn't change legal meaning |
+| `check_defined_terms(text)` | Long-document structure — maps terms defined with `(edaspidi «X»)`, counts their usage, lists `§` / `lõige` / `punkt` cross-references, and flags defined-but-unused or doubly-defined terms (cap raised to 500k chars) |
 
 POS tag set: `S`=noun, `V`=verb, `A`=adj, `P`=pron, `D`=adv, `K`=adp,
 `J`=conj, `N`=numeral, `I`=interj, `Y`=abbrev, `X`=foreign, `Z`=punct.
@@ -257,7 +259,7 @@ send to suppress it). You'll especially see it right after adding or
 updating the connector, since the client re-checks tools it hasn't
 seen before.
 
-Good news: **all 21 tools are marked `readOnlyHint: true`** (they only
+Good news: **all 23 tools are marked `readOnlyHint: true`** (they only
 read text, never write or call out), so any well-behaved client can
 safely let you allow them once and stop asking:
 
