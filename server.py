@@ -63,7 +63,7 @@ DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.3.0"
+SERVER_VERSION = "0.4.0"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -142,8 +142,10 @@ SERVER_INSTRUCTIONS = (
     "commas, number formatting, abbreviation hyphenation), plus object-case, "
     "register, style, redundancy and calque-risk checks. For legal Estonian, "
     "check_legalese aids plain-language simplification while listing the "
-    "terms of art that must be preserved, and check_defined_terms maps "
-    "defined terms and cross-references in long documents. "
+    "terms of art that must be preserved, check_defined_terms maps "
+    "defined terms and cross-references in long documents, and "
+    "common_legal_usage returns canonical legal collocations for a term so "
+    "you use real legalese instead of inventing phrasings. "
     "Use these tools as ground truth rather than guessing Estonian spelling, "
     "case forms, or inflections — language models routinely hallucinate "
     "plausible-but-wrong Estonian morphology. Note that spell_check passing "
@@ -209,6 +211,21 @@ def _embeddings():
         "/opt/models/fasttext-et-medium",
     )
     return compress_fasttext.models.CompressedFastTextKeyedVectors.load(path)
+
+
+@lru_cache(maxsize=1)
+def _legal_index() -> dict:
+    """Lazy-load the legal collocation/frequency index (built offline by
+    scripts/build_legal_collocations.py from streamed legal corpora). Defaults
+    to the bundled POC index shipped with the package; override with
+    ESTNLTK_MCP_LEGAL_INDEX to point at the full-corpus artifact."""
+    import gzip
+    path = os.environ.get("ESTNLTK_MCP_LEGAL_INDEX") or str(
+        Path(__file__).resolve().parent / "data" / "legal_collocations.json.gz")
+    raw = Path(path).read_bytes()
+    if path.endswith(".gz"):
+        raw = gzip.decompress(raw)
+    return json.loads(raw)
 
 
 # Phase-1 register lexicons. Hand-curated; coarse by design. Real register
@@ -752,6 +769,18 @@ class _DefinedTermsResult(TypedDict, total=False):
     defined_terms: list[dict]
     cross_references: list[dict]
     issues: list[dict]
+    summary_estonian: str
+    note: str
+
+
+class _LegalUsageResult(TypedDict, total=False):
+    """Output of common_legal_usage: canonical collocations for a legal term."""
+    word: str
+    lemma: str
+    found: bool
+    frequency: int
+    common_before: list[dict]
+    common_after: list[dict]
     summary_estonian: str
     note: str
 
@@ -2691,6 +2720,94 @@ def check_defined_terms(text: Annotated[str, Field(description="A long Estonian 
     `text` is truncated to a 2,000-character preview.
     """
     return _check_defined_terms(text)
+
+
+def _common_legal_usage(word: str) -> dict:
+    """Look up the canonical legal collocations for a word from the offline
+    legal-corpus index — the 'what's the standard legal phrasing' answer.
+    common_before / common_after are the words most frequently seen directly
+    before / after the term in real legislation (e.g. `hagi` → before
+    `esitama`, i.e. 'esitama hagi'; `kohustus` → after `täitmine`)."""
+    _check_text(word, limit=MAX_WORD_CHARS, name="word")
+    if any(ch.isspace() for ch in word.strip()):
+        raise ValueError("common_legal_usage expects a single word, no whitespace")
+
+    idx = _legal_index()
+    Text = _Text()
+    t = Text(word)
+    t.tag_layer(["morph_analysis"])
+    lemma = ""
+    for span in t.morph_analysis:
+        lemma = (_first(list(span.lemma)) or "").lower()
+        break
+    lemmas = idx.get("lemmas", {})
+    entry = lemmas.get(lemma) or lemmas.get(word.lower())
+
+    if not entry:
+        return {
+            "word": word,
+            "lemma": lemma or word.lower(),
+            "found": False,
+            "frequency": 0,
+            "common_before": [],
+            "common_after": [],
+            "summary_estonian": (
+                f"Sõna '{word}' ei esine juriidilise korpuse indeksis "
+                f"(võib olla haruldane või mitte juriidiline termin)."
+            ),
+            "note": _LEGAL_USAGE_NOTE,
+        }
+
+    return {
+        "word": word,
+        "lemma": lemma or word.lower(),
+        "found": True,
+        "frequency": entry.get("freq", 0),
+        "common_before": [{"word": w, "count": c} for w, c in entry.get("left", [])],
+        "common_after": [{"word": w, "count": c} for w, c in entry.get("right", [])],
+        "summary_estonian": (
+            f"'{word}' esineb juriidilises korpuses {entry.get('freq', 0)} korda; "
+            f"sagedasimad naabersõnad on toodud common_before / common_after all."
+        ),
+        "note": _LEGAL_USAGE_NOTE,
+    }
+
+
+_LEGAL_USAGE_NOTE = (
+    "Canonical legal-usage lookup from an offline collocation index distilled "
+    "from Estonian legal corpora (see scripts/build_legal_collocations.py). "
+    "common_before / common_after are the content words most often seen "
+    "immediately before / after the term's lemma in real legislation, with "
+    "raw counts — use them to pick idiomatic legal phrasing (e.g. 'esitama "
+    "hagi', 'kohustuse täitmine') instead of inventing collocations. It is a "
+    "frequency signal, NOT prescriptive: rare-but-correct phrasings exist, and "
+    "coverage is bounded by the corpus. The bundled index is a proof-of-concept "
+    "sample; a full-corpus index can be supplied via ESTNLTK_MCP_LEGAL_INDEX. "
+    "Deterministic and offline; no text is stored."
+)
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Canonical legal usage / collocations for an Estonian term",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+@_counted
+def common_legal_usage(word: Annotated[str, Field(description="A single Estonian (legal) word to look up canonical collocations for, e.g. 'hagi', 'kohustus', 'taotlus'.")]) -> _LegalUsageResult:
+    """Canonical legal collocations for a term, from an offline corpus index.
+
+    Answers "what's the standard legal phrasing" — returns how often the
+    term occurs in Estonian legal text and the words most frequently seen
+    directly before/after it (`hagi` → `esitama` before it = 'esitama hagi';
+    `kohustus` → `täitmine` after it = 'kohustuse täitmine'). Use it so the
+    AI picks real, idiomatic legalese instead of inventing collocations.
+
+    A frequency signal, not prescriptive; coverage is bounded by the corpus.
+    The bundled index is a proof-of-concept sample; the full-corpus artifact
+    is loaded via ESTNLTK_MCP_LEGAL_INDEX. Input is a single word.
+    """
+    return _common_legal_usage(word)
 
 
 def _check_style(text: str) -> dict:

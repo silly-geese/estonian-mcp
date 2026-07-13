@@ -64,6 +64,7 @@ synonyms instead of inventing them.
 | `check_numbers(text)` | Numbrite õigekirjutus — flags decimal separators (`3.14` → `3,14`) and thousands separators (`1,000,000` → `1 000 000`) |
 | `check_legalese(text)` | Legal plain-language aid — flags archaic `kantseliit` filler (`käesolev` → `see`, `juhul kui` → `kui`) and over-long sentences to simplify, while listing the **terms of art** that must be preserved so simplification doesn't change legal meaning |
 | `check_defined_terms(text)` | Long-document structure — maps terms defined with `(edaspidi «X»)`, counts their usage, lists `§` / `lõige` / `punkt` cross-references, and flags defined-but-unused or doubly-defined terms (cap raised to 500k chars) |
+| `common_legal_usage(word)` | Canonical legal collocations from an offline corpus index — how often a term occurs in legislation and the words most often seen before/after it (`hagi` → `esitama hagi`, `kohustus` → `kohustuse täitmine`), so the model uses real legalese instead of inventing it (bundled index is a POC sample) |
 
 POS tag set: `S`=noun, `V`=verb, `A`=adj, `P`=pron, `D`=adv, `K`=adp,
 `J`=conj, `N`=numeral, `I`=interj, `Y`=abbrev, `X`=foreign, `Z`=punct.
@@ -259,7 +260,7 @@ send to suppress it). You'll especially see it right after adding or
 updating the connector, since the client re-checks tools it hasn't
 seen before.
 
-Good news: **all 23 tools are marked `readOnlyHint: true`** (they only
+Good news: **all 24 tools are marked `readOnlyHint: true`** (they only
 read text, never write or call out), so any well-behaved client can
 safely let you allow them once and stop asking:
 

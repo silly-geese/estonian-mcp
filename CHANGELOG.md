@@ -7,6 +7,31 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-06
+
+### Added
+
+- **`common_legal_usage` (tool count 23 → 24)** — canonical legal-usage
+  collocations from an offline corpus index. Given a legal term it returns
+  how often it occurs in legislation and the content words most often seen
+  directly before / after it (`hagi` → `esitama hagi`, `kohustus` →
+  `kohustuse täitmine`), so the model uses real legalese instead of inventing
+  collocations. Deterministic and offline.
+- **`scripts/build_legal_collocations.py`** — the index build pipeline. It
+  streams a corpus sentence-by-sentence, distills collocation/frequency
+  statistics with Vabamorf, and discards the text — the corpus is never
+  stored, only the pruned index. Source-agnostic (`--source sample|dir|hf`).
+
+### Notes
+
+- The **bundled index is a proof-of-concept** built from a small,
+  license-clean authored sample, so `common_legal_usage` currently covers
+  only a few dozen core terms. The production full index should be built
+  from **public-domain Riigi Teataja** legislation (`--source dir`) and
+  supplied via `ESTNLTK_MCP_LEGAL_INDEX`. The `paulpall/legalese-sentences_estonian`
+  HuggingFace corpus is **non-commercial** (Estonian National Corpus), so it
+  is a `--source hf` research option only and is NOT shipped.
+
 ## [0.3.0] — 2026-07-06
 
 ### Added
