@@ -117,9 +117,37 @@ def is_legal_term_tests() -> None:
     check("ordinary word 'ilus' is not legal", not server._is_legal_term("ilus"))
 
 
+def common_legal_usage_tests() -> None:
+    print("common_legal_usage")
+    r = server.common_legal_usage("kohustus")
+    check("known legal term found", r["found"] is True, str(r.get("summary_estonian")))
+    check("has a frequency", isinstance(r["frequency"], int) and r["frequency"] > 0, str(r["frequency"]))
+    check("common_after is list of {word,count}",
+          all("word" in x and "count" in x for x in r["common_after"]), str(r["common_after"]))
+    after = {x["word"] for x in r["common_after"]}
+    check("canonical 'kohustuse täitmine' present", "täitmine" in after, str(after))
+
+    r2 = server.common_legal_usage("hagi")
+    before = {x["word"] for x in r2["common_before"]}
+    check("hagi has collocations", r2["found"] and (before or r2["common_after"]), str(r2))
+
+    # Non-legal word → not found, empty lists, no crash.
+    nf = server.common_legal_usage("koer")
+    check("non-legal word → found False", nf["found"] is False, str(nf))
+    check("not-found → empty collocations", nf["common_before"] == [] and nf["common_after"] == [])
+
+    # Single-word contract enforced.
+    try:
+        server.common_legal_usage("kaks sõna")
+        check("rejects whitespace", False, "no exception")
+    except ValueError:
+        check("rejects whitespace", True)
+
+
 legalese_tests()
 defined_terms_tests()
 is_legal_term_tests()
+common_legal_usage_tests()
 
 if failures:
     print(f"\n{len(failures)} failure(s):")

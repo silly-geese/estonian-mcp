@@ -63,6 +63,39 @@ md5sum .context/models/fasttext-et-medium    # update Dockerfile + CI hash
 
 Then bump the MD5 in `Dockerfile` and `.github/workflows/ci.yml`.
 
+## `build_legal_collocations.py`
+
+Builds the legal-Estonian collocation / frequency index behind the
+`common_legal_usage` tool — the "what's the canonical legal phrasing"
+engine (`hagi` → `esitama hagi`, `kohustus` → `kohustuse täitmine`).
+
+**The data, the smart way:** the pipeline never stores the corpus. It
+streams source text sentence-by-sentence, lemmatises with Vabamorf,
+counts adjacent content-word collocations, and *discards the text* —
+only the pruned ~KB/MB index is written. Memory stays bounded no matter
+how big the corpus is.
+
+Sources (mind the licence):
+
+```sh
+# POC (default) — small, license-clean authored sample; this is what
+# ships in data/legal_collocations.json.gz and is used by the tests.
+uv run python scripts/build_legal_collocations.py
+
+# Production, license-clean — point at .txt files of PUBLIC-DOMAIN
+# Riigi Teataja legislation (Estonian law is freely reusable).
+uv run python scripts/build_legal_collocations.py --source dir --corpus-dir rt_txt/
+
+# Research/eval ONLY — streams paulpall/legalese-sentences_estonian, which
+# is NON-COMMERCIAL (Estonian National Corpus). Do NOT ship the result.
+uv run --with datasets python scripts/build_legal_collocations.py --source hf --limit 8000
+```
+
+The full production index is meant to be hosted on the `v0.1.0-models`
+GitHub Release (like fastText) and pointed at via
+`ESTNLTK_MCP_LEGAL_INDEX`; the committed POC index is the default fallback
+so the tool works out of the box.
+
 ## `eval_inflection.py`
 
 Benchmarks estonian-mcp's morphology engine (Vabamorf, the synthesizer

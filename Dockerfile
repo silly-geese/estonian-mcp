@@ -66,6 +66,9 @@ RUN mkdir -p /opt/models \
  && echo "3690ee9983fc95740a61125fd58ed385  /opt/models/fasttext-et-medium" | md5sum -c -
 
 COPY server.py logo.png ./
+# Bundled legal collocation index (POC). Override at runtime with the
+# full-corpus artifact via ESTNLTK_MCP_LEGAL_INDEX if desired.
+COPY data ./data
 
 # ---- runtime ----
 FROM python:3.13-slim AS runtime
@@ -86,6 +89,7 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /opt/models /opt/models
 COPY --from=builder /app/server.py /app/server.py
 COPY --from=builder /app/logo.png /app/logo.png
+COPY --from=builder /app/data /app/data
 
 # EstNLTK's WordNet opens its bundled SQLite DB read-write at query time
 # (SQLite must create a journal file alongside the DB), so the resources
