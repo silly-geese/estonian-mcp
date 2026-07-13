@@ -53,13 +53,16 @@ file itself.
 
 This product bundles a legal-Estonian collocation index
 (data/legal_collocations.json.gz) used by the common_legal_usage tool.
-The SHIPPED index is a small proof-of-concept built from a license-clean
-sample of legal sentences authored by the estonian-mcp contributors
-(see scripts/build_legal_collocations.py), and is offered under
-Apache-2.0 with the rest of the source. A production full index is
-intended to be built from PUBLIC-DOMAIN Riigi Teataja legislation
-(Estonian law is freely reusable) via `--source dir`. The build script
-also supports a `--source hf` research mode over the
+The SHIPPED index contains only aggregate collocation/frequency
+statistics (facts) distilled from PUBLIC-DOMAIN Riigi Teataja
+legislation — the five core codes (obligations, general civil, civil procedure, property, penal) —
+fetched via scripts/fetch_riigiteataja.py and built with
+scripts/build_legal_collocations.py. Estonian legislation is freely
+reusable; the index is offered under Apache-2.0 with the rest of the
+source, and no legislation text is redistributed (only statistics).
+Coverage is broadened by adding more act ids.
+
+The build script also supports a `--source hf` research mode over the
 `paulpall/legalese-sentences_estonian` dataset (Estonian National
 Corpus), which is licensed for NON-COMMERCIAL use only — an index
 derived from it must NOT be shipped and is not distributed here.

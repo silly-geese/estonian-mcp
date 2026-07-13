@@ -52,6 +52,9 @@ _CONTENT_POS = {"S", "V", "A", "H"}
 _STOP_LEMMAS = {
     "olema", "ei", "võima", "pidama", "saama", "tegema", "hakkama",
     "ning", "ja", "või", "see", "tema", "mis", "kes", "too",
+    # HTML/UI artifacts that leak from Riigi Teataja blob-html (repeated
+    # per-section navigation labels), never real legal lemmas.
+    "link", "balance", "history", "print", "top", "back", "home", "menu",
 }
 
 
