@@ -91,10 +91,28 @@ uv run python scripts/build_legal_collocations.py --source dir --corpus-dir rt_t
 uv run --with datasets python scripts/build_legal_collocations.py --source hf --limit 8000
 ```
 
-The full production index is meant to be hosted on the `v0.1.0-models`
-GitHub Release (like fastText) and pointed at via
-`ESTNLTK_MCP_LEGAL_INDEX`; the committed POC index is the default fallback
-so the tool works out of the box.
+The **committed index** (`data/legal_collocations.json.gz`, ~60 KB) is built
+from public-domain Riigi Teataja legislation, so it ships license-clean and
+the tool works out of the box. Reproduce / extend it:
+
+```sh
+# 1. fetch consolidated act text (add act ids to broaden coverage)
+uv run python scripts/fetch_riigiteataja.py --ids 961235 --out rt_txt/
+# 2. build the index from the fetched text
+uv run python scripts/build_legal_collocations.py --source dir --corpus-dir rt_txt/
+```
+
+A larger index can also be hosted on the `v0.1.0-models` GitHub Release (like
+fastText) and pointed at via `ESTNLTK_MCP_LEGAL_INDEX`.
+
+## `fetch_riigiteataja.py`
+
+Fetches consolidated Estonian legislation text from Riigi Teataja's public
+`/api/v1/akt/{id}/blob-html` endpoint into a directory of `.txt` files, ready
+for `build_legal_collocations.py --source dir`. Estonian legislation is
+public domain, so an index built from it is license-clean and shippable. Look
+up act ids by opening an act on riigiteataja.ee and reading `/akt/{id}` in the
+URL; a few core codes are wired as defaults and coverage scales by adding ids.
 
 ## `eval_inflection.py`
 

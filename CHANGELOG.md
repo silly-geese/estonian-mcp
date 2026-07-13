@@ -7,6 +7,21 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-07-06
+
+### Changed
+
+- **The bundled `common_legal_usage` index is now real, license-clean data.**
+  Replaced the tiny authored proof-of-concept sample with an index built from
+  **public-domain Riigi Teataja legislation** (the Law of Obligations Act,
+  Võlaõigusseadus) — **~1,300 civil-law terms** with true corpus frequencies
+  (`kohustus` → `kohustuse täitmine`, `leping` → `lepingu sõlmimine`, `nõue` →
+  `nõude aegumistähtaeg`). Still ~60 KB, offline, and PII-free.
+- **New `scripts/fetch_riigiteataja.py`** — fetches consolidated act text from
+  Riigi Teataja's public `/api/v1/akt/{id}/blob-html` endpoint into `.txt`
+  files for `build_legal_collocations.py --source dir`. Coverage broadens by
+  adding act ids (procedural, criminal, property codes) — no code change.
+
 ## [0.4.0] — 2026-07-06
 
 ### Added

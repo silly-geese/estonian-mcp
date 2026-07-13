@@ -63,7 +63,7 @@ DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.4.0"
+SERVER_VERSION = "0.4.1"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -2781,9 +2781,11 @@ _LEGAL_USAGE_NOTE = (
     "raw counts — use them to pick idiomatic legal phrasing (e.g. 'esitama "
     "hagi', 'kohustuse täitmine') instead of inventing collocations. It is a "
     "frequency signal, NOT prescriptive: rare-but-correct phrasings exist, and "
-    "coverage is bounded by the corpus. The bundled index is a proof-of-concept "
-    "sample; a full-corpus index can be supplied via ESTNLTK_MCP_LEGAL_INDEX. "
-    "Deterministic and offline; no text is stored."
+    "coverage is bounded by the corpus. The bundled index is built from "
+    "public-domain Riigi Teataja legislation (currently the Law of Obligations "
+    "Act, ~1,300 civil-law terms); broaden coverage by building from more acts "
+    "and supplying the index via ESTNLTK_MCP_LEGAL_INDEX. Deterministic and "
+    "offline; no text is stored."
 )
 
 
