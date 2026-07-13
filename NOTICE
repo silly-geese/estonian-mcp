@@ -55,7 +55,7 @@ This product bundles a legal-Estonian collocation index
 (data/legal_collocations.json.gz) used by the common_legal_usage tool.
 The SHIPPED index contains only aggregate collocation/frequency
 statistics (facts) distilled from PUBLIC-DOMAIN Riigi Teataja
-legislation — currently the Law of Obligations Act (Võlaõigusseadus) —
+legislation — the five core codes (obligations, general civil, civil procedure, property, penal) —
 fetched via scripts/fetch_riigiteataja.py and built with
 scripts/build_legal_collocations.py. Estonian legislation is freely
 reusable; the index is offered under Apache-2.0 with the rest of the

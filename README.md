@@ -64,7 +64,7 @@ synonyms instead of inventing them.
 | `check_numbers(text)` | Numbrite õigekirjutus — flags decimal separators (`3.14` → `3,14`) and thousands separators (`1,000,000` → `1 000 000`) |
 | `check_legalese(text)` | Legal plain-language aid — flags archaic `kantseliit` filler (`käesolev` → `see`, `juhul kui` → `kui`) and over-long sentences to simplify, while listing the **terms of art** that must be preserved so simplification doesn't change legal meaning |
 | `check_defined_terms(text)` | Long-document structure — maps terms defined with `(edaspidi «X»)`, counts their usage, lists `§` / `lõige` / `punkt` cross-references, and flags defined-but-unused or doubly-defined terms (cap raised to 500k chars) |
-| `common_legal_usage(word)` | Canonical legal collocations from an offline corpus index — how often a term occurs in legislation and the words most often seen before/after it (`hagi` → `esitama hagi`, `kohustus` → `kohustuse täitmine`), so the model uses real legalese instead of inventing it (bundled index: civil law from Riigi Teataja/VÕS; expandable) |
+| `common_legal_usage(word)` | Canonical legal collocations from an offline corpus index — how often a term occurs in legislation and the words most often seen before/after it (`hagi` → `esitama hagi`, `kohustus` → `kohustuse täitmine`), so the model uses real legalese instead of inventing it (bundled index: 5 core Riigi Teataja codes — obligations, civil procedure, property, penal, general; expandable) |
 
 POS tag set: `S`=noun, `V`=verb, `A`=adj, `P`=pron, `D`=adv, `K`=adp,
 `J`=conj, `N`=numeral, `I`=interj, `Y`=abbrev, `X`=foreign, `Z`=punct.

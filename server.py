@@ -2782,10 +2782,10 @@ _LEGAL_USAGE_NOTE = (
     "hagi', 'kohustuse täitmine') instead of inventing collocations. It is a "
     "frequency signal, NOT prescriptive: rare-but-correct phrasings exist, and "
     "coverage is bounded by the corpus. The bundled index is built from "
-    "public-domain Riigi Teataja legislation (currently the Law of Obligations "
-    "Act, ~1,300 civil-law terms); broaden coverage by building from more acts "
-    "and supplying the index via ESTNLTK_MCP_LEGAL_INDEX. Deterministic and "
-    "offline; no text is stored."
+    "public-domain Riigi Teataja legislation — five core codes (obligations, "
+    "general civil, civil procedure, property, penal), ~2,000 legal terms; "
+    "broaden coverage by adding more acts and supplying the index via "
+    "ESTNLTK_MCP_LEGAL_INDEX. Deterministic and offline; no text is stored."
 )
 
 

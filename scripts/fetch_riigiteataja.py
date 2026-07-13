@@ -27,7 +27,11 @@ from pathlib import Path
 # looking up ids on riigiteataja.ee. Kept small on purpose — coverage scales
 # by adding ids, not by changing code.
 DEFAULT_ACTS = {
-    961235: "vols",   # Võlaõigusseadus (Law of Obligations Act)
+    961235: "vols",    # Võlaõigusseadus — Law of Obligations Act
+    12806823: "tsys",  # Tsiviilseadustiku üldosa seadus — General Part of the Civil Code
+    22407: "tsms",     # Tsiviilkohtumenetluse seadustik — Code of Civil Procedure
+    12807782: "aos",   # Asjaõigusseadus — Property Law Act
+    184411: "kars",    # Karistusseadustik — Penal Code
 }
 
 _API = "https://www.riigiteataja.ee/api/v1/akt/{id}/blob-html"
