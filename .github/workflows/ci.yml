@@ -76,6 +76,9 @@ jobs:
       - name: Run familiarity-verdict tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_familiarity.py
 
+      - name: Run legal-tool tests
+        run: uv run --python ${{ matrix.python-version }} python tests/test_legal.py
+
   docker:
     runs-on: ubuntu-latest
     needs: smoke

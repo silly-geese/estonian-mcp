@@ -227,6 +227,17 @@ if tt:
           and "scrape_junk" in tt["neighbour_quality"], str(tt))
 r = server.check_compound_familiarity("Eile käisin poes ja ostsin leiba.")
 check("no compounds → empty analysis", r["compounds_analysed"] == 0)
+# Legal de-noise: solidaarvõlgnik is a real legal term that used to
+# false-flag as a coinage (OOV in the general-web fastText vocab). The
+# terms-of-art list must suppress that.
+r = server.check_compound_familiarity("Vastutab solidaarvõlgnik.")
+sv = next((c for c in r["all_compounds"] if c["lemma"] == "solidaarvõlgnik"), None)
+check("legal term solidaarvõlgnik analysed", sv is not None,
+      str([c["lemma"] for c in r["all_compounds"]]))
+if sv:
+    check("legal term NOT flagged suspect", sv["is_suspect"] is False, str(sv))
+    check("legal de-noise marked in quality",
+          sv.get("neighbour_quality", {}).get("legal_term") is True, str(sv))
 r = server.check_compound_familiarity(
     "See on mõtteliin."
 )
