@@ -10,10 +10,15 @@
 
 A small **Model Context Protocol** server that exposes
 [EstNLTK](https://github.com/estnltk/estnltk) — the Estonian NLP toolkit —
-as tools any LLM client can call in real time. Hand it Estonian text,
-get back correct lemmas, morphology, POS tags, spell-check + suggestions,
-syllables, named entities, WordNet synonyms, fastText-based related
-words, and a register hint (formal vs colloquial).
+as tools any LLM client can call in real time, backed by EKI's orthography
+rules (Reeglid) and public-domain Riigi Teataja legislation. Hand it
+Estonian text, get back correct lemmas, morphology, POS tags, spell-check +
+suggestions, syllables, named entities, WordNet synonyms, fastText-based
+related words, a register hint, orthography/grammar checks, and — for legal
+texts — legalese simplification and canonical legal-usage lookups.
+
+**One-click install** from Anthropic's official Connectors Directory, or
+self-host — see below.
 
 If your AI agent has to draft, edit, or proofread Estonian, this wires
 in ground truth so it stops guessing on the mechanical layer
