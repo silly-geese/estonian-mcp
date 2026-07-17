@@ -7,6 +7,14 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Docs/descriptions now credit **Riigi Teataja** (the public-domain
+  legislation behind `common_legal_usage`) alongside EstNLTK + EKI Reeglid,
+  and note **one-click install from Anthropic's Connectors Directory**.
+  Updated the README intro, `pyproject.toml`, and the GitHub About
+  description (Smithery listing is a manual dashboard field).
+
 ## [0.4.1] — 2026-07-06
 
 ### Changed
