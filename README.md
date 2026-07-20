@@ -89,7 +89,8 @@ config, no auth.**
 ### One-click from the Connectors Directory (Cowork, claude.ai, Claude Desktop)
 
 1. In your Claude app, open **Settings → Connectors**.
-2. **Browse connectors** (the directory) and search **estonian-mcp**.
+2. **Browse connectors** (the directory) and search **estonian** — it
+   shows up as the Estonian connector.
 3. Click **Add** / **Connect**. That's it — the server is public, so
    there's no authentication step.
 4. Start a new chat and write in Estonian — proofread an email, study a
