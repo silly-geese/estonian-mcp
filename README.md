@@ -9,16 +9,16 @@
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7c3aed.svg)](https://modelcontextprotocol.io)
 
 A small **Model Context Protocol** server that exposes
-[EstNLTK](https://github.com/estnltk/estnltk) — the Estonian NLP toolkit —
+[EstNLTK](https://github.com/estnltk/estnltk), the Estonian NLP toolkit,
 as tools any LLM client can call in real time, backed by EKI's orthography
 rules (Reeglid) and public-domain Riigi Teataja legislation. Hand it
 Estonian text, get back correct lemmas, morphology, POS tags, spell-check +
 suggestions, syllables, named entities, WordNet synonyms, fastText-based
-related words, a register hint, orthography/grammar checks, and — for legal
-texts — legalese simplification and canonical legal-usage lookups.
+related words, a register hint, orthography/grammar checks, and, for legal
+texts, legalese simplification and canonical legal-usage lookups.
 
 **One-click install** from Anthropic's official Connectors Directory, or
-self-host — see below.
+self-host. See below.
 
 If your AI agent has to draft, edit, or proofread Estonian, this wires
 in ground truth so it stops guessing on the mechanical layer
@@ -30,17 +30,17 @@ synonyms instead of inventing them.
 > [arXiv:2510.21193](https://arxiv.org/abs/2510.21193v2)), our morphology
 > engine scores **96.5% first-candidate / 99.1% any-candidate** over
 > 1,400 items. Reproduce: `uv run python scripts/eval_inflection.py`.
-> (We're a tool server, not a rankable LLM — this scores our tools
+> (We're a tool server, not a rankable LLM, so this scores our tools
 > against published gold data.)
 
 **Three ways to use it:**
 
-1. 👉 **One-click from Anthropic's Connectors Directory** — the easiest
+1. 👉 **One-click from Anthropic's Connectors Directory**, the easiest
    path, no terminal, no install, no URL to paste. See
    [Get started in 30 seconds](#-get-started-in-30-seconds-no-install) below.
-2. **One-click on Smithery** — install from the
+2. **One-click on Smithery**, install from the
    [estonian-mcp listing](https://smithery.ai/servers/silly-geese/estonian-mcp).
-3. **Self-host** — clone, run locally as stdio, or deploy your own
+3. **Self-host**, clone, run locally as stdio, or deploy your own
    container to Fly.io / any host. See [Self-host (advanced)](#self-host-advanced).
 
 ## What it does
@@ -49,28 +49,28 @@ synonyms instead of inventing them.
 | --- | --- |
 | `tokenize(text)` | Split text into sentences and words |
 | `analyze_morphology(text)` | Lemma, POS, form, root, ending, clitic, compound parts, ambiguity count, and usage flags (archaic / foreign / interjection / abbreviation / proper-noun) per word |
-| `paradigm(word)` | Full Vabamorf-generated inflection paradigm — 14 cases × 2 numbers for nominals, ~30 verb forms — with Estonian labels per form |
+| `paradigm(word)` | Full Vabamorf-generated inflection paradigm, 14 cases × 2 numbers for nominals, ~30 verb forms, with Estonian labels per form |
 | `lemmatize(text)` | Just the dictionary form per word |
 | `pos_tag(text)` | Just the part-of-speech tag per word |
 | `spell_check(text)` | Spelling check + correction suggestions |
 | `syllabify(word)` | Syllables with quantity + accent |
 | `named_entities(text)` | People / places / organisations |
-| `synonyms(word)` | Synsets from Estonian WordNet — synonymous lemmas + definition + examples per word sense |
+| `synonyms(word)` | Synsets from Estonian WordNet, synonymous lemmas + definition + examples per word sense |
 | `find_related_words(word)` | Top-N semantically nearby words via fastText embeddings (semantically related, not always synonymous) |
 | `classify_register(text)` | Coarse formal/colloquial register hint with matched markers + consistency flag for register-mixed text (heuristic, phase 1) |
-| `check_style(text)` | Style metrics — lemma-aware repetition, passive-voice ratio, sentence-length variance, hedging-word density |
-| `check_redundancy(text)` | Pleonasm check — flags semantic doubling like `samuti ka` (also+also), `kõige optimaalsem` (most+optimal), and fixed redundant phrases |
-| `check_object_case(text)` | Käändeõpetus — flags direct-object case errors under negation and after partitive-only verbs (armastama, vihkama, vajama, …) |
-| `check_abbreviation_hyphenation(text)` | Lühendiortograafia — flags abbreviations with case endings missing the EKI-mandated hyphen (`MCPst` → `MCP-st`, `OÜle` → `OÜ-le`) |
-| `check_compound_familiarity(text)` | Calque-risk diagnostic — for each compound noun, returns top fastText neighbours and flags compounds with weak similarity (`mõtteliin`-style translationese, e.g. literal English "train of thought" → real Estonian is `mõttekäik`) for second-look review |
-| `check_capitalization(text)` | Algustäheortograafia check — flags wrongly capitalized weekdays, months, nationalities, and language/culture adjectives per EKI's Reeglid |
-| `check_compounds(text)` | Liitsõnaõigekiri — flags common AI-generated splits of words that should be a single compound (`kooli maja` → `koolimaja`) |
-| `check_punctuation(text)` | Kirjavahemärgid — flags missing commas before subordinating conjunctions (`et`, `sest`, `kuna`, `kuid`, `vaid`, `nagu`, …) |
-| `check_hyphenation(word)` | Poolitamine — safe line-break positions for an Estonian word, syllable-boundary based with no-orphan-edge rule |
-| `check_numbers(text)` | Numbrite õigekirjutus — flags decimal separators (`3.14` → `3,14`) and thousands separators (`1,000,000` → `1 000 000`) |
-| `check_legalese(text)` | Legal plain-language aid — flags archaic `kantseliit` filler (`käesolev` → `see`, `juhul kui` → `kui`) and over-long sentences to simplify, while listing the **terms of art** that must be preserved so simplification doesn't change legal meaning |
-| `check_defined_terms(text)` | Long-document structure — maps terms defined with `(edaspidi «X»)`, counts their usage, lists `§` / `lõige` / `punkt` cross-references, and flags defined-but-unused or doubly-defined terms (cap raised to 500k chars) |
-| `common_legal_usage(word)` | Canonical legal collocations from an offline corpus index — how often a term occurs in legislation and the words most often seen before/after it (`hagi` → `esitama hagi`, `kohustus` → `kohustuse täitmine`), so the model uses real legalese instead of inventing it (bundled index: 5 core Riigi Teataja codes — obligations, civil procedure, property, penal, general; expandable) |
+| `check_style(text)` | Style metrics, lemma-aware repetition, passive-voice ratio, sentence-length variance, hedging-word density |
+| `check_redundancy(text)` | Pleonasm check, flags semantic doubling like `samuti ka` (also+also), `kõige optimaalsem` (most+optimal), and fixed redundant phrases |
+| `check_object_case(text)` | Käändeõpetus, flags direct-object case errors under negation and after partitive-only verbs (armastama, vihkama, vajama, …) |
+| `check_abbreviation_hyphenation(text)` | Lühendiortograafia, flags abbreviations with case endings missing the EKI-mandated hyphen (`MCPst` → `MCP-st`, `OÜle` → `OÜ-le`) |
+| `check_compound_familiarity(text)` | Calque-risk diagnostic, for each compound noun, returns top fastText neighbours and flags compounds with weak similarity (`mõtteliin`-style translationese, e.g. literal English "train of thought" → real Estonian is `mõttekäik`) for second-look review |
+| `check_capitalization(text)` | Algustäheortograafia check, flags wrongly capitalized weekdays, months, nationalities, and language/culture adjectives per EKI's Reeglid |
+| `check_compounds(text)` | Liitsõnaõigekiri, flags common AI-generated splits of words that should be a single compound (`kooli maja` → `koolimaja`) |
+| `check_punctuation(text)` | Kirjavahemärgid, flags missing commas before subordinating conjunctions (`et`, `sest`, `kuna`, `kuid`, `vaid`, `nagu`, …) |
+| `check_hyphenation(word)` | Poolitamine, safe line-break positions for an Estonian word, syllable-boundary based with no-orphan-edge rule |
+| `check_numbers(text)` | Numbrite õigekirjutus, flags decimal separators (`3.14` → `3,14`) and thousands separators (`1,000,000` → `1 000 000`) |
+| `check_legalese(text)` | Legal plain-language aid, flags archaic `kantseliit` filler (`käesolev` → `see`, `juhul kui` → `kui`) and over-long sentences to simplify, while listing the **terms of art** that must be preserved so simplification doesn't change legal meaning |
+| `check_defined_terms(text)` | Long-document structure, maps terms defined with `(edaspidi «X»)`, counts their usage, lists `§` / `lõige` / `punkt` cross-references, and flags defined-but-unused or doubly-defined terms (cap raised to 500k chars) |
+| `common_legal_usage(word)` | Canonical legal collocations from an offline corpus index, how often a term occurs in legislation and the words most often seen before/after it (`hagi` → `esitama hagi`, `kohustus` → `kohustuse täitmine`), so the model uses real legalese instead of inventing it (bundled index: 5 core Riigi Teataja codes, obligations, civil procedure, property, penal, general; expandable) |
 
 POS tag set: `S`=noun, `V`=verb, `A`=adj, `P`=pron, `D`=adv, `K`=adp,
 `J`=conj, `N`=numeral, `I`=interj, `Y`=abbrev, `X`=foreign, `Z`=punct.
@@ -79,21 +79,21 @@ POS tag set: `S`=noun, `V`=verb, `A`=adj, `P`=pron, `D`=adv, `K`=adp,
 
 ## ✨ Get started in 30 seconds (no install)
 
-This section is for everyone — including if you've never opened a
+This section is for everyone, including if you've never opened a
 terminal in your life. You'll be done before your tea is steeped.
 
 **estonian-mcp is in Anthropic's official Connectors Directory**, so on
-most Claude apps you can add it with **one click — no URL to paste, no
+most Claude apps you can add it with **one click, no URL to paste, no
 config, no auth.**
 
 ### One-click from the Connectors Directory (Cowork, claude.ai, Claude Desktop)
 
 1. In your Claude app, open **Settings → Connectors**.
-2. **Browse connectors** (the directory) and search **estonian** — it
+2. **Browse connectors** (the directory) and search **estonian**, it
    shows up as the Estonian connector.
-3. Click **Add** / **Connect**. That's it — the server is public, so
+3. Click **Add** / **Connect**. That's it, the server is public, so
    there's no authentication step.
-4. Start a new chat and write in Estonian — proofread an email, study a
+4. Start a new chat and write in Estonian, proofread an email, study a
    paragraph, draft a legal clause. Claude reaches for the tools whenever
    it needs to verify spelling, lemmas, morphology, or legal phrasing
    rather than guessing.
@@ -103,7 +103,7 @@ config, no auth.**
 
 ### Prefer to paste the URL? (or don't see it in the directory yet)
 
-Any MCP-over-HTTPS client can also connect directly to the hosted server —
+Any MCP-over-HTTPS client can also connect directly to the hosted server:
 we run it for you at `https://estonian-mcp.fly.dev/mcp`. In **Settings →
 Connectors → Add custom connector**, paste:
 
@@ -112,11 +112,11 @@ https://estonian-mcp.fly.dev/mcp
 ```
 
 Leave every "Authentication" / "API key" / "Bearer token" field **empty**
-— the server is public, no token needed — and Save.
+(the server is public, no token needed), then Save.
 
 ### In Claude Code (CLI)
 
-One command — no clone, no Python, no `uv`. Point Claude Code at the
+One command, no clone, no Python, no `uv`. Point Claude Code at the
 hosted server over HTTP:
 
 ```sh
@@ -124,7 +124,7 @@ claude mcp add --transport http estnltk https://estonian-mcp.fly.dev/mcp
 ```
 
 Then run `/mcp` inside a session to confirm `estnltk` shows as
-connected. The tools are live immediately — ask Claude to proofread
+connected. The tools are live immediately, ask Claude to proofread
 or lemmatize Estonian text and it'll reach for them.
 
 Want a fully local, zero-network setup instead? See the stdio path
@@ -132,17 +132,17 @@ in [Self-host (advanced)](#self-host-advanced).
 
 ### Don't see your client here?
 
-Any tool that supports MCP over HTTPS can connect — just point it at
+Any tool that supports MCP over HTTPS can connect, just point it at
 `https://estonian-mcp.fly.dev/mcp` with no auth. If your client only
 speaks stdio (Cursor, VS Code MCP, Continue, Zed), jump to the
 local-install path in [Self-host](#self-host-advanced).
 
 ---
 
-## 💡 Pro tip — teach Claude *your* Estonian alongside the MCP
+## 💡 Pro tip, teach Claude *your* Estonian alongside the MCP
 
 This MCP gives Claude **correct linguistics**: real lemmas, real case
-forms, real spelling. What it can't do is teach Claude **your voice** —
+forms, real spelling. What it can't do is teach Claude **your voice**:
 the register, idioms, and tone you actually want when writing.
 
 You handle the voice; the MCP handles the correctness. Layer them.
@@ -153,7 +153,7 @@ system prompt to get this right:
 - **Set the register.** *"Always reply in formal officialese Estonian
   for legal and government topics, and in conversational Tallinn
   speech for chat replies. Never mix the two in one message."*
-- **Pin the dialect / region.** *"I'm from Tartu — prefer southern
+- **Pin the dialect / region.** *"I'm from Tartu, prefer southern
   Estonian phrasings where there's a choice (e.g. 'kus sa lähed'
   rather than 'kuhu sa lähed' for casual speech)."*
 - **Show your tone with examples.** Paste 3–4 short paragraphs of
@@ -179,7 +179,7 @@ system prompt to get this right:
   pattern with `kohv` in Estonian? Use that to suggest three
   alternative phrasings for our café-launch ad copy."* This is
   fastText-based, so it surfaces near-neighbours that aren't strict
-  synonyms — useful when you want adjacent concepts, not just
+  synonyms, useful when you want adjacent concepts, not just
   same-meaning swaps. (Quick rule of thumb: `synonyms` for "say the
   same thing differently"; `find_related_words` for "what else
   belongs in this conceptual space.")
@@ -192,7 +192,7 @@ for writing in Estonian, not just plausible-looking.
 
 ## How to prompt it once it's connected
 
-Most prompts don't need to mention the tools by name — Claude picks
+Most prompts don't need to mention the tools by name, Claude picks
 the right one. A few patterns that work especially well:
 
 ```
@@ -216,7 +216,7 @@ then summarise in one paragraph.
 ```
 
 ```
-This Estonian draft uses "kasutama" three times — look up synonyms
+This Estonian draft uses "kasutama" three times, look up synonyms
 via the MCP and rewrite each occurrence with a natural-sounding
 alternative that preserves the meaning.
 ```
@@ -228,7 +228,7 @@ tighten it for a B2B email.
 ```
 
 The model calls the tool, gets authoritative output, and bases its
-response on that — no more hallucinated lemmas or invented case forms.
+response on that, no more hallucinated lemmas or invented case forms.
 
 ---
 
@@ -236,21 +236,23 @@ response on that — no more hallucinated lemmas or invented case forms.
 
 | Client | No-install path | Local-install path |
 | --- | --- | --- |
-| **Claude Cowork** | ✅ Paste URL | ✅ stdio via JSON |
-| **Claude Desktop** | ✅ Paste URL (newer) | ✅ stdio via JSON |
-| **claude.ai web** | ✅ Paste URL | — |
+| **Claude Cowork** | ✅ One click (directory) | ✅ stdio via JSON |
+| **Claude Desktop** | ✅ One click (newer) | ✅ stdio via JSON |
+| **claude.ai web** | ✅ One click (directory) | n/a |
 | **Claude Code** (CLI) | ✅ `claude mcp add --transport http` | ✅ `claude mcp add ...` (stdio) |
-| **Cursor** | — | ✅ stdio via JSON |
-| **VS Code MCP / Continue / Zed** | — | ✅ stdio via JSON |
+| **Cursor** | ✅ Paste URL | ✅ stdio via JSON |
+| **VS Code MCP / Continue / Zed** | n/a | ✅ stdio via JSON |
 
-"No-install path" = paste `https://estonian-mcp.fly.dev/mcp` in the
-client's Connectors UI. "Local-install path" = clone the repo and
-point the client at `python server.py`.
+For Claude apps the no-install path is one click from the Connectors
+Directory (search "estonian"). Other MCP clients paste
+`https://estonian-mcp.fly.dev/mcp` in their Connectors UI. The
+local-install path clones the repo and points the client at
+`python server.py`.
 
 ## Reducing permission prompts
 
 Claude clients ask for confirmation before calling a tool from a
-custom/third-party connector — that's the client's security default,
+custom/third-party connector, that's the client's security default,
 not something the server controls (there's no MCP field a server can
 send to suppress it). You'll especially see it right after adding or
 updating the connector, since the client re-checks tools it hasn't
@@ -260,14 +262,14 @@ Good news: **all 24 tools are marked `readOnlyHint: true`** (they only
 read text, never write or call out), so any well-behaved client can
 safely let you allow them once and stop asking:
 
-- **Claude Desktop / Cowork / claude.ai** — when the prompt appears,
+- **Claude Desktop / Cowork / claude.ai**, when the prompt appears,
   choose **"Always allow"** for the connector (or toggle it in the
   connector's settings). One time, then it's quiet.
-- **Claude Code** — run `/permissions` and allow the estonian-mcp
+- **Claude Code**, run `/permissions` and allow the estonian-mcp
   tools, or allow the whole server at once.
 
 Re-releasing or updating the connector can reset that "always allow"
-state (the client sees changed tools and re-asks) — just allow it
+state (the client sees changed tools and re-asks), just allow it
 again. A verified listing in the Anthropic Connectors Directory also
 gets smoother permission UX than an unverified custom connector.
 
@@ -299,7 +301,7 @@ claude mcp add estnltk -- /absolute/path/to/uv \
   run python server.py
 ```
 
-**Claude Desktop / Cowork (local mode)** — edit
+**Claude Desktop / Cowork (local mode)**, edit
 `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
@@ -315,17 +317,17 @@ claude mcp add estnltk -- /absolute/path/to/uv \
 }
 ```
 
-**Cursor** — same JSON shape in `~/.cursor/mcp.json`.
+**Cursor**, same JSON shape in `~/.cursor/mcp.json`.
 
 ### Run as a remote server (HTTP)
 
 The same `server.py` speaks `streamable-http` over the network.
 Two auth postures:
 
-- **Public mode** (`ESTNLTK_MCP_PUBLIC_MODE=1`) — no bearer token,
+- **Public mode** (`ESTNLTK_MCP_PUBLIC_MODE=1`), no bearer token,
   per-IP rate limit (default 120/min). This is how the silly-geese
   hosted instance runs.
-- **Bearer mode** (default) — every request must carry
+- **Bearer mode** (default), every request must carry
   `Authorization: Bearer <token>` (or Smithery's `?config=<base64>`);
   per-token rate limit. Refuses to start without
   `ESTNLTK_MCP_AUTH_TOKEN` ≥16 chars.
@@ -342,7 +344,7 @@ fly deploy
 volume at `/data`, so no token needed and `/metrics` counters survive
 machine restarts. Endpoint: `https://my-estonian-mcp.fly.dev/mcp`.
 
-**Fly.io with bearer auth** — remove
+**Fly.io with bearer auth**, remove
 `ESTNLTK_MCP_PUBLIC_MODE` from `fly.toml`'s `[env]` block, then:
 ```sh
 fly secrets set ESTNLTK_MCP_AUTH_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
@@ -398,7 +400,7 @@ Terms of service for the hosted endpoint: [TERMS.md](TERMS.md).
 ## Notes
 
 - Most EstNLTK models (morph, NER, spell-check) ship inside the
-  wheel — no runtime downloads.
+  wheel, no runtime downloads.
 - WordNet is a separate ~26 MB resource (used by `synonyms`); the
   Docker image pre-downloads it at build time so the first call
   doesn't pause to fetch it.
@@ -416,7 +418,7 @@ Terms of service for the hosted endpoint: [TERMS.md](TERMS.md).
 
 ## 🤝 Contributing
 
-Contributions are welcome — especially from Estonian speakers who can
+Contributions are welcome, especially from Estonian speakers who can
 sharpen the linguistic rules. Here's how to get started:
 
 1. **Fork** the repo and clone your fork.
@@ -429,7 +431,7 @@ sharpen the linguistic rules. Here's how to get started:
    export ESTNLTK_MCP_FASTTEXT_PATH=~/.cache/estnltk-mcp/fasttext-et-medium
    ```
 3. **Create a feature branch** (`git checkout -b feature/my-feature`).
-4. **Run the tests** — both must pass:
+4. **Run the tests**, both must pass:
    ```sh
    uv run python tests/test_smoke.py   # tool behaviour
    uv run python tests/test_http.py    # transport, auth, /metrics
@@ -444,7 +446,7 @@ approach before you invest the work.
 ### Especially wanted: linguistic corrections
 
 The heuristic tools lean on small hand-curated lexicons in
-[`server.py`](server.py) — marked/archaic words, register markers,
+[`server.py`](server.py), marked/archaic words, register markers,
 compound-split pairs, partitive-governing verbs, and the EKI
 orthography rule sets. These are deliberately conservative and
 incomplete. If you're a fluent Estonian speaker and spot a gap or a
@@ -456,20 +458,20 @@ wrong entry, that's the highest-value contribution you can make:
 - A register marker that's miscategorised
 
 Open an issue with the English source (if it's a calque), the bad
-Estonian, and the better Estonian — or send a PR adding the entry to
+Estonian, and the better Estonian, or send a PR adding the entry to
 the relevant lexicon with a one-line test case.
 
 ## License
 
 [Apache-2.0](LICENSE) for the source. Bundled data + models keep their
-own (copyleft) licenses — these apply to those files only, not to the
+own (copyleft) licenses, these apply to those files only, not to the
 Apache-2.0 code:
 
-- **EstNLTK** — dual-licensed GPL-2.0 OR Apache-2.0 (we use Apache-2.0).
-- **Vabamorf** analyzer — LGPL-2.1 with a separate commercial-use license.
+- **EstNLTK**, dual-licensed GPL-2.0 OR Apache-2.0 (we use Apache-2.0).
+- **Vabamorf** analyzer, LGPL-2.1 with a separate commercial-use license.
 - **Estonian fastText** model (`find_related_words`,
-  `check_compound_familiarity`) — CC-BY-SA-3.0.
-- **Estonian Wordnet** (`synonyms`) — CC-BY-SA-4.0.
+  `check_compound_familiarity`), CC-BY-SA-3.0.
+- **Estonian Wordnet** (`synonyms`), CC-BY-SA-4.0.
 
 The CC-BY-SA model + Wordnet data carry share-alike obligations on
 those files when you redistribute them (the Docker image includes
