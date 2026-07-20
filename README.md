@@ -35,8 +35,9 @@ synonyms instead of inventing them.
 
 **Three ways to use it:**
 
-1. 👉 **Paste a URL into your Claude app** — the easiest path, no
-   terminal, no install. See [Get started in 30 seconds](#-get-started-in-30-seconds-no-install) below.
+1. 👉 **One-click from Anthropic's Connectors Directory** — the easiest
+   path, no terminal, no install, no URL to paste. See
+   [Get started in 30 seconds](#-get-started-in-30-seconds-no-install) below.
 2. **One-click on Smithery** — install from the
    [estonian-mcp listing](https://smithery.ai/servers/silly-geese/estonian-mcp).
 3. **Self-host** — clone, run locally as stdio, or deploy your own
@@ -81,47 +82,36 @@ POS tag set: `S`=noun, `V`=verb, `A`=adj, `P`=pron, `D`=adv, `K`=adp,
 This section is for everyone — including if you've never opened a
 terminal in your life. You'll be done before your tea is steeped.
 
-The trick is that we run the server for you on the public internet at
-`https://estonian-mcp.fly.dev/mcp`. You just need to tell your Claude
-app to talk to it. Pick the app you use:
+**estonian-mcp is in Anthropic's official Connectors Directory**, so on
+most Claude apps you can add it with **one click — no URL to paste, no
+config, no auth.**
 
-### In Claude Cowork
+### One-click from the Connectors Directory (Cowork, claude.ai, Claude Desktop)
 
-1. Open Cowork and click your profile / **Settings**.
-2. Find **Connectors** in the sidebar.
-3. Click **Add custom connector**.
-4. Paste this URL into the URL field:
-   ```
-   https://estonian-mcp.fly.dev/mcp
-   ```
-5. Leave any "Authentication" / "API key" / "Bearer token" fields
-   **empty**. The server is public — no token needed.
-6. Click **Save** / **Connect**.
-7. Done. Start a new chat and write in Estonian — proofread an
-   email, study a paragraph, draft a reply. Claude will reach for
-   the EstNLTK tools whenever it needs to verify spelling, lemmas,
-   or morphology rather than guessing.
+1. In your Claude app, open **Settings → Connectors**.
+2. **Browse connectors** (the directory) and search **estonian-mcp**.
+3. Click **Add** / **Connect**. That's it — the server is public, so
+   there's no authentication step.
+4. Start a new chat and write in Estonian — proofread an email, study a
+   paragraph, draft a legal clause. Claude reaches for the tools whenever
+   it needs to verify spelling, lemmas, morphology, or legal phrasing
+   rather than guessing.
 
-### In claude.ai (web Claude)
+*(On older Claude Desktop without a Connectors menu, use the stdio path in
+[Self-host (advanced)](#self-host-advanced).)*
 
-1. Click your profile in the bottom-left → **Settings**.
-2. Find **Connectors** (sometimes called **Custom Integrations**).
-3. Click **Add custom connector**.
-4. Paste:
-   ```
-   https://estonian-mcp.fly.dev/mcp
-   ```
-5. Authentication: **none** (leave fields blank).
-6. Save. The new tools appear in your tool tray.
+### Prefer to paste the URL? (or don't see it in the directory yet)
 
-### In Claude Desktop
+Any MCP-over-HTTPS client can also connect directly to the hosted server —
+we run it for you at `https://estonian-mcp.fly.dev/mcp`. In **Settings →
+Connectors → Add custom connector**, paste:
 
-If your Claude Desktop has a **Settings → Connectors** menu (newer
-versions), follow the same three steps as Cowork above.
+```
+https://estonian-mcp.fly.dev/mcp
+```
 
-If it doesn't, you have an older Desktop that needs a JSON config
-file edit — see [Self-host (advanced)](#self-host-advanced) for the
-local-stdio path, which works on every version.
+Leave every "Authentication" / "API key" / "Bearer token" field **empty**
+— the server is public, no token needed — and Save.
 
 ### In Claude Code (CLI)
 

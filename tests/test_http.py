@@ -159,6 +159,19 @@ async def run() -> None:
         check("/sse → 404", r.status_code == 404, str(r.status_code))
         check("/sse points to /mcp", r.json().get("endpoint") == "/mcp", str(r.json()))
 
+        print("favicon caching (ETag / 304)")
+        r = await c.get("/favicon.svg")
+        check("favicon.svg → 200", r.status_code == 200, str(r.status_code))
+        check("favicon.svg is svg", r.headers.get("content-type") == "image/svg+xml")
+        etag = r.headers.get("etag")
+        check("favicon.svg has ETag", bool(etag), str(r.headers))
+        check("favicon.svg immutable cache",
+              "immutable" in (r.headers.get("cache-control") or ""), r.headers.get("cache-control"))
+        # Conditional re-fetch with the ETag → 304, no body.
+        r2 = await c.get("/favicon.svg", headers={"If-None-Match": etag})
+        check("favicon.svg conditional → 304", r2.status_code == 304, str(r2.status_code))
+        check("304 has empty body", not r2.content, repr(r2.content[:20]))
+
         print("metrics")
         r = await c.get("/metrics")
         check("metrics 200", r.status_code == 200)
