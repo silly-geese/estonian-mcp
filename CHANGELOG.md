@@ -7,6 +7,19 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-07-20
+
+### Changed
+
+- **Static icons now serve a 1-year immutable cache + ETag with `304 Not
+  Modified` handling.** A client ignoring the existing cache header had been
+  re-fetching `/favicon.svg` in a loop (~65% of all requests — most likely
+  connector-directory icon rendering); conditional and well-behaved clients
+  now stop re-downloading. Cheap, no functional change.
+- **README getting-started reflects the Connectors Directory.** Now that
+  estonian-mcp is in Anthropic's official directory, the install flow leads
+  with one-click from the directory; pasting the custom URL is the fallback.
+
 ## [0.4.2] — 2026-07-18
 
 ### Security

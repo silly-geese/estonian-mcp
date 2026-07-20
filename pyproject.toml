@@ -1,6 +1,6 @@
 [project]
 name = "estonian-mcp"
-version = "0.4.2"
+version = "0.4.3"
 description = "Offline MCP server wrapping EstNLTK, EKI Reeglid, and Riigi Teataja so AI agents write better Estonian. 24 tools: spell-check, morphology, paradigm, synonyms, related-words, register, style, redundancy, orthography (capitalisation, compounds, commas, numbers), case-government, calque-risk, plus legalese simplification and defined-term tracking for legal texts, and canonical legal-usage collocations."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"

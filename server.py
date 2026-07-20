@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import base64
 import collections
+import hashlib
 import json
 import logging
 import os
@@ -63,7 +64,7 @@ DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.4.2"
+SERVER_VERSION = "0.4.3"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -94,6 +95,14 @@ try:
     FAVICON_PNG: bytes | None = _LOGO_PNG_PATH.read_bytes()
 except OSError:
     FAVICON_PNG = None
+
+# Content-hash ETags for the static icons so conditional requests can be
+# answered with a bodyless 304 instead of re-sending the bytes. The icons
+# are fixed per build, so a hash of the bytes is a stable validator.
+_FAVICON_SVG_ETAG = '"' + hashlib.md5(FAVICON_SVG).hexdigest()[:16] + '"'
+_FAVICON_PNG_ETAG = (
+    '"' + hashlib.md5(FAVICON_PNG).hexdigest()[:16] + '"' if FAVICON_PNG else None
+)
 
 # Minimal HTML landing page at /. Two purposes:
 # 1. Google's favicon scraper fetches / first and parses <link rel="icon">
@@ -3312,6 +3321,37 @@ async def _send_status(send, status: int, body: dict[str, Any]) -> None:
     await send({"type": "http.response.body", "body": payload})
 
 
+async def _serve_static_icon(send, scope, body: bytes, content_type: bytes, etag: str) -> None:
+    """Serve a static icon with a 1-year immutable cache + ETag. If the
+    client already holds this version (If-None-Match), answer 304 with no
+    body. Cheap defence against clients that re-fetch the favicon in a loop
+    (e.g. connector-directory icon rendering) — anything honouring either
+    caching or conditional requests stops re-downloading."""
+    if_none_match = ""
+    for k, v in scope.get("headers", []):
+        if k == b"if-none-match":
+            if_none_match = v.decode("latin1")
+            break
+    cache_headers = [
+        (b"cache-control", b"public, max-age=31536000, immutable"),
+        (b"etag", etag.encode("ascii")),
+    ]
+    if etag in if_none_match or if_none_match.strip() == "*":
+        await send({"type": "http.response.start", "status": 304, "headers": cache_headers})
+        await send({"type": "http.response.body", "body": b""})
+        return
+    await send({
+        "type": "http.response.start",
+        "status": 200,
+        "headers": [
+            (b"content-type", content_type),
+            (b"content-length", str(len(body)).encode("ascii")),
+            *cache_headers,
+        ],
+    })
+    await send({"type": "http.response.body", "body": body})
+
+
 async def _send_redirect(send, location: str) -> None:
     await send({
         "type": "http.response.start",
@@ -3501,30 +3541,14 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
             # + Claude tool-call UI. /favicon.svg keeps SVG for modern
             # browsers.
             if path in ("/favicon.ico", "/favicon.png") and FAVICON_PNG is not None:
-                await send({
-                    "type": "http.response.start",
-                    "status": 200,
-                    "headers": [
-                        (b"content-type", b"image/png"),
-                        (b"content-length", str(len(FAVICON_PNG)).encode("ascii")),
-                        (b"cache-control", b"public, max-age=86400"),
-                    ],
-                })
-                await send({"type": "http.response.body", "body": FAVICON_PNG})
+                await _serve_static_icon(
+                    send, scope, FAVICON_PNG, b"image/png", _FAVICON_PNG_ETAG)
                 return
             if path == "/favicon.svg" or (
                 path == "/favicon.ico" and FAVICON_PNG is None
             ):
-                await send({
-                    "type": "http.response.start",
-                    "status": 200,
-                    "headers": [
-                        (b"content-type", b"image/svg+xml"),
-                        (b"content-length", str(len(FAVICON_SVG)).encode("ascii")),
-                        (b"cache-control", b"public, max-age=86400"),
-                    ],
-                })
-                await send({"type": "http.response.body", "body": FAVICON_SVG})
+                await _serve_static_icon(
+                    send, scope, FAVICON_SVG, b"image/svg+xml", _FAVICON_SVG_ETAG)
                 return
 
             # Smithery + similar registries probe this for auto-discovery.
