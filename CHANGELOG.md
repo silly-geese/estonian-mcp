@@ -7,6 +7,16 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-07-18
+
+### Security
+
+- Dependency refresh resolving 6 high-severity Dependabot advisories, no
+  API or behaviour change: **mcp** 1.27.0 → 1.28.1 (3 high — the core MCP
+  SDK), **nltk** 3.9.4 → 3.10.0 (1 high — the `nltk.data.load()`
+  path-traversal previously left open for lack of an upstream patch, now
+  fixed and no longer just monitored), **soupsieve** 2.8.3 → 2.8.4 (2 high).
+
 ### Changed
 
 - Docs/descriptions now credit **Riigi Teataja** (the public-domain
