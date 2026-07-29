@@ -7,6 +7,16 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.4] — 2026-07-29
+
+### Security
+
+- Dependency refresh resolving 13 Dependabot advisories (11 high, 2 medium),
+  no API or behaviour change: **pillow** 12.2.0 → 12.3.0. Pillow is a
+  transitive dev/eval dependency (via matplotlib) that the running server
+  never invokes, so the advisories were not in the exploitable path. This
+  patches it regardless and makes `/health` reflect the refreshed build.
+
 ## [0.4.3] — 2026-07-20
 
 ### Changed
