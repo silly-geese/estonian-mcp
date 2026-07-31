@@ -7,6 +7,17 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-07-31
+
+### Changed
+
+- **`check_officialese`'s nominalisation label now carries both Estonian
+  terms**: `nimisõnastumine ehk nominalisatsioon` (was `nimisõnastumine
+  (mine-vormide rohkus)`). Both names are in use and a reader may know
+  only one; the concrete `-mine` detail already appears in each issue's
+  `explanation` field, so the parenthetical was redundant. Output-only
+  change, no logic touched.
+
 ## [0.5.0] — 2026-07-31
 
 Editorial release. Everything here came out of replaying a real Estonian
