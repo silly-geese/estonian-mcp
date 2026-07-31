@@ -64,7 +64,7 @@ DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.4.4"
+SERVER_VERSION = "0.5.0"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -161,7 +161,19 @@ SERVER_INSTRUCTIONS = (
     "does NOT prove a word is real Estonian: Vabamorf accepts any "
     "morphologically valid compound, including ones you just coined, so "
     "verify coined or unusual compounds with check_compound_familiarity "
-    "before using them. All tools are read-only and "
+    "before using them. "
+    "REACH FOR THESE TOOLS ON EDITORIAL QUESTIONS TOO, not just mechanical "
+    "ones. 'Is this the right word here?' → synonyms, and read each "
+    "definition's domain constraint against the context rather than "
+    "trusting the word's ML-jargon familiarity. 'Make this read more "
+    "human' / 'this is too bureaucratic' → check_officialese for "
+    "kantseliit in reports, academic and business prose (check_legalese "
+    "is for statutes and stays silent on those), plus check_style for "
+    "umbisikuline tegumood and rhythm. 'Keep the terminology "
+    "consistent across this document' → check_term_consistency. A word "
+    "can be correctly spelled, morphologically valid and still the wrong "
+    "register or the wrong term for its domain — the mechanical checks "
+    "will not tell you that. All tools are read-only and "
     "operate on Estonian text; results are returned in UTF-8 (preserve "
     "õ/ä/ö/ü/š/ž)."
 )
@@ -607,6 +619,81 @@ _LEGALESE_PHRASES_ET: dict[tuple[str, str], tuple[str, str]] = {
     ("sellest", "tulenevalt"): ("seetõttu", "kantseliit; 'seetõttu'"),
 }
 
+# ---------------------------------------------------------------------------
+# Officialese (kantseliit) lexicons — the NON-legal sibling of the legalese
+# set above. Aimed at reports, academic prose, grant/R&D paperwork and
+# business writing, where check_legalese finds nothing because its lexicon
+# is legal-specific and its length gate is tuned for statutes.
+#
+# Matched on LEMMA (exact), not surface prefix: prefix matching would fire
+# on 'oma'/'omadus' for the 'omama' entry. Precision-first, per repo
+# convention — a missed flag costs less than a wrong one.
+# ---------------------------------------------------------------------------
+
+_OFFICIALESE_LEMMAS_ET: dict[str, tuple[str, str]] = {
+    "omama": ("olema", "'omab tähtsust' → 'on tähtis'; 'omama' on kantseliitlik tugiverb"),
+    "teostama": ("tegema (või konkreetne tegusõna)", "kantseliitlik tugiverb; 'teostada analüüs' → 'analüüsida'"),
+    "lähtuvalt": ("järgi / põhjal", "kantseliitlik side"),
+    "tingituna": ("tõttu", "kantseliit; 'tõttu' on lihtsam"),
+    "johtuvalt": ("tõttu", "kantseliit; 'tõttu' on lihtsam"),
+    "olemasolu": ("on olemas", "nimisõnastatud olemine; kasuta tegusõna"),
+}
+
+# Officialese matched on SURFACE form, not lemma. For these the specific
+# inflected form is the marker while the lemma is an ordinary word:
+# `eesmärgil` lemmatises to `eesmärk` and `vahendusel` to `vahendus`, so
+# keying on the lemma would fire on every innocent "meie eesmärk on …".
+_OFFICIALESE_SURFACE_ET: dict[str, tuple[str, str]] = {
+    "eesmärgil": ("et + tegusõna", "kantseliit; 'analüüsi eesmärgil' → 'et analüüsida'"),
+    "vahendusel": ("kaudu / abil", "kantseliit; 'süsteemi vahendusel' → 'süsteemi kaudu'"),
+}
+
+# Fixed officialese phrases (lowercased surface pairs) → (plain, why).
+_OFFICIALESE_PHRASES_ET: dict[tuple[str, str], tuple[str, str]] = {
+    ("kujutab", "endast"): ("on", "kantseliit; piisab tegusõnast 'on'"),
+    ("kujutavad", "endast"): ("on", "kantseliit; piisab tegusõnast 'on'"),
+    ("viidi", "läbi"): ("tehti / korraldati", "tugiverb 'läbi viima'; kasuta konkreetset tegusõna"),
+    ("viiakse", "läbi"): ("tehakse / korraldatakse", "tugiverb 'läbi viima'; kasuta konkreetset tegusõna"),
+    ("läbi", "viia"): ("teha / korraldada", "tugiverb 'läbi viima'; kasuta konkreetset tegusõna"),
+    ("läbi", "viidud"): ("tehtud / korraldatud", "tugiverb 'läbi viima'; kasuta konkreetset tegusõna"),
+    ("selles", "osas"): ("selle kohta", "kantseliitlik 'osas'; 'kohta' on lihtsam"),
+    ("selle", "osas"): ("selle kohta", "kantseliitlik 'osas'; 'kohta' on lihtsam"),
+    ("mille", "osas"): ("mille kohta", "kantseliitlik 'osas'; 'kohta' on lihtsam"),
+    ("seoses", "sellega"): ("seetõttu", "kantseliit; 'seetõttu' on lühem"),
+    ("arvestades", "asjaolu"): ("kuna", "kantseliit; alusta kõrvallauset sõnaga 'kuna'"),
+}
+
+# Subordinating conjunctions + relative pronouns whose pile-up inside ONE
+# sentence is what makes Estonian officialese unreadable. Counted per
+# sentence by check_officialese; this is the 'mille käigus … ning …'
+# failure mode that a raw word count misses.
+_SUBORDINATORS_ET: frozenset[str] = frozenset({
+    "et", "kuna", "sest", "kuigi", "mistõttu", "millepärast",
+    "mis", "mida", "mille", "millest", "millega", "millele", "milles",
+    "millist", "milliseid", "kes", "kelle", "keda", "kellele",
+    "kus", "kuhu", "kust", "millal", "kuidas", "nagu",
+})
+
+# Academic / report-register markers. classify_register's original
+# _FORMAL_MARKERS covers legal-administrative vocabulary but scored dense
+# R&D-report officialese as 'neutraalne', score 0.0, zero markers — these
+# fill that hole.
+_ACADEMIC_MARKERS_ET: frozenset[str] = frozenset({
+    "aruandeperiood", "aruandlus", "aruandeperioodil", "ettevõttesiseselt",
+    "valideerima", "verifitseerima", "annoteerima", "kvantifitseerima",
+    "metoodika", "taksonoomia", "hüpotees", "valim", "andmestik",
+    "näitaja", "kriteerium", "indikaator", "parameeter", "protseduur",
+    "analüüsima", "hindama", "mõõtma", "fikseerima", "dokumenteerima",
+    "vastavus", "kooskõla", "lahknevus", "järeldus", "tulemus",
+    "eesmärgipärane", "süstemaatiline", "märkimisväärne", "vastavalt",
+    "arvestades", "tulenevalt", "olemasolev", "asjaomane",
+})
+
+# Below this word count classify_register scores on the lexicon alone —
+# impersonal-voice and noun-density ratios are too noisy on a sentence or
+# two to move a register verdict.
+_REGISTER_STRUCTURE_MIN_WORDS = 25
+
 # Specialised Estonian legal terms of art. Used to (1) protect them from
 # over-eager simplification, (2) suppress compound-familiarity false
 # 'coinage' flags on legal compounds, (3) mark legal register. STARTER SET.
@@ -658,6 +745,124 @@ def _first(values: list[Any] | None) -> Any:
     if not values:
         return None
     return values[0]
+
+
+# Olema-forms (plus the negative 'pole' family) that turn a following -tud
+# participle into an impersonal predicate rather than a modifier:
+# 'on kasutatud andmeid' (impersonal) vs 'lukustatud hindamisosa'
+# (attributive). Used by _impersonal_voice.
+_OLEMA_FORMS_ET: frozenset[str] = frozenset({
+    "on", "oli", "olid", "olen", "oled", "oleme", "olete", "olnud",
+    "ole", "olema", "oleks", "olevat", "pole", "polnud", "polegi",
+})
+
+# Impersonal present NEGATIVE form codes ('ei esitata', 'ei kasutata').
+# Kept separate from _PASSIVE_FORMS_ET because bare 'da' is also the
+# da-infinitive code — these only count when a negation precedes.
+_IMPERSONAL_NEG_FORMS_ET: frozenset[str] = frozenset({"ta", "da"})
+
+# VERBAL negation only — the subset of _NEGATION_LEMMAS_ET that actually
+# turns a following participle into a predicate. `mitte` negates a noun
+# phrase, not a verb ('mitte inimeste antud märgenditega'), and `ära` /
+# `ärge` negate imperatives, which are personal forms; including either
+# here would over-count impersonals.
+_VERBAL_NEGATION_ET: frozenset[str] = frozenset({"ei", "pole", "polnud"})
+
+
+def _span_bits(span) -> tuple[str, str, str]:
+    """(pos, form, lemma) for a morph_analysis span, lower-cased, never None."""
+    return (
+        (_first(list(span.partofspeech)) or ""),
+        (_first(list(span.form)) or ""),
+        (_first(list(span.lemma)) or "").lower(),
+    )
+
+
+def _impersonal_voice(spans: list) -> dict:
+    """Count Estonian umbisikuline tegumood ('passive') over a span list.
+
+    Vabamorf's raw form codes alone produce a wrong ratio in four ways,
+    every one of which showed up on real Estonian report prose:
+
+    1. `ei` / `ära` are tagged `pos=V form=neg`, so each negation inflated
+       `total_verbs` and DEFLATED the impersonal ratio. Now excluded.
+    2. `ta`/`da` (impersonal present negative — `ei esitata`) is a form
+       code the -takse/-ti/-tud/-tav set never covered, so negated
+       impersonals were missed outright. Now counted, but only after a
+       negation, because bare `da` is also the da-infinitive.
+    3. `ei avaldatud` is tagged `pos=A` (adjective), not V, so it was
+       skipped entirely. Now counted when a negation precedes.
+    4. `Lukustatud hindamisosas` is a participle used as a MODIFIER, not
+       an impersonal predicate, and was counted as passive. A -tud
+       participle now counts only when an olema-form or a negation sits
+       within the two preceding tokens; otherwise it lands in
+       `attributive_excluded` instead of inflating the ratio.
+
+    Pure function over spans (no model I/O) so it is unit-testable and can
+    be shared by check_style, check_officialese and classify_register.
+    """
+    impersonal = 0
+    verbs = 0
+    examples: list[str] = []
+    attributive_excluded: list[str] = []
+
+    def _preceded_by(i: int, lemmas: frozenset[str], window: int = 2) -> bool:
+        for j in range(max(0, i - window), i):
+            if _span_bits(spans[j])[2] in lemmas:
+                return True
+        return False
+
+    for i, span in enumerate(spans):
+        pos, form, lemma = _span_bits(span)
+
+        # (3) negated impersonal participle mis-tagged as an adjective.
+        if pos == "A" and (lemma.endswith("tud") or lemma.endswith("dud")):
+            if _preceded_by(i, _VERBAL_NEGATION_ET):
+                verbs += 1
+                impersonal += 1
+                if len(examples) < 5 and span.text not in examples:
+                    examples.append(span.text)
+            continue
+
+        if pos != "V":
+            continue
+
+        # (1) `ei` / `ära` are auxiliaries, not verbs worth counting.
+        if lemma in _NEGATION_LEMMAS_ET or form == "neg":
+            continue
+
+        verbs += 1
+
+        # (4) -tud participle: impersonal predicate only with olema/negation.
+        if form in ("tud", "dud"):
+            if _preceded_by(i, _OLEMA_FORMS_ET) or _preceded_by(i, _VERBAL_NEGATION_ET):
+                impersonal += 1
+                if len(examples) < 5 and span.text not in examples:
+                    examples.append(span.text)
+            elif len(attributive_excluded) < 5 and span.text not in attributive_excluded:
+                attributive_excluded.append(span.text)
+            continue
+
+        # (2) impersonal present negative — only after a negation.
+        if form in _IMPERSONAL_NEG_FORMS_ET:
+            if _preceded_by(i, _VERBAL_NEGATION_ET):
+                impersonal += 1
+                if len(examples) < 5 and span.text not in examples:
+                    examples.append(span.text)
+            continue
+
+        if form in _PASSIVE_FORMS_ET:
+            impersonal += 1
+            if len(examples) < 5 and span.text not in examples:
+                examples.append(span.text)
+
+    return {
+        "passive_count": impersonal,
+        "total_verbs": verbs,
+        "ratio": round((impersonal / verbs) if verbs else 0.0, 3),
+        "examples": examples,
+        "attributive_excluded": attributive_excluded,
+    }
 
 
 # Per-tool invocation counters. Incremented only when a tool function
@@ -751,6 +956,7 @@ class _RegisterResult(TypedDict, total=False):
     formal_markers: list[str]
     colloquial_markers: list[str]
     consistency: dict
+    structure: dict
     word_count: int
     note: str
 
@@ -1261,6 +1467,18 @@ def synonyms(word: Annotated[str, Field(description="A single Estonian word to l
     verb in marketing copy. Word-sense ambiguity is preserved: a polysemous
     word returns multiple synsets, one per meaning. Input capped at 200
     characters.
+
+    WORD-FIT CHECK: when the question is "is this the right word here?"
+    rather than "give me an alternative", READ EACH `definition` and test
+    it against the user's actual context — do not just harvest `lemmas`.
+    Estonian glosses routinely carry a domain constraint that decides the
+    answer: `korpus` returns the sense "kirjaliku või suulise teksti
+    elektrooniline kogu", so calling a set of IMAGES a `korpus` is wrong
+    however natural it sounds in ML jargon; `andmestik` carries no such
+    constraint. A gloss naming a medium, field, or material is a
+    constraint on where the word may be used. Note also that a word can
+    be well-formed, correctly spelled and still the wrong register — for
+    that, check_officialese and classify_register, not this tool.
     """
     _check_text(word, limit=MAX_WORD_CHARS, name="word")
     if any(ch.isspace() for ch in word):
@@ -1286,23 +1504,27 @@ def _classify_register(text: str) -> dict:
     t = Text(text)
     t.tag_layer(["morph_analysis"])
 
+    spans = list(t.morph_analysis)
     formal_hits: list[str] = []
     colloquial_hits: list[str] = []
     word_count = 0
+    noun_count = 0
 
-    for span in t.morph_analysis:
+    for span in spans:
         word = span.text
         # Skip punctuation
         if not any(ch.isalpha() for ch in word):
             continue
         word_count += 1
+        if _first(list(span.partofspeech)) == "S":
+            noun_count += 1
         # Test against both surface form and best lemma; lower-cased.
         lemma = (list(span.lemma)[0] if span.lemma else "").lower()
         surface = word.lower()
         for candidate in {surface, lemma}:
             if not candidate:
                 continue
-            if candidate in _FORMAL_MARKERS:
+            if candidate in _FORMAL_MARKERS or candidate in _ACADEMIC_MARKERS_ET:
                 formal_hits.append(candidate)
                 break
             if candidate in _COLLOQUIAL_MARKERS:
@@ -1313,9 +1535,37 @@ def _classify_register(text: str) -> dict:
     # Normalise by word count so longer text doesn't dominate.
     if word_count == 0:
         score = 0.0
+        raw = 0
     else:
         raw = len(formal_hits) - len(colloquial_hits)
         score = max(-1.0, min(1.0, raw * 4.0 / word_count))
+
+    # Structural signals. The tool's own note always conceded that real
+    # register lives in syntax as much as vocabulary — and a dense R&D
+    # report scored 'neutraalne', 0.0, with zero markers, while 87.5% of
+    # its verbs were umbisikuline tegumood. Impersonal voice and noun
+    # density now contribute, bounded and additive-only:
+    #   * they apply only from 25 words up, so short strings still score
+    #     purely on the lexicon;
+    #   * they apply only when the lexicon is not net-colloquial, so
+    #     chatty copy can never be nudged formal.
+    imp = _impersonal_voice(spans)
+    noun_verb_ratio = (
+        noun_count / imp["total_verbs"] if imp["total_verbs"] else 0.0
+    )
+    structural_signals: list[str] = []
+    structural = 0.0
+    if word_count >= _REGISTER_STRUCTURE_MIN_WORDS and raw >= 0:
+        if imp["ratio"] >= 0.4:
+            structural += 0.15
+            structural_signals.append("umbisikuline tegumood")
+        if imp["ratio"] >= 0.7:
+            structural += 0.10
+        if noun_verb_ratio >= _OFFICIALESE_NOUN_VERB_RATIO:
+            structural += 0.15
+            structural_signals.append("nimisõnade kuhjumine")
+        structural = min(structural, 0.4)
+        score = max(-1.0, min(1.0, score + structural))
 
     if score >= 0.25:
         tier = "formal"
@@ -1371,15 +1621,33 @@ def _classify_register(text: str) -> dict:
             "is_mixed": is_mixed,
             "summary_estonian": consistency_et,
         },
+        "structure": {
+            "impersonal_ratio": imp["ratio"],
+            "noun_verb_ratio": round(noun_verb_ratio, 2),
+            "signals": structural_signals,
+            "applied": round(structural, 3),
+            "summary_estonian": (
+                f"Lauseehitus viitab ametlikule stiilile: "
+                f"{', '.join(structural_signals)}."
+                if structural_signals
+                else "Lauseehitus ametlikule stiilile ei viita."
+            ),
+        },
         "word_count": word_count,
         "note": (
-            "Heuristic phase-1 classifier — lexicon-based, lemma-aware. "
-            "Catches obvious officialese vs slang; most newsletter prose "
-            "scores 'neutral'. The `consistency` field flags texts that "
-            "carry BOTH formal AND colloquial markers — useful for "
+            "Heuristic classifier — lexicon-based and lemma-aware, plus "
+            "two structural signals. The lexicon covers legal-"
+            "administrative AND academic/report vocabulary. `structure` "
+            "adds umbisikuline tegumood ratio and noun/verb density, "
+            "bounded at +0.4 and applied only from 25 words up and only "
+            "when the lexicon is not net-colloquial — without them a dense "
+            "R&D report scored 'neutraalne' at 0.0 while 87.5% of its "
+            "verbs were impersonal. The `consistency` field flags texts "
+            "that carry BOTH formal AND colloquial markers — useful for "
             "catching jarring register-mixing even when the overall "
             "tier rounds to 'neutral'. Treat as a directional hint, not "
-            "a verdict. When composing an Estonian-language reply, "
+            "a verdict; for a full kantseliit breakdown use "
+            "check_officialese. When composing an Estonian-language reply, "
             "USE THE tier_estonian AND consistency.summary_estonian "
             "FIELDS VERBATIM rather than translating yourself — common "
             "mistranslations include 'formalne' (wrong) vs 'formaalne' "
@@ -1906,7 +2174,8 @@ def _familiarity_verdict(
     in-vocab → never suspect (the word is among the 100K most frequent,
     i.e. attested). Out-of-vocab → suspect when the top neighbour score is
     weak OR the neighbours are dominated by scrape-artifact tokens (the
-    mõtteliin failure mode, 4/5 junk). Subword-echo overlap is COUNTED and
+    mõtteliin failure mode, 4/5 junk) AND that junky tail is decisive —
+    see the comment on `tail_is_decisive`. Subword-echo overlap is COUNTED and
     surfaced but never triggers on its own: real sibling compounds share a
     head morpheme too (tervisekindlustus ↔ ravikindlustus), so echoes
     don't discriminate coinages from rare-but-real compounds."""
@@ -1928,7 +2197,18 @@ def _familiarity_verdict(
             f"out-of-vocabulary with weak top similarity "
             f"({top_score:.3f} < {_FAMILIARITY_SUSPECT_SCORE})"
         )
-    if n and (junk / n) >= _FAMILIARITY_JUNK_RATIO:
+    # The junk-tail gate is only DECISIVE when the compound is also weak at
+    # the top, or its nearest neighbour is itself junk. A clean, real,
+    # >= 0.60 top neighbour vouches for the compound whatever the tail looks
+    # like: a junky tail then describes how sparse that corner of the
+    # 100K-vocab model is, not whether the word is real. Without this guard
+    # the gate inverted human judgement on ordinary compounds —
+    # `pildiandmestik` (top neighbour `andmestik`, 0.71) was flagged while
+    # `teadusandmestik` (0.705) passed. mõtteliin still flags: its top
+    # neighbour scores 0.536, under the gate.
+    top_is_junk = bool(names) and _looks_like_scrape_junk(names[0])
+    tail_is_decisive = top_score < _FAMILIARITY_SUSPECT_SCORE or top_is_junk
+    if n and (junk / n) >= _FAMILIARITY_JUNK_RATIO and tail_is_decisive:
         reasons.append(
             f"{junk}/{n} nearest neighbours are scrape-artifact tokens, "
             "not real Estonian words"
@@ -2044,11 +2324,20 @@ def _check_compound_familiarity(text: str) -> dict:
             "compounds are treated as real Estonian and never flagged. An "
             "out-of-vocab compound is flagged as suspect when EITHER its "
             "top neighbour similarity is below 0.60 OR at least 40% of its "
-            "neighbours are scrape-artifact tokens (per-entry `reasons` "
-            "says which). The 0.60 gate catches coinages like "
-            "'toortõlkeoht' (top 0.571) that the older 0.55 gate missed; "
-            "the junk-neighbour gate catches calques like 'mõtteliin' "
-            "whose neighbours are mostly web-scrape junk. `neighbour_"
+            "neighbours are scrape-artifact tokens AND that junky tail is "
+            "decisive — i.e. the top score is also under 0.60, or the top "
+            "neighbour is itself junk (per-entry `reasons` says which). The "
+            "0.60 gate catches coinages like 'toortõlkeoht' (top 0.571) "
+            "that the older 0.55 gate missed; the junk-neighbour gate "
+            "catches calques like 'mõtteliin' whose neighbours are mostly "
+            "web-scrape junk. The decisiveness guard stops ordinary "
+            "compounds whose nearest neighbour is a real word (e.g. "
+            "'pildiandmestik' → 'andmestik', 0.71) from being flagged just "
+            "because that corner of the vocabulary is sparse. NOTE the "
+            "converse limit: a well-formed compound that is merely STILTED "
+            "rather than invented ('teadusandmestik', 0.705) will pass — "
+            "similarity cannot judge register or idiom, so use "
+            "check_officialese and classify_register for that. `neighbour_"
             "quality` reports the neighbour, scrape_junk and subword_echo "
             "counts. NOT authoritative — even at 100K vocab some legitimate "
             "but rare compounds are OOV; the rule favours recall (a flagged "
@@ -2871,21 +3160,14 @@ def _check_style(text: str) -> dict:
             "positions": lemma_positions[lemma],
         })
 
-    # 2. Passive voice — count verbs whose form is in the passive set.
-    passive_count = 0
-    passive_examples: list[str] = []
-    verb_count = 0
-    for span in spans:
-        pos = _first(list(span.partofspeech))
-        if pos != "V":
-            continue
-        verb_count += 1
-        form = _first(list(span.form))
-        if form and form in _PASSIVE_FORMS_ET:
-            passive_count += 1
-            if len(passive_examples) < 5 and span.text not in passive_examples:
-                passive_examples.append(span.text)
-    passive_ratio = (passive_count / verb_count) if verb_count else 0.0
+    # 2. Umbisikuline tegumood — see _impersonal_voice for the four
+    # counting corrections over raw Vabamorf form codes.
+    imp = _impersonal_voice(spans)
+    passive_count = imp["passive_count"]
+    verb_count = imp["total_verbs"]
+    passive_ratio = imp["ratio"]
+    passive_examples = imp["examples"]
+    attributive_excluded = imp["attributive_excluded"]
 
     # 3. Sentence-length variance (in content words per sentence).
     sentence_lengths: list[int] = []
@@ -2953,6 +3235,7 @@ def _check_style(text: str) -> dict:
             "total_verbs": verb_count,
             "ratio": round(passive_ratio, 3),
             "examples": passive_examples,
+            "attributive_excluded": attributive_excluded,
             "summary_estonian": passive_et,
         },
         "sentence_length": {
@@ -2972,9 +3255,16 @@ def _check_style(text: str) -> dict:
         },
         "note": (
             "Heuristic phase-1 style checker. Repetition threshold "
-            "scales with text length. Passive-voice ratio uses Vabamorf "
-            "form codes (-takse/-ti/-tud/-tav family); ~15% is a healthy "
-            "ceiling for marketing copy, <5% may read too forceful. "
+            "scales with text length. `passive_voice` counts Estonian "
+            "umbisikuline tegumood: the -takse/-ti/-tud/-tav family, PLUS "
+            "negated impersonals ('ei esitata', 'ei avaldatud') that raw "
+            "Vabamorf form codes miss, MINUS `ei`/`ära` (tagged pos=V but "
+            "not real verbs) and MINUS attributive -tud participles "
+            "('lukustatud osa'), which are listed under "
+            "`attributive_excluded` instead. ~15% is a healthy ceiling for "
+            "marketing copy and <5% may read too forceful; for reports and "
+            "academic prose anything above ~40% is the single clearest "
+            "kantseliit signal — pair this with check_officialese. "
             "Hedging density >5% reads wishy-washy. Sentence length "
             "stddev should typically be at least 30% of the mean for "
             "natural rhythm. Quote *_estonian fields verbatim in "
@@ -3013,6 +3303,526 @@ def check_style(text: Annotated[str, Field(description="Estonian text to compute
     return _check_style(text)
 
 
+# Officialese thresholds, calibrated on a real Estonian R&D report
+# against the plain-language rewrite a native speaker produced from it.
+# Measured across that edit:
+#
+#   impersonal ratio   0.875 → 0.308   (gate 0.4  — separates cleanly)
+#   -mine per 100 wds  7.89  → 2.33    (gate 4.0  — separates cleanly)
+#   longest sentence   30    → 21 wds  (gate 25   — separates cleanly)
+#   noun/verb ratio    2.50  → 2.23    (gate 2.5  — barely separates)
+#
+# Noun/verb is deliberately the loosest gate: one document pair is thin
+# calibration and the two texts sit close together on it, so it is
+# reported as a metric always and raised as an issue only when clearly
+# heavy. The other three carry the signal.
+_OFFICIALESE_LONG_SENTENCE_WORDS = 25
+_OFFICIALESE_CLAUSE_STACK = 3
+_OFFICIALESE_NOUN_VERB_RATIO = 2.5
+_OFFICIALESE_NOMINALISATION_PER_100 = 4.0
+_OFFICIALESE_IMPERSONAL_RATIO = 0.4
+
+
+def _check_officialese(text: str) -> dict:
+    """Kantseliit diagnostic for NON-legal Estonian: reports, academic
+    prose, R&D/grant paperwork, business writing.
+
+    check_legalese exists but is scoped to statutes — on a real Estonian
+    R&D report paragraph it returned zero issues, because its filler
+    lexicon is legal-specific and its length gate (34 words) sits above
+    where Estonian prose actually becomes unreadable. This tool measures
+    what makes such text heavy:
+
+    - nominalisation (-mine verbal nouns) and overall noun/verb density,
+      the classic 'nimisõnastiil'
+    - umbisikuline tegumood, correctly counted (see _impersonal_voice)
+    - clause stacking per sentence — the 'mille käigus … ning …' pile-up
+      a raw word count misses
+    - long sentences, on an Estonian-calibrated gate
+    - administrative filler with plain equivalents
+
+    Precision-first, like its legal sibling: absence of flags is not proof
+    the text is plain.
+    """
+    _check_text(text)
+    Text = _Text()
+    t = Text(text)
+    t.tag_layer(["sentences", "morph_analysis"])
+    spans = list(t.morph_analysis)
+
+    issues: list[dict] = []
+
+    # --- 1. Nominalisation: -mine verbal nouns, with the verb to swap in.
+    nominalisations: list[dict] = []
+    for span in spans:
+        pos, _form, lemma = _span_bits(span)
+        if pos != "S" or not lemma.endswith("mine") or len(lemma) < 7:
+            continue
+        verb = lemma[:-4] + "ma"
+        nominalisations.append({
+            "word": span.text,
+            "lemma": lemma,
+            "position": span.start,
+            "verb": verb,
+        })
+
+    word_count = sum(1 for s in spans if s.text and s.text[0].isalpha())
+    noun_count = sum(1 for s in spans if _span_bits(s)[0] == "S")
+    imp = _impersonal_voice(spans)
+    verb_count = imp["total_verbs"]
+    noun_verb_ratio = (noun_count / verb_count) if verb_count else 0.0
+    nom_per_100 = (len(nominalisations) * 100 / word_count) if word_count else 0.0
+
+    if nom_per_100 >= _OFFICIALESE_NOMINALISATION_PER_100:
+        issues.append({
+            "position": nominalisations[0]["position"] if nominalisations else 0,
+            "rule": "nominalisation",
+            "rule_estonian": "nimisõnastumine (mine-vormide rohkus)",
+            "explanation": (
+                f"Tekstis on {len(nominalisations)} mine-tuletist "
+                f"{word_count} sõna kohta. Tegevust väljendav nimisõna "
+                f"muudab lause raskeks — kasuta tegusõna."
+            ),
+            "suggestion": ", ".join(
+                f"{n['lemma']} → {n['verb']}" for n in nominalisations[:5]
+            ),
+        })
+
+    if noun_verb_ratio >= _OFFICIALESE_NOUN_VERB_RATIO:
+        issues.append({
+            "position": 0,
+            "rule": "noun-density",
+            "rule_estonian": "nimisõnade kuhjumine",
+            "explanation": (
+                f"Nimisõnu on {noun_count}, tegusõnu {verb_count} "
+                f"(suhe {noun_verb_ratio:.2f}). Kui suhe ületab "
+                f"{_OFFICIALESE_NOUN_VERB_RATIO}, loeb tekst end raskelt."
+            ),
+            "suggestion": "muuda osa nimisõnu tegusõnadeks",
+        })
+
+    if imp["ratio"] >= _OFFICIALESE_IMPERSONAL_RATIO and verb_count >= 4:
+        issues.append({
+            "position": 0,
+            "rule": "impersonal-voice",
+            "rule_estonian": "umbisikuline tegumood",
+            "explanation": (
+                f"Umbisikulises tegumoes on {imp['passive_count']}/"
+                f"{verb_count} tegusõna "
+                f"({round(imp['ratio'] * 100, 1)}%). Aruandekeeles on see "
+                f"kõige selgem kantseliidi tunnus — nimeta tegija."
+            ),
+            "suggestion": "kirjuta isikulises tegumoes, nt 'koguti' → 'kogusime'",
+        })
+
+    # --- 2. Per-sentence: clause stacking and length.
+    for sent in t.sentences:
+        s_spans = [s for s in spans if s.start >= sent.start and s.end <= sent.end]
+        n_words = sum(1 for s in s_spans if s.text and s.text[0].isalpha())
+        subs = [s.text for s in s_spans if s.text.lower() in _SUBORDINATORS_ET]
+        preview = sent.enclosing_text
+        preview = (preview[:60] + "…") if len(preview) > 60 else preview
+
+        if len(subs) >= _OFFICIALESE_CLAUSE_STACK:
+            issues.append({
+                "phrase": preview,
+                "position": sent.start,
+                "rule": "clause-stacking",
+                "rule_estonian": "kõrvallausete kuhjumine",
+                "explanation": (
+                    f"Lauses on {len(subs)} kõrvallause algust "
+                    f"({', '.join(subs)}). Jaga lause mitmeks."
+                ),
+                "suggestion": "jaga lause lühemateks lauseteks",
+            })
+        elif n_words >= _OFFICIALESE_LONG_SENTENCE_WORDS:
+            issues.append({
+                "phrase": preview,
+                "position": sent.start,
+                "rule": "long-sentence",
+                "rule_estonian": "liiga pikk lause",
+                "explanation": (
+                    f"Lauses on {n_words} sisusõna (piir "
+                    f"{_OFFICIALESE_LONG_SENTENCE_WORDS}). Eesti keeles "
+                    f"mahub käändevormide tõttu ühte lausesse rohkem infot "
+                    f"kui inglise keeles, nii et pikk lause muutub kiiresti "
+                    f"raskeks."
+                ),
+                "suggestion": "jaga lause lühemateks lauseteks",
+            })
+
+    # --- 3. Administrative filler (lemma-exact + fixed phrase pairs).
+    for i, span in enumerate(spans):
+        pos, _form, lemma = _span_bits(span)
+        low = span.text.lower()
+
+        filler = _OFFICIALESE_LEMMAS_ET.get(lemma) or _OFFICIALESE_SURFACE_ET.get(low)
+        if filler:
+            plain, why = filler
+            issues.append({
+                "word": span.text,
+                "position": span.start,
+                "rule": "officialese-filler",
+                "rule_estonian": "kantseliitlik täitesõna",
+                "explanation": why,
+                "suggestion": plain,
+            })
+
+        if i + 1 < len(spans):
+            pair = (low, spans[i + 1].text.lower())
+            if pair in _OFFICIALESE_PHRASES_ET:
+                plain, why = _OFFICIALESE_PHRASES_ET[pair]
+                issues.append({
+                    "phrase": f"{span.text} {spans[i + 1].text}",
+                    "position": span.start,
+                    "rule": "officialese-phrase",
+                    "rule_estonian": "kantseliitlik väljend",
+                    "explanation": why,
+                    "suggestion": plain,
+                })
+
+        # 'X-i poolt tehtud' — the passive-agent calque. Only when a
+        # genitive noun precedes, so 'hääletas poolt' (in favour) is safe.
+        if low == "poolt" and i > 0:
+            prev_pos, prev_form, _prev_lemma = _span_bits(spans[i - 1])
+            if prev_pos == "S" and prev_form in ("sg g", "pl g"):
+                issues.append({
+                    "phrase": f"{spans[i - 1].text} poolt",
+                    "position": spans[i - 1].start,
+                    "rule": "poolt-calque",
+                    "rule_estonian": "'poolt'-tarind",
+                    "explanation": (
+                        "'X-i poolt tehtud' on tõlkelaen. Eesti keeles "
+                        "piisab omastavast: 'mudeli loodud', mitte "
+                        "'mudeli poolt loodud'."
+                    ),
+                    "suggestion": f"{spans[i - 1].text} (ilma sõnata 'poolt')",
+                })
+
+    issues.sort(key=lambda d: d.get("position", 0))
+
+    return {
+        "text": text,
+        "issues": issues,
+        "metrics": {
+            "word_count": word_count,
+            "noun_count": noun_count,
+            "verb_count": verb_count,
+            "noun_verb_ratio": round(noun_verb_ratio, 2),
+            "nominalisations": nominalisations,
+            "nominalisations_per_100_words": round(nom_per_100, 2),
+            "impersonal_voice": imp,
+        },
+        "summary_estonian": (
+            f"Leiti {len(issues)} kantseliidikohta. Nimisõnade ja tegusõnade "
+            f"suhe on {noun_verb_ratio:.2f}, umbisikulises tegumoes "
+            f"{round(imp['ratio'] * 100, 1)}% tegusõnadest."
+            if issues else
+            "Selget kantseliiti ei tuvastatud."
+        ),
+        "note": (
+            "Heuristic kantseliit diagnostic for NON-legal Estonian "
+            "(reports, academic prose, business writing) — the sibling of "
+            "check_legalese, which is scoped to statutes and stays silent "
+            "on report officialese. Thresholds are calibrated against a "
+            "native speaker's plain-language rewrite of a real Estonian R&D "
+            "report. Across that edit the impersonal ratio went 0.875 → "
+            "0.308, -mine nouns per 100 words 7.89 → 2.33 and the longest "
+            "sentence 30 → 21 content words, so those three gates (0.4, "
+            "4.0, 25) separate bureaucratic from plain cleanly. Noun/verb "
+            "moved only 2.50 → 2.23, so its gate (2.5) is deliberately "
+            "loose and that signal is the weakest of the four — weigh it "
+            "last. `metrics.nominalisations` gives each "
+            "-mine noun with the verb to swap in. STARTER lexicons, "
+            "precision-first and not exhaustive — absence of flags is not "
+            "proof the text is plain. For legal text use check_legalese "
+            "instead: it protects terms of art, which this tool does not. "
+            "Quote rule_estonian and summary_estonian verbatim in Estonian "
+            "replies."
+        ),
+    }
+
+
+class _OfficialeseResult(TypedDict, total=False):
+    """Output of check_officialese: kantseliit issues + density metrics."""
+    text: str
+    issues: list[dict]
+    metrics: dict
+    summary_estonian: str
+    note: str
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian officialese (kantseliit in non-legal prose)",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+@_counted
+def check_officialese(text: Annotated[str, Field(description="Estonian non-legal text (report, academic, business) to check for kantseliit / bureaucratic density.")]) -> _OfficialeseResult:
+    """Flag Estonian kantseliit in reports, academic and business prose.
+
+    check_legalese is the legal-text sibling; use THIS one for anything
+    that is not a statute or contract, where check_legalese finds nothing
+    because its lexicon and length gate are tuned for legislation.
+
+    Returns `issues` (each with an Estonian `rule_estonian` label, an
+    explanation and a concrete suggestion) plus `metrics`:
+
+    - nominalisation: -mine verbal nouns per 100 words, each paired with
+      the verb to use instead (`hindamine` → `hindama`)
+    - noun_verb_ratio: nimisõnastiil density; over ~2.0 reads heavy
+    - impersonal_voice: umbisikuline tegumood, correctly counted
+      (negated impersonals included, `ei`/`ära` and attributive -tud
+      participles excluded)
+    - clause-stacking: 3+ subordinate-clause openers in one sentence, the
+      'mille käigus … ning …' pile-up that a word count alone misses
+    - long-sentence: 25+ content words, calibrated for Estonian
+    - officialese filler: `omama` → `olema`, `kujutab endast` → `on`,
+      `viidi läbi` → `tehti`, `X-i poolt tehtud` → `X-i tehtud`
+
+    Heuristic and precision-first — no flags does not prove the text is
+    plain. Input capped at 100,000 characters.
+    """
+    return _check_officialese(text)
+
+
+# How many distinct content nouns get a WordNet lookup in
+# check_term_consistency. Bounds cost on long documents; the nouns are
+# ranked by frequency first, so the cap drops only long-tail hapaxes.
+_TERM_CONSISTENCY_WORDNET_CAP = 40
+
+
+def _check_term_consistency(text: str) -> dict:
+    """One referent, one term — flag a document that names the same thing
+    several ways.
+
+    This is the failure mode a human editor catches instantly and a model
+    sliding through a long document does not: a dataset called `andmestik`
+    in one paragraph, `teadusandmestik` in the next and `korpus` in a
+    third. Two rules, both precision-first:
+
+    A. Shared compound head. The text uses a bare noun X *and* a compound
+       ending in X (`andmestik` + `teadusandmestik`), or three or more
+       distinct lemmas share one head. Two compounds sharing a head is NOT
+       enough on its own — `tegevusvaldkond` and `märgendusvaldkond` are
+       usually genuinely different things.
+    B. Shared WordNet synset. Two distinct lemmas in the text sit in the
+       same synset, i.e. Estonian WordNet considers them synonyms
+       (`andmestik` / `andmebaas`).
+
+    Reports counts per variant so the caller can pick the dominant term,
+    and never decides which variant is right — that needs context the tool
+    does not have.
+
+    Capped at MAX_TEXT_CHARS, NOT MAX_DOC_CHARS. check_defined_terms may
+    take 500k because it is pure regex; this one runs full morphological
+    analysis over the whole document, which is ~4s per 100k chars. At 500k
+    a single call would burn ~22s of CPU, which would blow the
+    defence-in-depth budget the public per-IP rate limit is sized against.
+    """
+    _check_text(text, limit=MAX_TEXT_CHARS)
+    Text = _Text()
+    t = Text(text)
+    t.tag_layer(["morph_analysis"])
+
+    from collections import Counter, defaultdict
+
+    counts: Counter = Counter()
+    first_pos: dict[str, int] = {}
+    heads: dict[str, str] = {}
+
+    for span in t.morph_analysis:
+        pos = _first(list(span.partofspeech))
+        if pos != "S":
+            continue
+        lemma_raw = _first(list(span.lemma)) or ""
+        if not lemma_raw or lemma_raw[0].isupper() or len(lemma_raw) < 4:
+            continue
+        lemma = lemma_raw.lower()
+        rt_lists = [list(rt) for rt in span.root_tokens]
+        parts = rt_lists[0] if rt_lists else []
+        counts[lemma] += 1
+        first_pos.setdefault(lemma, span.start)
+        heads[lemma] = (parts[-1].lower() if parts else lemma)
+
+    groups: list[dict] = []
+    grouped_lemmas: set[str] = set()
+
+    # --- Rule A: shared compound head.
+    by_head: dict[str, set[str]] = defaultdict(set)
+    for lemma, head in heads.items():
+        by_head[head].add(lemma)
+
+    for head, lemmas in sorted(by_head.items()):
+        if len(lemmas) < 2:
+            continue
+        bare_present = head in lemmas
+        if not (bare_present or len(lemmas) >= 3):
+            continue
+        variants = sorted(lemmas, key=lambda w: (-counts[w], w))
+        groups.append({
+            "head": head,
+            "rule": "shared-compound-head",
+            "rule_estonian": "sama põhisõna",
+            "variants": [
+                {"lemma": w, "count": counts[w], "position": first_pos[w]}
+                for w in variants
+            ],
+            "dominant": variants[0],
+            "explanation": (
+                f"Tekstis kasutatakse sama põhisõnaga termineid: "
+                f"{', '.join(variants)}. Kui need tähistavad üht ja sama "
+                f"asja, vali üks ja kasuta seda läbivalt."
+            ),
+        })
+        grouped_lemmas.update(lemmas)
+
+    # --- Rule B: shared WordNet synset.
+    #
+    # WordNet ships pre-downloaded in the server image, so this is a local
+    # lookup with no network access. If the resource is somehow absent,
+    # EstNLTK tries to fetch it and prompts for confirmation — which would
+    # breach the no-outbound-network posture, and, worse, writes that
+    # prompt to STDOUT, which in stdio transport IS the MCP protocol
+    # channel. Redirecting stdout to stderr for the duration keeps the
+    # protocol stream clean whatever EstNLTK decides to print;
+    # BaseException covers the EOFError / SystemExit the prompt raises
+    # when stdin is closed. Rule B then degrades to off and `rules_run`
+    # says so rather than silently returning fewer groups.
+    import contextlib
+
+    ranked = [w for w, _ in counts.most_common(_TERM_CONSISTENCY_WORDNET_CAP)]
+    synsets_by_lemma: dict[str, set[str]] = {}
+    wordnet_ok = True
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            wn = _wordnet()
+    except BaseException:
+        wn = None
+        wordnet_ok = False
+    if wn is not None:
+        for lemma in ranked:
+            try:
+                synsets_by_lemma[lemma] = {s.name for s in (wn[lemma] or [])}
+            except BaseException:
+                synsets_by_lemma[lemma] = set()
+                wordnet_ok = False
+
+    seen_pairs: set[tuple[str, str]] = set()
+    for i, a in enumerate(ranked):
+        for b in ranked[i + 1:]:
+            if a == b or (a, b) in seen_pairs:
+                continue
+            shared = synsets_by_lemma.get(a, set()) & synsets_by_lemma.get(b, set())
+            if not shared:
+                continue
+            # Skip pairs Rule A already reported together.
+            if heads.get(a) == heads.get(b) and {a, b} <= grouped_lemmas:
+                continue
+            seen_pairs.add((a, b))
+            variants = sorted([a, b], key=lambda w: (-counts[w], w))
+            groups.append({
+                "head": None,
+                "rule": "shared-wordnet-synset",
+                "rule_estonian": "sama tähendusrühm",
+                "synsets": sorted(shared),
+                "variants": [
+                    {"lemma": w, "count": counts[w], "position": first_pos[w]}
+                    for w in variants
+                ],
+                "dominant": variants[0],
+                "explanation": (
+                    f"'{a}' ja '{b}' kuuluvad eesti WordNetis samasse "
+                    f"tähendusrühma ({', '.join(sorted(shared))}). Kui need "
+                    f"tähistavad üht ja sama asja, vali üks."
+                ),
+            })
+
+    groups.sort(key=lambda g: g["variants"][0]["position"])
+
+    return {
+        "text": text,
+        "groups": groups,
+        "terms_analysed": len(counts),
+        "rules_run": {
+            "shared-compound-head": True,
+            "shared-wordnet-synset": wordnet_ok,
+        },
+        "summary_estonian": (
+            f"Leiti {len(groups)} rühma, kus üht asja võidakse nimetada "
+            f"mitmel viisil. Vali igas rühmas üks termin ja kasuta seda "
+            f"läbivalt."
+            if groups else
+            "Ebajärjekindlat terminikasutust ei tuvastatud."
+        ),
+        "note": (
+            "Heuristic terminology-consistency check: 'one referent, one "
+            "term'. Rule `shared-compound-head` fires when a bare noun and "
+            "a compound built on it both appear (andmestik + "
+            "teadusandmestik), or when 3+ lemmas share one head; two "
+            "compounds sharing a head is deliberately NOT enough, since "
+            "those are usually distinct things. Rule "
+            "`shared-wordnet-synset` fires when two lemmas sit in the same "
+            "Estonian WordNet synset. The tool does NOT decide which "
+            "variant is correct — that needs domain context it cannot see; "
+            "it reports counts so you can pick the dominant term, and some "
+            "groups are legitimately distinct concepts. KNOWN GAP: "
+            "synonym pairs that share neither a head nor a synset "
+            "(korpus / andmestik) are not caught — for those, read each "
+            "candidate's `synonyms` definition and check whether its "
+            "domain fits the text. WordNet lookups are capped at the "
+            f"{_TERM_CONSISTENCY_WORDNET_CAP} most frequent nouns, and "
+            "`rules_run` reports whether the WordNet rule actually ran — "
+            "if the resource is unavailable it degrades to the "
+            "compound-head rule alone rather than failing. Input "
+            "capped at 100,000 characters."
+        ),
+    }
+
+
+class _TermConsistencyResult(TypedDict, total=False):
+    """Output of check_term_consistency: groups of competing terms."""
+    text: str
+    groups: list[dict]
+    terms_analysed: int
+    rules_run: dict
+    summary_estonian: str
+    note: str
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian terminology consistency (one referent, one term)",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+@_counted
+def check_term_consistency(text: Annotated[str, Field(description="Estonian document to check for the same thing being named several different ways.")]) -> _TermConsistencyResult:
+    """Flag a document that calls the same thing several different names.
+
+    The classic long-document defect, and the one a model editing
+    paragraph-by-paragraph reliably misses: a dataset that is `andmestik`
+    on page 1, `teadusandmestik` on page 2 and `korpus` on page 3.
+
+    Two precision-first rules:
+
+    - `shared-compound-head`: a bare noun and a compound built on it both
+      occur (`andmestik` + `pildiandmestik`), or 3+ lemmas share one head.
+    - `shared-wordnet-synset`: two lemmas sit in one Estonian WordNet
+      synset, i.e. WordNet calls them synonyms.
+
+    Each group lists its variants with occurrence counts and the dominant
+    one, so you can standardise on the most-used term. The tool does not
+    decide which variant is right — some groups are genuinely distinct
+    concepts, so read them before rewriting.
+
+    Known gap: synonyms sharing neither a head nor a synset (korpus /
+    andmestik) are not caught. Input capped at 100,000 characters.
+    """
+    return _check_term_consistency(text)
+
+
 @mcp.tool(annotations=ToolAnnotations(
     title="Classify Estonian register (formal vs colloquial)",
     readOnlyHint=True,
@@ -3033,11 +3843,16 @@ def classify_register(text: Annotated[str, Field(description="Estonian text to c
     hasn't drifted into officialese, or that a contract draft hasn't
     slipped into chat tone.
 
-    PHASE-1 LIMITATION: this is a coarse lexicon-based heuristic, not a
-    trained model. Real register also lives in sentence structure,
-    address forms, and passive voice — none of which this catches. Most
-    newsletter prose scores 'neutral'. Use the result as a directional
-    hint, not a verdict. Input capped at 100,000 characters.
+    The lexicon covers legal-administrative AND academic/report
+    vocabulary. `structure` adds two syntactic signals — umbisikuline
+    tegumood ratio and noun/verb density — bounded at +0.4, applied only
+    from 25 words up and only when the lexicon is not net-colloquial.
+
+    LIMITATION: still a heuristic, not a trained model. Address forms and
+    finer syntax go uncaught, and most newsletter prose scores 'neutral'.
+    Use the result as a directional hint, not a verdict; for a full
+    kantseliit breakdown with per-issue suggestions, call
+    check_officialese. Input capped at 100,000 characters.
     """
     return _classify_register(text)
 

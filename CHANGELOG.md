@@ -7,6 +7,94 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-31
+
+Editorial release. Everything here came out of replaying a real Estonian
+editing conversation through the server: a native speaker rewriting an
+R&D report for readability, asking "is this the right word here?", and
+being told `korpus` is wrong for image data. The MCP was never invoked
+in that conversation, and when the text was replayed through the tools,
+most of them stayed silent or gave the wrong verdict. 24 tools → 26.
+
+### Added
+
+- **`check_officialese(text)` — kantseliit check for NON-legal Estonian.**
+  `check_legalese` exists but is scoped to statutes: on a real R&D report
+  paragraph it returned zero issues, because its filler lexicon is
+  legal-specific and its 34-word gate sits above where Estonian prose
+  actually becomes unreadable. The new tool measures nominalisation
+  density (each `-mine` noun paired with the verb to swap in,
+  `hindamine` → `hindama`), correctly-counted umbisikuline tegumood,
+  clause stacking (`mille käigus … ning …`, which a raw word count
+  misses), an Estonian-calibrated 25-word sentence gate, and
+  administrative filler (`omab` → `on`, `kujutab endast` → `on`,
+  `viidi läbi` → `tehti`, `mudeli poolt loodud` → `mudeli loodud`).
+  Thresholds are calibrated against a native speaker's own rewrite of
+  the report: impersonal ratio 0.875 → 0.308, `-mine` per 100 words
+  7.89 → 2.33, longest sentence 30 → 21 words. The bureaucratic
+  original flags; the human rewrite comes back clean.
+- **`check_term_consistency(text)` — one referent, one term.** The
+  long-document defect a model editing paragraph-by-paragraph reliably
+  misses: a dataset that is `andmestik` on page 1, `teadusandmestik` on
+  page 2 and `pildiandmestik` on page 3. Two precision-first rules —
+  shared compound head, and shared Estonian WordNet synset — with
+  per-variant counts so you can standardise on the dominant term. Two
+  compounds sharing a head is deliberately *not* enough to flag, since
+  those are usually distinct things. Known gap, stated in the tool's own
+  note: synonyms sharing neither a head nor a synset (`korpus` /
+  `andmestik`) are not caught.
+
+### Fixed
+
+- **`check_style` mis-counted umbisikuline tegumood four ways**, all
+  verified against Vabamorf tags on real text. `ei` / `ära` are tagged
+  `pos=V form=neg`, so every negation inflated `total_verbs` and
+  *deflated* the ratio. The `ta` / `da` impersonal-present-negative form
+  (`ei esitata`) was absent from the form set and missed entirely.
+  `ei avaldatud` is tagged `pos=A`, not `V`, and was skipped. And
+  attributive `-tud` participles (`lukustatud hindamisosa` — a modifier,
+  not a predicate) were counted as passive; they now appear under
+  `attributive_excluded` instead. The counter is shared with the two new
+  tools, so all three agree.
+- **`check_compound_familiarity`'s junk-neighbour gate inverted human
+  judgement.** `pildiandmestik` — whose top fastText neighbour is its own
+  head `andmestik` at 0.71 — was flagged suspect purely because 5/8 of
+  the neighbour *tail* was scrape junk, while `teadusandmestik` (0.705),
+  the word a native speaker called artificial, passed. The junk gate is
+  now decisive only when the compound is also weak at the top (< 0.60)
+  or its top neighbour is itself junk; a clean, real, ≥ 0.60 top
+  neighbour vouches for the compound whatever the tail looks like.
+  `mõtteliin` and `toortõlkeoht` still flag. The tool note now states the
+  converse limit explicitly: similarity cannot judge register, so a
+  well-formed but *stilted* compound will pass.
+
+### Changed
+
+- **`classify_register` scored dense officialese as `neutraalne`, 0.0,
+  with zero markers** — while 87.5% of that text's verbs were
+  impersonal. Two fixes: the lexicon gains academic/report vocabulary
+  (`aruandeperiood`, `ettevõttesiseselt`, `valideerima`, `metoodika`,
+  …), and a new `structure` block folds in umbisikuline tegumood ratio
+  and noun/verb density. The structural component is bounded at +0.4 and
+  applies only from 25 words up and only when the lexicon is not
+  net-colloquial, so short strings still score purely on the lexicon and
+  chatty copy can never be nudged formal.
+- **`synonyms` now documents the word-fit check.** The server already
+  knew that `korpus` means "kirjaliku või suulise teksti elektrooniline
+  kogu" — the exact fact that settles whether a set of images can be
+  called one — but returned it as one of five unranked senses with
+  nothing telling the model to test the gloss against context. The
+  docstring now says to read each `definition` for its domain constraint
+  when the question is "is this the right word here?".
+- **Server instructions name the editorial use case.** Every tool was
+  named for a *mechanical* check, so models didn't reach for the server
+  on "is this the right word" or "make this read more human". The
+  `initialize` instructions now route those questions explicitly.
+- `estonian-writing-assistant` skill: two new workflows (de-bureaucratise
+  Estonian prose; "is this the right word here?"), the new tools in the
+  table, and a corrected `check_compound_familiarity` threshold (the
+  skill still documented the old 0.55 gate).
+
 ## [0.4.4] — 2026-07-29
 
 ### Security

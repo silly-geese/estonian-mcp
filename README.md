@@ -14,8 +14,9 @@ as tools any LLM client can call in real time, backed by EKI's orthography
 rules (Reeglid) and public-domain Riigi Teataja legislation. Hand it
 Estonian text, get back correct lemmas, morphology, POS tags, spell-check +
 suggestions, syllables, named entities, WordNet synonyms, fastText-based
-related words, a register hint, orthography/grammar checks, and, for legal
-texts, legalese simplification and canonical legal-usage lookups.
+related words, a register hint, orthography/grammar checks, kantseliit and
+terminology-consistency checks for reports and academic prose, and, for
+legal texts, legalese simplification and canonical legal-usage lookups.
 
 **One-click install** from Anthropic's official Connectors Directory, or
 self-host. See below.
@@ -24,6 +25,14 @@ If your AI agent has to draft, edit, or proofread Estonian, this wires
 in ground truth so it stops guessing on the mechanical layer
 (spelling, case forms, conjugation) and gives it real Estonian
 synonyms instead of inventing them.
+
+It also covers the **editorial** layer, where a word can be correctly
+spelled, morphologically valid and still wrong: `check_officialese` for
+bureaucratic Estonian in reports and academic prose, `check_term_consistency`
+for a document that names one thing three ways, and `synonyms` read as a
+word-fit check — its glosses carry domain constraints (`korpus` is
+specifically "kirjaliku või suulise teksti elektrooniline kogu", so a set
+of images is not one, however natural it sounds in ML jargon).
 
 > **Benchmark:** on TalTech's [`inflection_et`](https://huggingface.co/datasets/TalTechNLP/inflection_et)
 > gold dataset (a noun-phrase inflection benchmark; Lillepalu & Alumäe,
@@ -57,8 +66,10 @@ synonyms instead of inventing them.
 | `named_entities(text)` | People / places / organisations |
 | `synonyms(word)` | Synsets from Estonian WordNet, synonymous lemmas + definition + examples per word sense |
 | `find_related_words(word)` | Top-N semantically nearby words via fastText embeddings (semantically related, not always synonymous) |
-| `classify_register(text)` | Coarse formal/colloquial register hint with matched markers + consistency flag for register-mixed text (heuristic, phase 1) |
-| `check_style(text)` | Style metrics, lemma-aware repetition, passive-voice ratio, sentence-length variance, hedging-word density |
+| `classify_register(text)` | Coarse formal/colloquial register hint with matched markers, consistency flag for register-mixed text, plus structural signals (umbisikuline tegumood ratio, noun density) so dense officialese no longer scores "neutral" |
+| `check_style(text)` | Style metrics, lemma-aware repetition, umbisikuline-tegumood ratio, sentence-length variance, hedging-word density |
+| `check_officialese(text)` | Kantseliit check for **non-legal** prose (reports, academic, business), where `check_legalese` stays silent. Nominalisation density (`hindamine` → `hindama`), impersonal-voice ratio, clause stacking (`mille käigus … ning …`), Estonian-calibrated sentence length, and admin filler (`omab` → `on`, `viidi läbi` → `tehti`, `mudeli poolt loodud` → `mudeli loodud`) |
+| `check_term_consistency(text)` | One referent, one term. Flags a document that calls the same thing `andmestik` on page 1 and `teadusandmestik` on page 2, via shared compound head or shared Estonian WordNet synset, with per-variant counts so you can standardise on the dominant one |
 | `check_redundancy(text)` | Pleonasm check, flags semantic doubling like `samuti ka` (also+also), `kõige optimaalsem` (most+optimal), and fixed redundant phrases |
 | `check_object_case(text)` | Käändeõpetus, flags direct-object case errors under negation and after partitive-only verbs (armastama, vihkama, vajama, …) |
 | `check_abbreviation_hyphenation(text)` | Lühendiortograafia, flags abbreviations with case endings missing the EKI-mandated hyphen (`MCPst` → `MCP-st`, `OÜle` → `OÜ-le`) |
@@ -258,7 +269,7 @@ send to suppress it). You'll especially see it right after adding or
 updating the connector, since the client re-checks tools it hasn't
 seen before.
 
-Good news: **all 24 tools are marked `readOnlyHint: true`** (they only
+Good news: **all 26 tools are marked `readOnlyHint: true`** (they only
 read text, never write or call out), so any well-behaved client can
 safely let you allow them once and stop asking:
 

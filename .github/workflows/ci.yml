@@ -79,6 +79,9 @@ jobs:
       - name: Run legal-tool tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_legal.py
 
+      - name: Run officialese / term-consistency tests
+        run: uv run --python ${{ matrix.python-version }} python tests/test_officialese.py
+
   docker:
     runs-on: ubuntu-latest
     needs: smoke
