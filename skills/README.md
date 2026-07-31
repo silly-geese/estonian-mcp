@@ -13,7 +13,7 @@ just markdown — and can be installed without redeploying anything.
 
 | Skill | What it does |
 | --- | --- |
-| [`estonian-writing-assistant`](estonian-writing-assistant/SKILL.md) | Guides Claude through proofreading, register-aware rewriting, breaking repetition, and morphology study using the ten estonian-mcp tools. Documents tool quirks (Vabamorf misses on neologisms, fastText antonym-near-neighbours, polysemy) and anti-patterns (inventing case forms, bypassing spell_check). |
+| [`estonian-writing-assistant`](estonian-writing-assistant/SKILL.md) | Guides Claude through proofreading, register-aware rewriting, de-bureaucratising Estonian prose, terminology consistency, and morphology study using the estonian-mcp tools. Documents tool quirks (Vabamorf misses on neologisms, fastText antonym-near-neighbours, polysemy) and anti-patterns (inventing case forms, bypassing spell_check). |
 
 ## Adding to the Anthropic Connectors Directory
 

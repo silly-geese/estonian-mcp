@@ -1,6 +1,6 @@
 ---
 name: estonian-writing-assistant
-description: "Use this skill whenever the user is writing, editing, proofreading, or studying Estonian text and the estonian-mcp connector is available — even if they don't explicitly ask. Covers proofreading (spell_check first, then verify lemma and case forms via lemmatize and analyze_morphology on uncertain words), tone-aware rewrites (classify_register before and after edits to confirm the register matches the audience), vocabulary diversification (synonyms from WordNet for same-meaning swaps; find_related_words via fastText for adjacent concepts in marketing copy), morphology study, compound splits, syllabification, and named-entity extraction from Estonian news or documents. Core principle — never invent Estonian lemmas, case endings, conjugations, or spellings; always verify with the MCP tools, because models routinely hallucinate Estonian inflections. Documents tool quirks inline (fastText antonym-near-neighbours, polysemy, Vabamorf gaps on neologisms, synonyms-vs-related-words decision rule) and anti-patterns."
+description: "Use this skill whenever the user is writing, editing, proofreading, or studying Estonian text and the estonian-mcp connector is available — even if they don't explicitly ask. Covers proofreading (spell_check first, then verify lemma and case forms via lemmatize and analyze_morphology on uncertain words), tone-aware rewrites (classify_register before and after edits to confirm the register matches the audience), de-bureaucratising stiff Estonian prose (check_officialese for kantseliit in reports, academic and business writing, where check_legalese stays silent), keeping one term per referent across a long document (check_term_consistency), answering 'is this the right word here?' by reading each WordNet gloss's domain constraint rather than trusting ML-jargon familiarity, vocabulary diversification (synonyms from WordNet for same-meaning swaps; find_related_words via fastText for adjacent concepts in marketing copy), morphology study, compound splits, syllabification, and named-entity extraction from Estonian news or documents. Core principle — never invent Estonian lemmas, case endings, conjugations, or spellings; always verify with the MCP tools, because models routinely hallucinate Estonian inflections. Documents tool quirks inline (fastText antonym-near-neighbours, polysemy, Vabamorf gaps on neologisms, synonyms-vs-related-words decision rule) and anti-patterns."
 ---
 
 # Estonian writing assistant
@@ -36,7 +36,9 @@ The hard rule, applied throughout this skill:
 | `check_redundancy` | Pleonasm / semantic-doubling check — flags `samuti ka` (also+also), `kõige optimaalsem` (most+optimal), and fixed redundant phrases. Run it before claiming a redundancy "the MCP can't catch" — it catches the common ones. |
 | `check_object_case` | Käändeõpetus heuristic — catches the most common confidently-wrong Estonian: direct-object case after negation (must be partitive) and after partitive-only verbs (`armastama`, `vihkama`, `vajama`, …). Lexicon-based, no syntactic parser; only flags nouns AFTER the trigger so subject-noun false positives are minimal. |
 | `check_abbreviation_hyphenation` | Lühendiortograafia — flags abbreviations carrying a case ending without the EKI-mandated hyphen (`MCPst` → `MCP-st`, `OÜle` → `OÜ-le`, `APIga` → `API-ga`). Uses Vabamorf's POS+form analysis to filter to actual abbreviations. |
-| `check_compound_familiarity` | Calque-risk diagnostic — surfaces fastText nearest-neighbour data for each compound noun. Suspect flag = top similarity < 0.55. **Critically**, the threshold also flags some legitimate-but-uncommon compounds (small fastText vocab). Read the `neighbours` list to judge: subword-similar neighbours = likely calque; semantically coherent neighbours = real compound. Run on any Estonian compound you yourself produced (rather than verbatim user input) — if flagged, search for a more idiomatic native phrasing before sending. |
+| `check_compound_familiarity` | Calque-risk diagnostic — surfaces fastText nearest-neighbour data for each compound noun. Suspect flag = top similarity < 0.60, or a junk-dominated neighbour tail when that tail is decisive (top score also under 0.60, or the top neighbour is itself junk). **Critically**, it still flags some legitimate-but-uncommon compounds (small fastText vocab). Read the `neighbours` list to judge: subword-similar neighbours = likely calque; semantically coherent neighbours = real compound. Note the converse limit too: a compound that is merely *stilted* rather than invented (`teadusandmestik`) will pass — similarity can't judge register, so use `check_officialese` for that. Run on any Estonian compound you yourself produced (rather than verbatim user input). |
+| `check_officialese` | Kantseliit check for **non-legal** prose — reports, academic writing, business copy, grant/R&D paperwork. Use this, not `check_legalese`, for anything that isn't a statute or contract: `check_legalese`'s lexicon and 34-word gate are tuned for legislation and return nothing on report officialese. Gives nominalisation density with the verb to swap in (`hindamine` → `hindama`), correctly-counted umbisikuline tegumood, clause stacking, Estonian-calibrated sentence length, and admin filler. |
+| `check_term_consistency` | One referent, one term. Run on any document longer than a couple of paragraphs: catches `andmestik` in §1, `teadusandmestik` in §2, `pildiandmestik` in §3. Reports per-variant counts so you can standardise on the dominant one. Read each group before rewriting — some are genuinely distinct concepts. |
 | `check_capitalization` | Algustäheortograafia (initial-letter orthography) check per EKI Reeglid. Flags weekdays, months, nationalities, and language/culture adjectives wrongly capitalized mid-sentence. Run on every Estonian text you produce. |
 | `check_compounds` | Liitsõnaõigekiri — flags common compound splits the model produces (`kooli maja` → `koolimaja`). Lexicon-based, phase 1. |
 | `check_punctuation` | Kirjavahemärgid — flags missing commas before subordinating conjunctions (et, sest, kuna, kuid, vaid, nagu, …). Phase-1 scope: the comma-before-clause rule only. |
@@ -112,10 +114,63 @@ more "on brand":
 5. Call `classify_register` on the rewrite to confirm the shift
    landed.
 
-`classify_register` is a **phase-1 heuristic** — most newsletter
-prose intentionally scores "neutral" because the markers it catches
-are absent. Don't over-interpret a neutral score; it just means
-"no obvious officialese or slang detected."
+`classify_register` is a **heuristic** — most newsletter prose
+intentionally scores "neutral" because the markers it catches are
+absent. Don't over-interpret a neutral score; it just means "no obvious
+officialese or slang detected." Its `structure` block adds umbisikuline
+tegumood ratio and noun density, which is what stops dense report prose
+from scoring neutral, but it only applies from 25 words up.
+
+### 2b. Make bureaucratic Estonian readable
+
+When the user says a text is heavy, stiff, "kantseliitlik", or asks you
+to make it "inimlikum" / simpler to read — and it is **not** a statute
+or contract:
+
+1. Call `check_officialese`. Work the issues in this order, because
+   this is the order in which they change how the text reads:
+   - `impersonal-voice` — name the actor. `koguti` → `kogusime`. This
+     is the single biggest lever in Estonian report prose.
+   - `nominalisation` — each `-mine` noun comes back paired with the
+     verb to use instead. `metoodika väljatöötamine` → `töötati välja
+     metoodika`.
+   - `clause-stacking` / `long-sentence` — split. Prefer chronological
+     order: first what was done, then what came of it.
+   - `officialese-filler` / `officialese-phrase` / `poolt-calque` —
+     straight swaps, each with a suggestion.
+2. Call `check_term_consistency` on the whole document and pick one
+   term per group. Do this **before** rewriting, so the rewrite
+   standardises rather than adding a fourth variant.
+3. Re-run `check_officialese` on your rewrite. The metrics should move:
+   impersonal ratio down, `-mine` per 100 words down, longest sentence
+   down.
+
+Hard rule for this workflow: **every number, percentage and factual
+claim stays exactly as it was.** Simplifying must not strengthen or
+weaken a claim — if the original says no general conclusion is drawn
+from a result, that hedge survives the rewrite verbatim.
+
+Use `check_legalese` instead when the text *is* legal: it protects
+terms of art, which `check_officialese` does not.
+
+### 2c. "Is this the right word here?"
+
+Distinct from "give me a synonym", and the tools answer it differently.
+A word can pass `spell_check`, be a valid compound, and still be wrong.
+
+1. Call `synonyms` on the candidate and **read each `definition`**, not
+   just the lemma list. Estonian glosses often carry a domain
+   constraint that settles the question: `korpus` returns "kirjaliku või
+   suulise teksti elektrooniline kogu", so a set of *images* is not a
+   `korpus` however normal that sounds in ML jargon — `andmestik`
+   carries no such constraint.
+2. If the candidate is a compound you or the user coined, call
+   `check_compound_familiarity`. Remember it clears well-formed but
+   stilted compounds — `teadusandmestik` passes at 0.705 even though a
+   native speaker reads it as artificial.
+3. For register fit, call `classify_register` or `check_officialese`.
+4. When the user is a native speaker and corrects your Estonian, they
+   are right. Take the correction and move on.
 
 ### 3. Break repetition in long-form copy
 
@@ -226,10 +281,14 @@ swaps.
 ### `classify_register` is coarse
 
 The classifier is lexicon-based. It flags obvious officialese
-(`käesolev`, `vastavalt`, `sätestama`) and obvious colloquialisms
-(`noh`, `kuule`, `vinge`). It will not catch register cues that live
-in syntax (passive voice, address forms, sentence length). Use it as
-a directional hint, not a verdict.
+(`käesolev`, `vastavalt`, `sätestama`), academic/report vocabulary
+(`aruandeperiood`, `valideerima`, `metoodika`) and obvious
+colloquialisms (`noh`, `kuule`, `vinge`). Its `structure` block adds
+two syntactic signals — umbisikuline tegumood ratio and noun density —
+but only from 25 words up, and address forms and finer syntax still go
+uncaught. Use it as a directional hint, not a verdict; for a full
+kantseliit breakdown with per-issue suggestions, call
+`check_officialese`.
 
 ### `classify_register` returns the tier label in two languages
 
