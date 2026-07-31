@@ -64,7 +64,7 @@ DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.5.0"
+SERVER_VERSION = "0.5.1"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -3384,7 +3384,7 @@ def _check_officialese(text: str) -> dict:
         issues.append({
             "position": nominalisations[0]["position"] if nominalisations else 0,
             "rule": "nominalisation",
-            "rule_estonian": "nimisõnastumine (mine-vormide rohkus)",
+            "rule_estonian": "nimisõnastumine ehk nominalisatsioon",
             "explanation": (
                 f"Tekstis on {len(nominalisations)} mine-tuletist "
                 f"{word_count} sõna kohta. Tegevust väljendav nimisõna "
