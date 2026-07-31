@@ -66,7 +66,11 @@ most of them stayed silent or gave the wrong verdict. 24 tools → 26.
   neighbour vouches for the compound whatever the tail looks like.
   `mõtteliin` and `toortõlkeoht` still flag. The tool note now states the
   converse limit explicitly: similarity cannot judge register, so a
-  well-formed but *stilted* compound will pass.
+  well-formed but *stilted* compound will pass. Relatedly, the
+  `neighbour_quality.legal_term` marker is now stamped for every known
+  term of art rather than only for ones whose verdict had to be rescued —
+  with the guard in place, `solidaarvõlgnik` clears on its own merits but
+  callers still want to know it is attested legal vocabulary.
 
 ### Changed
 

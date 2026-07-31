@@ -2283,10 +2283,17 @@ def _check_compound_familiarity(text: str) -> dict:
         # solidaarvõlgnik, abieluvaraleping) are OOV in the general-web
         # fastText vocab and were false-flagged as coinages (~15% of legal
         # compounds). A known term of art is real by definition.
-        if is_suspect and _is_legal_term(lemma):
-            is_suspect = False
-            reasons = []
+        #
+        # The marker is stamped for EVERY term of art, not only ones whose
+        # verdict had to be rescued. Since the junk-tail decisiveness guard
+        # landed, a compound like `solidaarvõlgnik` (top neighbour
+        # `võlgnik`, 0.625) is already cleared before this runs — but the
+        # caller still wants to know it is attested legal vocabulary.
+        if _is_legal_term(lemma):
             quality = {**quality, "legal_term": True}
+            if is_suspect:
+                is_suspect = False
+                reasons = []
 
         compounds.append({
             "word": span.text,
