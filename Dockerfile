@@ -98,6 +98,14 @@ COPY --from=builder /app/data /app/data
 # otherwise the `synonyms` tool fails at runtime with EACCES.
 RUN chown -R app:app /opt/venv/lib/python3.13/site-packages/estnltk/estnltk_resources
 
+# Metrics are persisted to /data/metrics.json. Create the mount point in
+# the image and hand it to `app` first: when Docker initialises an empty
+# named volume it copies the ownership of the image directory underneath
+# it, so the non-root runtime user can write. Without this the directory
+# is created fresh as root:root and every flush fails with EACCES. Fly
+# mounts its own volume over this and is unaffected.
+RUN mkdir -p /data && chown app:app /data
+
 USER app
 EXPOSE 8081
 

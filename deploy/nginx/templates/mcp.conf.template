@@ -1,0 +1,203 @@
+# Rendered to /etc/nginx/conf.d/mcp.conf at container start by the
+# official image's envsubst step.
+#
+# ONLY ${DOMAIN}, ${INTERNAL_TOKEN} and ${HTTPS_PORT_SUFFIX} are
+# substituted - see NGINX_ENVSUBST_FILTER in docker-compose.yaml. Every
+# other $name below is an nginx runtime variable and must reach nginx
+# verbatim. If you add a new build-time placeholder, add it to that
+# filter too, or it will arrive as an empty string.
+
+# ---------------------------------------------------------------------
+# Bearer auth
+# ---------------------------------------------------------------------
+# 1. Pull the credential out of the Authorization header. The scheme is
+#    matched case-insensitively per RFC 6750; the credential itself is
+#    not.
+map $http_authorization $bearer_token {
+    default                       "";
+    "~*^Bearer\s+(?<tok>\S+)$"    $tok;
+}
+
+# 2. Credential -> client id. Anything not listed falls to the default
+#    of "", which the /mcp location rejects with a 401. Revoking a
+#    client is deleting its line and reloading; there is no state
+#    anywhere else.
+#
+#    The wildcard is deliberate. A missing file in a non-wildcard
+#    include is a fatal config error, and nginx failing to start also
+#    takes down the ACME challenge on port 80, so a missing token map
+#    would eventually cost you the certificate too. Matching nothing
+#    instead leaves every request unauthenticated, which is a 401 for
+#    everyone rather than an outage. It also lets you split clients
+#    across several tokens-*.map files.
+map $bearer_token $mcp_client {
+    default   "";
+    include   /etc/nginx/secrets/tokens*.map;
+}
+
+# ---------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------
+# per_client is the real quota and is keyed on the identity resolved
+# above. per_ip is a coarse ceiling that also covers unauthenticated
+# traffic, which never gets far enough to have a client id.
+#
+# Ordering note: limit_req runs in the preaccess phase, after the
+# rewrite phase where the 401 below is returned. Rejected requests
+# therefore do not consume per_client budget, which is why the per_ip
+# zone exists to absorb credential-stuffing attempts.
+limit_req_zone  $mcp_client         zone=per_client:10m rate=120r/m;
+limit_req_zone  $binary_remote_addr zone=per_ip:10m     rate=300r/m;
+limit_conn_zone $mcp_client         zone=conn_client:10m;
+
+limit_req_status  429;
+limit_conn_status 429;
+
+# No $http_authorization and no $query_string: the first would log the
+# credential outright, and the second carries ?config=<base64> on the
+# Smithery path, which wraps one.
+log_format mcp '$remote_addr "$request_method $uri" $status '
+               '$body_bytes_sent client=$mcp_client rt=$request_time';
+
+# ---------------------------------------------------------------------
+# Port 80: ACME challenge + redirect
+# ---------------------------------------------------------------------
+server {
+    listen 80 default_server;
+    server_name ${DOMAIN};
+    access_log /dev/stdout mcp;
+    server_tokens off;
+
+    # This has to stay reachable on plain HTTP permanently, not just at
+    # issuance: certbot renews through the same webroot every 12 hours.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+    }
+
+    # ${HTTPS_PORT_SUFFIX} is "" for the default 443 and ":8443" for a
+    # custom HTTPS_PORT. Without it, a stack published on non-default
+    # ports would redirect to a port nothing is listening on.
+    location / {
+        return 301 https://$host${HTTPS_PORT_SUFFIX}$request_uri;
+    }
+}
+
+# ---------------------------------------------------------------------
+# Port 443: the actual server
+# ---------------------------------------------------------------------
+server {
+    listen 443 ssl default_server;
+    http2 on;
+    server_name ${DOMAIN};
+    access_log /dev/stdout mcp;
+    server_tokens off;
+    default_type application/json;
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+    # No ssl_stapling: Let's Encrypt retired its OCSP responders in 2025,
+    # so stapling has nothing to staple.
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    # Tool inputs are prose, sometimes whole documents. The 1m default
+    # is tight; 4m still bounds what reaches the Python process.
+    client_max_body_size  4m;
+    # Slow-client attacks terminate here rather than occupying a uvicorn
+    # worker.
+    client_header_timeout 10s;
+    client_body_timeout   30s;
+    send_timeout          30s;
+
+    # Docker's embedded DNS, with the upstream held in a variable so the
+    # name is resolved per request instead of at config load. Without
+    # this, nginx refuses to start whenever the app container happens to
+    # be down - which would also take the ACME challenge on port 80 with
+    # it, and certificates would silently stop renewing. The cost is
+    # losing upstream keepalive, which is immaterial at this traffic
+    # level.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $upstream_app "app:8081";
+
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    # The client's credential stops at nginx. The app only ever sees the
+    # internal one, so a user token cannot end up in a Python traceback
+    # or a rate-limit bucket key.
+    proxy_set_header Authorization "Bearer ${INTERNAL_TOKEN}";
+
+    # -----------------------------------------------------------------
+    # The MCP endpoint: the only authenticated path
+    # -----------------------------------------------------------------
+    location /mcp {
+        limit_req zone=per_ip burst=60 nodelay;
+
+        # Streamable HTTP uses POST for calls, GET for the SSE stream,
+        # and DELETE to end a session.
+        if ($request_method !~ ^(GET|POST|DELETE|OPTIONS)$) {
+            return 405 '{"error":"method_not_allowed"}';
+        }
+
+        if ($mcp_client = "") {
+            add_header WWW-Authenticate 'Bearer realm="estonian-mcp"' always;
+            # add_header does not merge across levels either: naming one
+            # here drops the server-level HSTS, and an unauthenticated
+            # probe is often a client's very first request.
+            add_header Strict-Transport-Security "max-age=31536000" always;
+            return 401 '{"error":"unauthorized"}';
+        }
+
+        limit_req  zone=per_client burst=60 nodelay;
+        limit_conn conn_client 8;
+
+        proxy_pass http://$upstream_app$request_uri;
+
+        # proxy_set_header does not merge across levels: naming even one
+        # here discards every inherited header, so the server-level set
+        # is repeated in full before adding X-MCP-Client.
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization     "Bearer ${INTERNAL_TOKEN}";
+        # Lets the app attribute traffic without handling secrets.
+        proxy_set_header X-MCP-Client      $mcp_client;
+
+        # A GET /mcp can hold an SSE stream open indefinitely; buffering
+        # it would defeat the point.
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+
+    # -----------------------------------------------------------------
+    # Public, unauthenticated paths served by the app: /health,
+    # /metrics, the landing page, favicons, and the MCP server card.
+    # These are public by design (see server.py), so nginx only
+    # rate-limits them.
+    # -----------------------------------------------------------------
+    # They inherit the server-level proxy_set_header block above, so the
+    # app sees the internal token on these too and stays in bearer mode.
+    location = /                                 { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
+    location = /health                           { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
+    location = /metrics                          { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
+    location = /favicon.ico                      { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
+    location = /favicon.png                      { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
+    location = /favicon.svg                      { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
+    location = /.well-known/mcp/server-card.json { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
+
+    # Anything else never reaches Python.
+    location / {
+        return 404 '{"error":"not_found"}';
+    }
+}
