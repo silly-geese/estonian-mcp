@@ -7,7 +7,7 @@
 # Creates all three credentials a client needs, because they are useless
 # apart:
 #
-#   client_secret   checked by auth_basic on /oauth/token. This is the
+#   client_secret   checked by njs/oauth.js at /oauth/token. This is the
 #                   only real protection the OAuth facade has.
 #   access_token    what /oauth/token hands back to THIS client, looked
 #                   up by client id. Every client gets its own.
