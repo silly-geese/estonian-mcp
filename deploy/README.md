@@ -39,6 +39,9 @@ nginx gives these advantages:
 
 - nginx stops bad requests before they get to Python. This includes TLS
   errors, incorrect HTTP data, slow clients and too many connections.
+- The rate limit applies to the requests that nginx refuses, and not
+  only to the requests that it accepts. Thus a flood of incorrect
+  tokens, incorrect methods or unknown paths is also controlled.
 - The app accepts only one token. nginx accepts a different token for
   each client.
 - Each client has its own name in the log and its own rate limit.
@@ -420,6 +423,13 @@ docker compose up -d --force-recreate nginx
   the address one time when it starts. Thus nginx starts even if the
   app container is down. This is important, because certbot cannot
   renew the certificate if nginx is down.
+- No location that nginx can refuse uses `return` inside an `if`. nginx
+  answers `return` in the rewrite phase, which is before the preaccess
+  phase that contains `limit_req`. A refusal made with `return` is thus
+  never counted against the rate limit. The refusals use `limit_except`,
+  `auth_request`, `try_files` or njs instead, because all of these
+  operate after the preaccess phase. Keep this rule if you add a
+  location.
 - nginx mounts the `deploy/nginx/secrets` directory. It does not mount
   the `tokens.map` file. A bind mount of one file has two faults.
   Docker makes a directory if the file does not exist. An editor that

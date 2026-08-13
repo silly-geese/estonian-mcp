@@ -79,21 +79,22 @@ map $oauth_client_id $oauth_access_token {
 # ---------------------------------------------------------------------
 # OAuth redirect allowlist
 # ---------------------------------------------------------------------
-# nginx has no way to percent-decode $arg_redirect_uri, and the raw
-# encoded value cannot go into a Location header. So the decoded target
-# is rebuilt from a regex capture instead. That constraint is not a loss:
-# OAuth requires a redirect_uri allowlist anyway, and this is one.
+# OAuth requires an allowlist of callback URLs, and this is it. The
+# values are compared after njs/oauth.js has percent-decoded the
+# incoming redirect_uri into $oauth_redirect_uri, so they are written
+# here as plain URLs rather than as encoded patterns.
 #
-# Anything not matched yields "" and /oauth/authorize answers 400. If a
-# client uses a different callback, read the rejected value out of the
-# access log and add a line here.
-map $arg_redirect_uri $oauth_redirect {
-    default "";
-    "~*^https%3A%2F%2F(?<cb>claude\.(?:ai|com))%2Fapi%2Fmcp%2Fauth_callback$"
-        "https://$cb/api/mcp/auth_callback";
+# Anything not listed yields 0 and /oauth/authorize answers 400. If a
+# client uses a different callback, the rejected value is written to the
+# error log; add it here and reload.
+js_var $oauth_redirect_uri;
+
+map $oauth_redirect_uri $oauth_redirect_allowed {
+    default                                     0;
+    "https://claude.ai/api/mcp/auth_callback"   1;
+    "https://claude.com/api/mcp/auth_callback"  1;
     # Local testing with a stub client.
-    "~*^http%3A%2F%2F(?<lh>localhost(?::[0-9]+)?)%2Fcallback$"
-        "http://$lh/callback";
+    "http://localhost:8080/callback"            1;
 }
 
 limit_req_zone  $mcp_client         zone=per_client:10m rate=120r/m;
@@ -198,33 +199,78 @@ server {
     proxy_set_header Authorization "Bearer ${INTERNAL_TOKEN}";
 
     # -----------------------------------------------------------------
+    # Access-phase helpers for /mcp
+    # -----------------------------------------------------------------
+    # The bearer comparison itself. Reached only as an auth_request
+    # subrequest, never from outside. A rewrite-phase `return` is correct
+    # in here: the parent request has already passed preaccess and been
+    # charged to the rate limits, so nothing is skipped by answering
+    # early at this point.
+    location = /internal/mcp-auth {
+        internal;
+        if ($mcp_client = "") {
+            return 401;
+        }
+        return 204;
+    }
+
+    # The bodies for the two rejections. error_page sends the request
+    # here after the limits have been applied.
+    location @mcp_unauthorized {
+        # resource_metadata is the OAuth discovery hook (RFC 9728). A
+        # client that cannot send a static bearer token reads it from
+        # here and starts the discovery sequence documented in the OAuth
+        # facade section below. Clients that do send a static token never
+        # look at it.
+        add_header WWW-Authenticate 'Bearer realm="estonian-mcp", resource_metadata="https://${DOMAIN}${HTTPS_PORT_SUFFIX}/.well-known/oauth-protected-resource"' always;
+        # add_header does not merge across levels: naming one here drops
+        # the server-level HSTS, and an unauthenticated probe is often a
+        # client's very first request.
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        return 401 '{"error":"unauthorized"}';
+    }
+
+    location @mcp_method_not_allowed {
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        return 405 '{"error":"method_not_allowed"}';
+    }
+
+    # -----------------------------------------------------------------
     # The MCP endpoint: the only authenticated path
     # -----------------------------------------------------------------
+    # PHASE ORDER IS LOAD-BEARING HERE. nginx evaluates limit_req and
+    # limit_conn in the PREACCESS phase, which comes after REWRITE. A
+    # request finalized by `return` inside an `if` is answered during
+    # rewrite and never reaches preaccess, so it is never rate limited.
+    # Rejecting unauthenticated traffic that way would leave exactly the
+    # floods this proxy is meant to absorb running unmetered.
+    #
+    # So neither the method check nor the bearer check may use `return`
+    # here. Both live in the ACCESS phase instead, which runs after
+    # preaccess: limit_except for the method, auth_request for the token.
+    # The 401 and 405 bodies come from named locations via error_page.
     location /mcp {
-        limit_req zone=per_ip burst=60 nodelay;
-
-        # Streamable HTTP uses POST for calls, GET for the SSE stream,
-        # and DELETE to end a session.
-        if ($request_method !~ ^(GET|POST|DELETE|OPTIONS)$) {
-            return 405 '{"error":"method_not_allowed"}';
-        }
-
-        if ($mcp_client = "") {
-            # resource_metadata is the OAuth discovery hook (RFC 9728).
-            # A client that cannot send a static bearer token reads it
-            # from here and starts the discovery sequence documented in
-            # the OAuth facade section below. Clients that do send a
-            # static token never look at it.
-            add_header WWW-Authenticate 'Bearer realm="estonian-mcp", resource_metadata="https://${DOMAIN}${HTTPS_PORT_SUFFIX}/.well-known/oauth-protected-resource"' always;
-            # add_header does not merge across levels either: naming one
-            # here drops the server-level HSTS, and an unauthenticated
-            # probe is often a client's very first request.
-            add_header Strict-Transport-Security "max-age=31536000" always;
-            return 401 '{"error":"unauthorized"}';
-        }
-
+        limit_req  zone=per_ip     burst=60 nodelay;
         limit_req  zone=per_client burst=60 nodelay;
         limit_conn conn_client 8;
+
+        # Streamable HTTP uses POST for calls, GET for the SSE stream,
+        # and DELETE to end a session. limit_except applies its contents
+        # to every method NOT listed, and `deny` is an access-phase
+        # directive, so the limits above have already been charged.
+        limit_except GET POST DELETE OPTIONS {
+            deny all;
+        }
+
+        # The bearer check. The subrequest target does the comparison;
+        # this line is what puts it in the access phase.
+        auth_request /internal/mcp-auth;
+
+        # 401 comes from auth_request. 403 can only come from the
+        # limit_except deny above, since /internal/mcp-auth answers 401
+        # or 204 and nothing else in this location denies.
+        error_page 401 = @mcp_unauthorized;
+        error_page 403 = @mcp_method_not_allowed;
 
         proxy_pass http://$upstream_app$request_uri;
 
@@ -309,16 +355,16 @@ server {
     # described on /oauth/token below: the `return 302` fires before
     # authentication runs. The redirect would have to move behind a
     # proxy_pass the same way the token body did.
+    # js_content rather than `return`, for the phase reason given on
+    # /mcp. Both branches here, the 302 and the 400, would otherwise be
+    # answered during rewrite and skip the rate limit entirely.
+    #
+    # njs also decodes redirect_uri properly and re-encodes state when
+    # building the callback URL, which nginx config cannot do.
     location = /oauth/authorize {
         limit_req zone=per_ip burst=20 nodelay;
-
-        if ($oauth_redirect = "") {
-            return 400 '{"error":"invalid_request","error_description":"redirect_uri is not in the allowlist"}';
-        }
-        # $arg_state is deliberately passed back still percent-encoded:
-        # it goes straight into a query string, so re-encoding it would
-        # corrupt it.
-        return 302 "$oauth_redirect?code=${OAUTH_CODE}&state=$arg_state";
+        set $oauth_code "${OAUTH_CODE}";
+        js_content oauth.authorize;
     }
 
     # The only endpoint that matters: client authentication happens here
@@ -360,12 +406,20 @@ server {
     # Proxying that POST through would answer 200 with a page of HTML,
     # which looks like a working server to the client and hides the
     # mistake. Fail it instead, and name the right path.
+    #
+    # limit_except rather than an `if`, for the phase reason given on
+    # /mcp: a rewrite-phase `return` would skip the rate limit.
     location = / {
         limit_req zone=per_ip burst=60 nodelay;
-        if ($request_method !~ ^(GET|HEAD)$) {
-            return 405 '{"error":"method_not_allowed","message":"The MCP endpoint is /mcp, not /"}';
+        limit_except GET HEAD {
+            deny all;
         }
+        error_page 403 = @root_method_not_allowed;
         proxy_pass http://$upstream_app$request_uri;
+    }
+
+    location @root_method_not_allowed {
+        return 405 '{"error":"method_not_allowed","message":"The MCP endpoint is /mcp, not /"}';
     }
     location = /health                           { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
     location = /metrics                          { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
@@ -375,7 +429,19 @@ server {
     location = /.well-known/mcp/server-card.json { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
 
     # Anything else never reaches Python.
+    #
+    # try_files rather than a bare `return 404`, again for the phase
+    # reason: try_files runs in the TRY_FILES phase, well after
+    # preaccess, so path scanning is charged to the per-IP limit. A
+    # rewrite-phase return would let a scanner sweep the URL space
+    # unmetered.
     location / {
+        limit_req zone=per_ip burst=60 nodelay;
+        try_files /nonexistent =404;
+        error_page 404 = @not_found;
+    }
+
+    location @not_found {
         return 404 '{"error":"not_found"}';
     }
 }

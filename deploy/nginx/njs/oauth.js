@@ -29,6 +29,48 @@ var crypto = require('crypto');
 
 var TOKEN_LIFETIME_SECONDS = 31536000; // a year; there is no refresh endpoint
 
+/*
+ * The authorization endpoint. A browser lands here, and it redirects to
+ * the client's callback carrying a fixed code.
+ *
+ * This is a content-phase handler rather than an nginx `return` on
+ * purpose. `return` is answered in the rewrite phase, which precedes
+ * the preaccess phase where limit_req lives, so a config-level redirect
+ * here would be unmetered in both its success and its failure branch.
+ *
+ * It also lets the redirect_uri allowlist hold plain URLs: njs decodes
+ * the incoming value, and re-encodes state when rebuilding the callback.
+ */
+function authorize(r) {
+    var redirectUri = r.args.redirect_uri || '';
+
+    // Assign before reading the map, which resolves lazily on first read.
+    r.variables.oauth_redirect_uri = redirectUri;
+
+    if (r.variables.oauth_redirect_allowed !== '1') {
+        r.error('oauth: redirect_uri is not in the allowlist: "' + redirectUri + '"');
+        r.headersOut['Content-Type'] = 'application/json';
+        r.return(400, JSON.stringify({
+            error: 'invalid_request',
+            error_description: 'redirect_uri is not in the allowlist'
+        }));
+        return;
+    }
+
+    var target = redirectUri
+        + (redirectUri.indexOf('?') < 0 ? '?' : '&')
+        + 'code=' + encodeURIComponent(r.variables.oauth_code || '');
+
+    var state = r.args.state;
+    if (state !== undefined && state !== '') {
+        target += '&state=' + encodeURIComponent(state);
+    }
+
+    // For a 3xx, njs uses the second argument as the Location header.
+    // Assigning r.headersOut.Location instead leaves it empty.
+    r.return(302, target);
+}
+
 function token(r) {
     // Preflight never carries credentials, so answer it before anything
     // else looks for them.
@@ -193,4 +235,4 @@ function fail(r, status, code, description, challenge) {
     }));
 }
 
-export default { token };
+export default { authorize, token };
