@@ -13,3 +13,6 @@ build/
 .env
 deploy/nginx/secrets/*.map
 deploy/letsencrypt/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
