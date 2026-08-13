@@ -12,6 +12,7 @@ build/
 # committed; the real ones never are.
 .env
 deploy/nginx/secrets/*.map
+deploy/nginx/secrets/*.htpasswd
 deploy/letsencrypt/
 .vscode/*
 !.vscode/extensions.json

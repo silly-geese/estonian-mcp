@@ -1,55 +1,42 @@
 #!/bin/sh
-# Mint a client token and append it to the nginx token map.
+# Mint a static bearer token for a client that can send an
+# Authorization header (Claude Code, curl, a script).
 #
-#   ./deploy/new-token.sh acme-corp
+#   ./deploy/new-token.sh my-laptop
 #
-# Prints the token once. It is stored in cleartext in
-# deploy/nginx/secrets/tokens.map (that file is gitignored and is what nginx
-# compares against), so you can always look it up again there - but hand
-# it to the client now rather than mailing the map file around.
+# For the Claude custom connector use ./deploy/new-oauth-client.sh
+# instead: it cannot send a static header and needs OAuth credentials
+# as well.
+#
+# The token is stored in plain text in the token map, which is what
+# nginx compares against, so you can look it up again there. Hand it to
+# the client now rather than mailing the map file around.
 
 set -eu
 
 cd "$(dirname "$0")/.."
+# shellcheck disable=SC1091
+. ./deploy/lib.sh
 
 CLIENT="${1:-}"
-if [ -z "$CLIENT" ]; then
-    echo "usage: $0 <client-id>" >&2
+require_client_id "$CLIENT"
+
+ensure_secrets_dir
+
+if client_exists "$CLIENT"; then
+    echo "client '$CLIENT' already has a token in $TOKENS_MAP" >&2
+    echo "Remove it first with:  ./deploy/revoke-client.sh $CLIENT" >&2
     exit 1
 fi
 
-case "$CLIENT" in
-    *[!a-zA-Z0-9_-]*)
-        echo "client id must be alphanumeric, dash or underscore only" >&2
-        exit 1
-        ;;
-esac
+TOKEN="$(rand40)"
+add_bearer_token "$TOKEN" "$CLIENT"
 
-MAP=deploy/nginx/secrets/tokens.map
+cat <<EOF
+Added client '$CLIENT'.
 
-if [ -f "$MAP" ] && grep -qE "[[:space:]]$CLIENT;[[:space:]]*\$" "$MAP"; then
-    echo "client '$CLIENT' already has a token in $MAP" >&2
-    exit 1
-fi
+  Token: $TOKEN
 
-# Strip the base64 characters that are awkward inside an nginx map key
-# or in a shell one-liner, then take a fixed width. ~40 chars of
-# alphanumeric is comfortably over 200 bits.
-TOKEN="$(openssl rand -base64 48 | tr -d '=+/\n' | cut -c1-40)"
-
-# The directory must exist before compose starts, otherwise Docker
-# creates it itself and the bind mount can end up owned by root.
-mkdir -p "$(dirname "$MAP")"
-
-if [ ! -f "$MAP" ]; then
-    echo "# Bearer credential -> client id. See tokens.map.example." > "$MAP"
-fi
-
-printf '"%s"   %s;\n' "$TOKEN" "$CLIENT" >> "$MAP"
-
-echo "Added client '$CLIENT'."
-echo
-echo "  Token: $TOKEN"
-echo
-echo "Apply it:   docker compose exec nginx nginx -s reload"
-echo "Client use: Authorization: Bearer $TOKEN"
+Apply it:   docker compose exec nginx nginx -s reload
+Client use: Authorization: Bearer $TOKEN
+EOF

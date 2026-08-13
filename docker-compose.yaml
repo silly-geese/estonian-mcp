@@ -58,10 +58,16 @@ services:
       # HTTPS_PORT_SUFFIX that the redirect in the template uses. Must
       # match the host-side port above or the redirect points nowhere.
       HTTPS_PORT: ${HTTPS_PORT:-443}
+      # OAuth facade. Access tokens are NOT here: they live in
+      # secrets/oauth_tokens.map, one for each client, so adding a
+      # client only needs a reload. The authorization code is not
+      # verified by anything and carries no security, hence the
+      # harmless default.
+      OAUTH_CODE: ${OAUTH_CODE:-authorized}
       # The official image's envsubst step would otherwise blank every
       # nginx runtime variable ($host, $remote_addr, $mcp_client, ...)
       # in the template. This filter restricts substitution to ours.
-      NGINX_ENVSUBST_FILTER: "^(DOMAIN|INTERNAL_TOKEN|HTTPS_PORT_SUFFIX)$$"
+      NGINX_ENVSUBST_FILTER: "^(DOMAIN|INTERNAL_TOKEN|HTTPS_PORT_SUFFIX|OAUTH_CODE)$$"
     volumes:
       - ./deploy/nginx/templates:/etc/nginx/templates:ro
       # Directory, not the tokens.map file itself. A single-file bind

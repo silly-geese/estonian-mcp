@@ -189,14 +189,31 @@ self-signed certificate for local tests.
 
 > **CAUTION: Do not use a self-signed certificate on a public host.**
 
-## 6 Client tokens
+## 6 Clients
 
-### 6.1 To add a client
+### 6.1 The two types of client
 
-1. Make the token:
+Each client has a name. The name is its identity: it shows in the
+access log, it has its own rate limit, and you can revoke it alone.
+
+There are two types. Use the correct script for the type.
+
+| Type | Example | Script |
+| --- | --- | --- |
+| Sends an `Authorization` header | Claude Code, curl | `new-token.sh` |
+| Cannot send a header, uses OAuth | Claude custom connector | `new-oauth-client.sh` |
+
+An OAuth client is a normal client after the OAuth steps. It gets its
+own access token. Thus the log, the rate limit and the revocation
+operate the same for both types.
+
+### 6.2 To add a client
+
+1. Make the credentials. Use one of these two commands:
 
    ```sh
    ./deploy/new-token.sh partner-acme
+   ./deploy/new-oauth-client.sh partner-acme
    ```
 
 2. Reload nginx:
@@ -205,15 +222,27 @@ self-signed certificate for local tests.
    docker compose exec nginx nginx -s reload
    ```
 
-### 6.2 To remove a client
+### 6.3 To remove a client
 
-1. Delete the line for that client from `deploy/nginx/secrets/tokens.map`.
+1. Revoke the credentials:
+
+   ```sh
+   ./deploy/revoke-client.sh partner-acme
+   ```
+
 2. Reload nginx.
 
-To change a token, remove the client and then add the client again. A
-change of a token does not need a restart. It does not change the app.
+A client can have credentials in three files. The script removes all of
+them. Do not delete the lines by hand: one file that you forget leaves
+a usable way in.
 
-### 6.3 Token security
+> **CAUTION: The old credentials continue to operate until you reload
+> nginx.**
+
+To change the credentials, revoke the client and then add the client
+again. This does not need a restart, and it does not change the app.
+
+### 6.4 Token security
 
 The `tokens.map` file contains the tokens in plain text. Git does not
 store this file.
@@ -223,7 +252,84 @@ constant-time comparison. But each token has 40 random characters, and
 thus a remote timing attack is not possible in practice. Keep the file
 secret.
 
-## 7 Certificate renewal
+## 7 OAuth for the Claude connector
+
+### 7.1 General
+
+Some clients cannot send a static `Authorization` header. The Claude
+custom connector is one of them. It does OAuth discovery instead.
+
+nginx answers that discovery with a facade. The facade does not make
+users or sessions. It gives each OAuth client its own access token, and
+that token is also in `tokens.map`. Thus `/mcp` accepts it through the
+usual bearer path, and the client keeps its own name and its own rate
+limit.
+
+This is the sequence from a real connection attempt:
+
+| Step | Request | Answer |
+| --- | --- | --- |
+| 1 | `POST /mcp` | 401 with `resource_metadata` |
+| 2 | `GET /.well-known/oauth-protected-resource/mcp` | The resource document |
+| 3 | `GET /.well-known/oauth-protected-resource` | The same document |
+| 4 | `GET /.well-known/oauth-authorization-server` | The endpoint list |
+| 5 | `POST /oauth/token` with the client secret | The access token |
+
+The client also tries `POST /register` for Dynamic Client Registration.
+The server answers 404. This is correct. A registration endpoint must
+give a client secret to each caller, and that secret is the only
+protection the token endpoint has. You must give the client id and the
+client secret by hand.
+
+### 7.2 The three credentials
+
+The script makes three credentials for each OAuth client. They operate
+together.
+
+| Credential | File | Function |
+| --- | --- | --- |
+| Client secret | `oauth_clients.htpasswd` | nginx checks it at `/oauth/token`. This is the only real protection. |
+| Access token | `oauth_tokens.map` | The token that `/oauth/token` gives to this client. |
+| Bearer token | `tokens.map` | The same token, which `/mcp` checks. |
+
+You do not copy the access token anywhere. Only the client id and the
+client secret go into the connector.
+
+### 7.3 To set up OAuth
+
+1. Make the client:
+
+   ```sh
+   ./deploy/new-oauth-client.sh my-connector
+   ```
+
+2. Reload nginx:
+
+   ```sh
+   docker compose exec nginx nginx -s reload
+   ```
+
+3. In the connector, open **Advanced settings**. Put the client id in
+   **OAuth Client ID**. Put the client secret in **OAuth Client
+   Secret**.
+
+To remove the client, use `./deploy/revoke-client.sh my-connector` and
+reload. See section 6.3.
+
+### 7.4 Limits of the facade
+
+The client secret is the only protection. Keep this in mind:
+
+- The authorization code is a constant. It is not single-use, and it
+  does not expire.
+- nginx accepts PKCE data but does not examine it.
+- All the persons who use one connector get the same access token. The
+  facade identifies the connector, not the person.
+
+This is sufficient for one server with one operator. It is not
+sufficient if you must know which person made a request.
+
+## 8 Certificate renewal
 
 The `certbot` container makes a check two times each day. It renews the
 certificate 30 days before the expiry date.
@@ -233,14 +339,14 @@ certbot cannot send a signal to a different container. To do this,
 certbot must have the Docker socket. This is not a safe procedure, and
 thus the reload uses a timer.
 
-### 7.1 To show the certificate status
+### 8.1 To show the certificate status
 
 ```sh
 docker compose exec certbot certbot certificates
 docker compose logs certbot
 ```
 
-### 7.2 To renew the certificate immediately
+### 8.2 To renew the certificate immediately
 
 1. Start the renewal:
 
@@ -255,7 +361,7 @@ docker compose logs certbot
    docker compose exec nginx nginx -s reload
    ```
 
-## 8 Changes to the limits
+## 9 Changes to the limits
 
 The limits are in
 `deploy/nginx/templates/mcp.conf.template`.
@@ -267,7 +373,7 @@ The limits are in
 | Open streams for each client | 8 | `limit_conn conn_client` |
 | Maximum size of a request | 4 MB | `client_max_body_size` |
 
-### 8.1 To apply a change
+### 9.1 To apply a change
 
 ```sh
 docker compose up -d --force-recreate nginx
@@ -277,7 +383,7 @@ docker compose up -d --force-recreate nginx
 > configuration file from the template when it starts. A reload does
 > not make the file again.**
 
-## 9 Notes
+## 10 Notes
 
 - The `/health` and `/metrics` paths stay open to all clients. This is
   the same behaviour as the `server.py` file. To close `/metrics`, add
@@ -307,9 +413,9 @@ docker compose up -d --force-recreate nginx
   these files to nginx. Do this only if these requests become a large
   part of the traffic.
 
-## 10 Troubleshooting
+## 11 Troubleshooting
 
-### 10.1 All clients get status 401
+### 11.1 All clients get status 401
 
 nginx starts even if it finds no token file. In this condition, nginx
 refuses all clients. This is intentional. If nginx stops, the ACME
@@ -321,7 +427,7 @@ certificate.
    `.map`. nginx reads only these files.
 3. Reload nginx.
 
-## 11 Reference
+## 12 Reference
 
 - Server code and the internal authentication: [`server.py`](../server.py)
 - Compose configuration: [`docker-compose.yaml`](../docker-compose.yaml)
@@ -334,4 +440,7 @@ Scripts:
 | --- | --- |
 | [`init-letsencrypt.sh`](init-letsencrypt.sh) | Gets the first Let's Encrypt certificate. |
 | [`local-cert.sh`](local-cert.sh) | Makes a self-signed certificate for local tests. |
-| [`new-token.sh`](new-token.sh) | Makes a client token. |
+| [`new-token.sh`](new-token.sh) | Makes a token for a client that sends a header. |
+| [`new-oauth-client.sh`](new-oauth-client.sh) | Makes the credentials for an OAuth client. |
+| [`revoke-client.sh`](revoke-client.sh) | Removes all the credentials of one client. |
+| [`lib.sh`](lib.sh) | Shared functions. The scripts source this file. |
