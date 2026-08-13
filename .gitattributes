@@ -7,6 +7,7 @@
 *.template      text eol=lf
 Dockerfile      text eol=lf
 *.map           text eol=lf
+*.htpasswd      text eol=lf
 *.map.example   text eol=lf
 docker-compose.yaml text eol=lf
 .env.example    text eol=lf

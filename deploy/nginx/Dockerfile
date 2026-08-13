@@ -9,7 +9,8 @@
 # Everything else (the config template, the token map, the certificates)
 # is bind-mounted at runtime so it can change without a rebuild.
 # Stable branch, minor pinned so Dependabot can offer the patch bumps.
-# 1.27 is out of support and carries known CVEs.
+# Keep it on a supported branch: out-of-support branches stop getting
+# security fixes and the image starts accumulating CVEs.
 FROM nginx:1.30-alpine
 
 RUN rm -f /etc/nginx/conf.d/default.conf
