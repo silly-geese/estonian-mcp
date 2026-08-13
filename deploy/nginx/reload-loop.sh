@@ -7,9 +7,15 @@
 # 6-hourly reload has ~120 reload opportunities before the old
 # certificate would expire.
 #
-# This script is sourced by the official entrypoint BEFORE nginx starts,
-# so it must background itself and return immediately. The subshell is
-# reparented to the nginx master (PID 1) and dies with the container.
+# The official entrypoint runs this BEFORE nginx starts, so it must
+# background itself and hand control straight back. The subshell outlives
+# it, gets reparented to PID 1, and dies with the container.
+#
+# The entrypoint dispatches by extension: it EXECUTES *.sh as a
+# subprocess and SOURCES *.envsh into its own shell. This file is a .sh,
+# so it is executed and ending it with `exit` is correct. Renaming it to
+# .envsh would make that `exit` terminate the entrypoint itself and nginx
+# would never start, so the ending below works either way.
 
 set -eu
 
@@ -20,4 +26,6 @@ set -eu
     done
 ) &
 
-exit 0
+# `return` succeeds only when sourced. When executed it fails harmlessly
+# and the exit runs instead.
+return 0 2>/dev/null || exit 0
