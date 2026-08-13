@@ -6,9 +6,9 @@
 # A client can hold credentials in up to three files, and leaving one
 # behind leaves a working way in. This removes all of them:
 #
-#   tokens.map                 the bearer token /mcp checks
-#   oauth_tokens.map           the token /oauth/token issues
-#   oauth_clients.htpasswd     the OAuth client secret
+#   tokens.map           the bearer token /mcp checks
+#   oauth_tokens.map     the token /oauth/token issues
+#   oauth_secrets.map    the digest of the OAuth client secret
 #
 # Works for plain-token clients too; the OAuth files simply have nothing
 # to remove.
@@ -22,11 +22,7 @@ cd "$(dirname "$0")/.."
 CLIENT="${1:-}"
 require_client_id "$CLIENT"
 
-FOUND=0
-client_exists "$CLIENT" && FOUND=1
-[ -f "$OAUTH_HTPASSWD" ] && grep -qE "^$CLIENT:" "$OAUTH_HTPASSWD" && FOUND=1
-
-if [ "$FOUND" -eq 0 ]; then
+if ! client_exists "$CLIENT"; then
     echo "No credentials found for '$CLIENT'." >&2
     exit 1
 fi

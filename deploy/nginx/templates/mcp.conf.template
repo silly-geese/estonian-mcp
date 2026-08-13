@@ -36,19 +36,31 @@ map $bearer_token $mcp_client {
     include   /etc/nginx/secrets/tokens*.map;
 }
 
-# 3. OAuth client id -> the access token issued to that client.
+# 3. OAuth client lookups.
 #
-#    Keyed on a header rather than on $remote_user directly, because the
-#    lookup happens in the loopback responder at the bottom of this
-#    file, which is a separate request. auth_basic on /oauth/token puts
-#    the authenticated client id in $remote_user and it is forwarded
-#    from there.
+#    Both are keyed on $oauth_client_id, which njs/oauth.js sets from
+#    the credentials in the token request. Declaring it with js_var is
+#    what makes it assignable from JavaScript.
 #
-#    Each client has its own token here, which is what keeps an OAuth
+#    Keeping these as ordinary map files means credentials still live in
+#    one place and in one format, and adding a client is still a reload.
+js_path "/etc/nginx/njs/";
+js_import oauth from oauth.js;
+js_var $oauth_client_id;
+
+#    SHA-256 of the client secret, hex. The secret itself is never
+#    stored. A 40-character random secret has no need of a slow KDF, so
+#    a plain digest is the right tool.
+map $oauth_client_id $oauth_client_secret {
+    default   "";
+    include   /etc/nginx/secrets/oauth_secrets*.map;
+}
+
+#    Each client has its own access token, which is what keeps an OAuth
 #    client an ordinary client everywhere downstream: its own name in
 #    the access log, its own rate-limit bucket, and revocation that does
 #    not disturb anyone else.
-map $http_x_oauth_client $oauth_access_token {
+map $oauth_client_id $oauth_access_token {
     default   "";
     include   /etc/nginx/secrets/oauth_tokens*.map;
 }
@@ -276,16 +288,16 @@ server {
         add_header Cache-Control "public, max-age=3600" always;
         # No registration_endpoint: see above.
         #
-        # token_endpoint_auth_methods_supported deliberately lists ONLY
-        # client_secret_basic. nginx cannot read a request body, so a
-        # client that sent its secret as a form field could not be
-        # authenticated at all. Advertising one method steers the client
-        # to the Authorization header, which auth_basic can check.
+        # client_secret_post is listed first because that is what Claude's
+        # connector uses. It picks its method without consulting this
+        # list, so the list documents what the server accepts rather than
+        # steering anything. client_secret_basic stays for curl and for
+        # conforming clients; the token handler accepts both.
         #
-        # Both grants are advertised because the token endpoint below is
-        # grant-blind: it cannot see grant_type either way, so it answers
-        # the same for both. Whichever the connector picks, it works.
-        return 200 '{"issuer":"https://${DOMAIN}${HTTPS_PORT_SUFFIX}","authorization_endpoint":"https://${DOMAIN}${HTTPS_PORT_SUFFIX}/oauth/authorize","token_endpoint":"https://${DOMAIN}${HTTPS_PORT_SUFFIX}/oauth/token","response_types_supported":["code"],"grant_types_supported":["authorization_code","client_credentials"],"code_challenge_methods_supported":["S256"],"token_endpoint_auth_methods_supported":["client_secret_basic"],"scopes_supported":["mcp"]}';
+        # Both grants are advertised because the token endpoint does not
+        # branch on grant_type: it answers the same for either, so
+        # whichever the connector picks, it works.
+        return 200 '{"issuer":"https://${DOMAIN}${HTTPS_PORT_SUFFIX}","authorization_endpoint":"https://${DOMAIN}${HTTPS_PORT_SUFFIX}/oauth/authorize","token_endpoint":"https://${DOMAIN}${HTTPS_PORT_SUFFIX}/oauth/token","response_types_supported":["code"],"grant_types_supported":["authorization_code","client_credentials"],"code_challenge_methods_supported":["S256"],"token_endpoint_auth_methods_supported":["client_secret_post","client_secret_basic"],"scopes_supported":["mcp"]}';
     }
 
     # Browser redirect. Returns a fixed code that the token endpoint does
@@ -309,44 +321,30 @@ server {
         return 302 "$oauth_redirect?code=${OAUTH_CODE}&state=$arg_state";
     }
 
-    # The only endpoint that matters. auth_basic here IS the OAuth client
-    # authentication: client_secret_basic sends exactly an HTTP Basic
-    # header of client_id:client_secret, so nginx validates the client
-    # secret with no scripting. Everything this facade protects, it
-    # protects here.
+    # The only endpoint that matters: client authentication happens here
+    # and nowhere else, so everything this facade protects, it protects
+    # in njs/oauth.js.
     #
-    # DO NOT answer this location with `return`. nginx runs `return` in
-    # the REWRITE phase, which is BEFORE the ACCESS phase that auth_basic
-    # belongs to, so the response goes out before authentication ever
-    # runs and the access token reaches unauthenticated callers.
+    # It has to be js_content rather than nginx config. The client secret
+    # arrives in the request body under client_secret_post, and nginx
+    # core cannot read a body, so auth_basic would never see it. njs also
+    # accepts client_secret_basic, which keeps curl and any conforming
+    # client working.
     #
-    # proxy_pass is a CONTENT phase handler, which runs after access. So
-    # the body comes from the loopback-only server at the bottom of this
-    # file, and auth_basic is genuinely in front of it.
+    # js_content is a CONTENT phase handler, so the phase-order trap that
+    # applies to `return` plus auth_basic cannot arise here: nothing
+    # answers before the handler runs.
     location = /oauth/token {
         limit_req zone=per_ip burst=20 nodelay;
 
-        # Preflight must stay unauthenticated: browsers never send
-        # credentials on OPTIONS. This `return` runs in the rewrite phase
-        # before auth_basic, which is correct here and only here.
-        if ($request_method = OPTIONS) {
-            add_header Access-Control-Allow-Origin  "*" always;
-            add_header Access-Control-Allow-Headers "authorization,content-type" always;
-            add_header Access-Control-Allow-Methods "POST,OPTIONS" always;
-            return 204;
-        }
+        # A token request is a few hundred bytes. Cap it, and keep the
+        # buffer large enough that the body stays in memory: njs reads it
+        # through r.requestText, which cannot see a body that nginx
+        # spilled to a temp file.
+        client_max_body_size   8k;
+        client_body_buffer_size 16k;
 
-        auth_basic "estonian-mcp oauth client";
-        auth_basic_user_file /etc/nginx/secrets/oauth_clients.htpasswd;
-
-        proxy_pass http://127.0.0.1:8091/token;
-        # $remote_user is the client id auth_basic just verified. It
-        # selects which access token the responder returns.
-        proxy_set_header X-Oauth-Client $remote_user;
-        # Naming any proxy_set_header here discards the inherited set,
-        # including the server-level Authorization override. Clear it
-        # explicitly so the client's Basic credentials are not forwarded.
-        proxy_set_header Authorization "";
+        js_content oauth.token;
     }
 
     # -----------------------------------------------------------------
@@ -357,7 +355,18 @@ server {
     # -----------------------------------------------------------------
     # They inherit the server-level proxy_set_header block above, so the
     # app sees the internal token on these too and stays in bearer mode.
-    location = /                                 { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
+    # The landing page is for humans with a browser. An MCP client that
+    # POSTs here has the wrong URL: the endpoint is /mcp, not the root.
+    # Proxying that POST through would answer 200 with a page of HTML,
+    # which looks like a working server to the client and hides the
+    # mistake. Fail it instead, and name the right path.
+    location = / {
+        limit_req zone=per_ip burst=60 nodelay;
+        if ($request_method !~ ^(GET|HEAD)$) {
+            return 405 '{"error":"method_not_allowed","message":"The MCP endpoint is /mcp, not /"}';
+        }
+        proxy_pass http://$upstream_app$request_uri;
+    }
     location = /health                           { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
     location = /metrics                          { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
     location = /favicon.ico                      { limit_req zone=per_ip burst=60 nodelay; proxy_pass http://$upstream_app$request_uri; }
@@ -369,37 +378,4 @@ server {
     location / {
         return 404 '{"error":"not_found"}';
     }
-}
-
-# ---------------------------------------------------------------------
-# Loopback-only token responder
-# ---------------------------------------------------------------------
-# Bound to 127.0.0.1 inside the container, so nothing outside it can
-# reach this. It exists for one reason: /oauth/token has to answer from
-# the content phase for auth_basic to run first. See the long comment on
-# that location above.
-server {
-    listen 127.0.0.1:8091;
-    access_log off;
-    default_type application/json;
-
-    location = /token {
-        # RFC 6749 requires no-store on token responses.
-        add_header Cache-Control "no-store" always;
-        add_header Pragma "no-cache" always;
-        add_header Access-Control-Allow-Origin "*" always;
-
-        # The client authenticated but has no token in oauth_tokens.map.
-        # Fail loudly rather than issuing an empty access_token, which
-        # would fail later at /mcp with a confusing 401.
-        if ($oauth_access_token = "") {
-            return 500 '{"error":"server_error","error_description":"no access token is mapped for this client"}';
-        }
-
-        # expires_in is a year on purpose. A short lifetime would make
-        # the client try to refresh, and there is no refresh endpoint.
-        return 200 '{"access_token":"$oauth_access_token","token_type":"Bearer","expires_in":31536000,"scope":"mcp"}';
-    }
-
-    location / { return 404 '{"error":"not_found"}'; }
 }

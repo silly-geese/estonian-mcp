@@ -288,14 +288,32 @@ together.
 
 | Credential | File | Function |
 | --- | --- | --- |
-| Client secret | `oauth_clients.htpasswd` | nginx checks it at `/oauth/token`. This is the only real protection. |
+| Client secret | `oauth_secrets.map` | nginx checks it at `/oauth/token`. This is the only real protection. |
 | Access token | `oauth_tokens.map` | The token that `/oauth/token` gives to this client. |
 | Bearer token | `tokens.map` | The same token, which `/mcp` checks. |
 
 You do not copy the access token anywhere. Only the client id and the
 client secret go into the connector.
 
-### 7.3 To set up OAuth
+`oauth_secrets.map` holds the SHA-256 of the secret, not the secret. If
+you lose the secret, make the client again.
+
+### 7.3 How nginx reads the client secret
+
+Claude sends the client secret in the request body, not in an
+`Authorization` header. nginx cannot read a request body. Thus the
+token endpoint uses njs, which is the JavaScript engine of nginx.
+
+njs is not Node. It is a module from the nginx team, and it operates in
+the nginx worker process. There is no other program and no other
+container.
+
+The file is [`njs/oauth.js`](nginx/njs/oauth.js). It reads the
+credentials, compares the digest of the secret, and gives back the
+access token of that client. It accepts a header too, thus `curl` and
+other clients continue to operate.
+
+### 7.4 To set up OAuth
 
 1. Make the client:
 
@@ -316,7 +334,7 @@ client secret go into the connector.
 To remove the client, use `./deploy/revoke-client.sh my-connector` and
 reload. See section 6.3.
 
-### 7.4 Limits of the facade
+### 7.5 Limits of the facade
 
 The client secret is the only protection. Keep this in mind:
 
@@ -417,39 +435,23 @@ docker compose up -d --force-recreate nginx
 
 ### 11.1 The connector gets status 401 at /oauth/token
 
-The access log records the type of the `Authorization` header in the
-`auth=` field. It does not record the credential. Read that field
-first, because the two causes need opposite corrections.
-
-```
-"POST /oauth/token" 401 ... auth=none    <- the client sent nothing
-"POST /oauth/token" 401 ... auth=basic   <- the client sent a wrong secret
-"POST /oauth/token" 200 ... auth=basic   <- correct
-```
-
-**If the field shows `auth=none`**, the connector has no client id and
-no client secret. The fields in **Advanced settings** are empty, or you
-did not make the client.
-
-1. Make the client:
-
-   ```sh
-   ./deploy/new-oauth-client.sh my-connector
-   ```
-
-2. Reload nginx.
-3. Put the client id and the client secret in **Advanced settings**.
-4. Connect again.
-
-**If the field shows `auth=basic`**, the secret is not correct. nginx
-also writes the reason to the error log:
+The token handler writes the reason to the error log. Read it first:
 
 ```sh
-docker compose logs nginx | grep 'password mismatch'
+docker compose logs nginx | grep 'oauth:'
 ```
 
-Make the client again with `new-oauth-client.sh`, reload nginx, and put
-the new secret in the connector.
+| Message | Cause | Correction |
+| --- | --- | --- |
+| `token request carried no client credentials` | The **Advanced settings** fields are empty. | Put the client id and the client secret in the connector. |
+| `unknown client "X"` | No client with that id. | Make it with `new-oauth-client.sh X`, then reload. |
+| `wrong secret for client "X"` | The secret does not agree. | Make the client again, then put the new secret in the connector. |
+| `no access token is mapped for client "X"` | The files do not agree with each other. | Make the client again. This rewrites all three files. |
+
+> **NOTE: Do not use the `auth=` field in the access log to find this
+> fault. Claude sends the secret in the request body, so `auth=none` is
+> correct for a good request. The field shows the type of the
+> `Authorization` header only, which is useful for `/mcp`.**
 
 ### 11.2 All clients get status 401
 
@@ -468,6 +470,7 @@ certificate.
 - Server code and the internal authentication: [`server.py`](../server.py)
 - Compose configuration: [`docker-compose.yaml`](../docker-compose.yaml)
 - nginx configuration: [`mcp.conf.template`](nginx/templates/mcp.conf.template)
+- Token endpoint handler: [`njs/oauth.js`](nginx/njs/oauth.js)
 - Port suffix for the redirect: [`https-port-suffix.envsh`](nginx/https-port-suffix.envsh)
 
 Scripts:
