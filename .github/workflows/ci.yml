@@ -82,6 +82,28 @@ jobs:
       - name: Run officialese / term-consistency tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_officialese.py
 
+      - name: Run resource-availability tests (issues #37, #38)
+        run: uv run --python ${{ matrix.python-version }} python tests/test_resources.py
+
+      # The setup path a source install actually follows. Runs last so a
+      # break here is unambiguous, and proves the script is idempotent
+      # against resources CI already fetched by other means.
+      - name: Verify scripts/fetch_resources.py is idempotent
+        run: uv run --python ${{ matrix.python-version }} python scripts/fetch_resources.py
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+      # Config lives in ruff.toml and encodes this repo's actual
+      # conventions, so a failure here means a real deviation rather than
+      # a disagreement about style.
+      - name: ruff
+        run: uvx ruff check . --output-format=github
+
   docker:
     runs-on: ubuntu-latest
     needs: smoke
@@ -147,6 +169,21 @@ jobs:
           echo "--- tools/call find_related_words (fastText, must not error)"
           call_tool find_related_words '{"word":"kohv"}' \
             | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',{}); assert not r.get('isError'), 'find_related_words errored: '+str(r); print('find_related_words OK')"
+
+          # issue #37: check_compounds needs NLTK punkt_tab, which uv.lock
+          # cannot install. The image worked by accident; assert it works by
+          # construction so a base-image change cannot silently break every
+          # one-click user.
+          echo "--- tools/call check_compounds (punkt_tab, must not error)"
+          call_tool check_compounds '{"text":"Kooli maja on suur."}' \
+            | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',{}); assert not r.get('isError'), 'check_compounds errored: '+str(r); print('check_compounds OK')"
+
+          # issue #38: the image must run this tool at FULL strength. A
+          # degraded:true here means WordNet went missing from the image and
+          # callers would be getting confident-but-partial answers.
+          echo "--- tools/call check_term_consistency (must NOT be degraded)"
+          call_tool check_term_consistency '{"text":"Andmestik ja teadusandmestik."}' \
+            | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',{}); assert not r.get('isError'), 'check_term_consistency errored: '+str(r); o=json.loads(r['content'][0]['text']); assert o['rules_run']['shared-wordnet-synset'] is True, 'WordNet rule did not run in the image: '+str(o['rules_run']); assert o.get('degraded') is False, 'image is serving degraded results: '+str(o); print('check_term_consistency OK, not degraded')"
 
           docker logs mcp | tail -20
           docker rm -f mcp

@@ -300,8 +300,22 @@ EstNLTK requires Python 3.10–3.13.
 git clone https://github.com/silly-geese/estonian-mcp.git
 cd estonian-mcp
 uv sync
-uv run python tests/test_smoke.py     # verify
+uv run python scripts/fetch_resources.py   # required, see below
+uv run python tests/test_smoke.py          # verify
 ```
+
+**Don't skip the `fetch_resources.py` step.** `uv sync` installs Python
+packages, but three of the things the server needs are *data*, not Python
+distributions, so they can't live in `uv.lock`: NLTK's `punkt_tab`
+tokenizer, Estonian WordNet (~26 MB), and the fastText embeddings
+(~33 MB). Without them `check_compounds` and `check_term_consistency`
+raise, `synonyms` refuses to run, and `check_term_consistency` reports
+`degraded: true`. The script is idempotent, so re-running it is free.
+
+The server **never downloads anything itself** — not at import, not on a
+tool call. That's the [privacy promise](PRIVACY.md): no outbound HTTP from
+the running process. Fetching is a separate step *you* run knowingly, and
+the Docker image does the equivalent at build time.
 
 Then wire it into your client.
 
@@ -436,16 +450,16 @@ sharpen the linguistic rules. Here's how to get started:
 2. **Set up** the environment (Python 3.10–3.13):
    ```sh
    uv sync
-   # the fastText-backed tools need the embedding model for tests:
-   curl -fsSL -o ~/.cache/estnltk-mcp/fasttext-et-medium --create-dirs \
-     "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/fasttext-et-medium"
+   # punkt_tab + WordNet + fastText — none can come from uv.lock:
+   uv run python scripts/fetch_resources.py
    export ESTNLTK_MCP_FASTTEXT_PATH=~/.cache/estnltk-mcp/fasttext-et-medium
    ```
 3. **Create a feature branch** (`git checkout -b feature/my-feature`).
 4. **Run the tests**, both must pass:
    ```sh
-   uv run python tests/test_smoke.py   # tool behaviour
-   uv run python tests/test_http.py    # transport, auth, /metrics
+   uv run python tests/test_smoke.py       # tool behaviour
+   uv run python tests/test_http.py        # transport, auth, /metrics
+   uv run python tests/test_resources.py   # resource-availability handling
    ```
 5. **Commit** and open a pull request against `master`. CI (smoke on
    Python 3.11 + 3.13, plus a Docker build/boot check) must be green

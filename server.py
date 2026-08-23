@@ -64,7 +64,7 @@ DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.5.2"
+SERVER_VERSION = "0.5.3"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -214,6 +214,29 @@ def _Text():
 def _vabamorf():
     from estnltk.vabamorf.morf import Vabamorf
     return Vabamorf.instance()
+
+
+@lru_cache(maxsize=1)
+def _wordnet_available() -> bool:
+    """True if Estonian WordNet is already on disk, WITHOUT downloading it.
+
+    `estnltk.downloader.get_resource_paths(..., download_missing=False)` is a
+    pure filesystem lookup against the local resources index — no network
+    call, no interactive prompt.
+
+    This matters for more than tidiness. Calling `Wordnet()` on a machine
+    that lacks the resource makes EstNLTK try to FETCH it, which would
+    breach the "no outbound HTTP calls" promise in PRIVACY.md, and it
+    prints its confirmation prompt to STDOUT — which under stdio transport
+    IS the MCP protocol channel, so it corrupts the stream. Checking first
+    means the running server never attempts either.
+    """
+    try:
+        from estnltk.downloader import get_resource_paths
+        return bool(get_resource_paths("wordnet", only_latest=True,
+                                       download_missing=False))
+    except Exception:
+        return False
 
 
 @lru_cache(maxsize=1)
@@ -1483,6 +1506,16 @@ def synonyms(word: Annotated[str, Field(description="A single Estonian word to l
     _check_text(word, limit=MAX_WORD_CHARS, name="word")
     if any(ch.isspace() for ch in word):
         raise ValueError("synonyms expects a single word, no whitespace")
+    # Fail with an actionable message rather than letting EstNLTK try to
+    # download the resource (outbound HTTP, which PRIVACY.md rules out) and
+    # print its prompt to stdout (the MCP protocol channel under stdio).
+    if not _wordnet_available():
+        raise RuntimeError(
+            "Estonian WordNet is not installed, so synonyms cannot run. "
+            "Fetch it with: uv run python scripts/fetch_resources.py "
+            "(the server never downloads resources by itself — see "
+            "PRIVACY.md)."
+        )
     wn = _wordnet()
     synsets = wn[word] or []
     out: list[dict] = []
@@ -1519,7 +1552,7 @@ def _classify_register(text: str) -> dict:
         if _first(list(span.partofspeech)) == "S":
             noun_count += 1
         # Test against both surface form and best lemma; lower-cased.
-        lemma = (list(span.lemma)[0] if span.lemma else "").lower()
+        lemma = (_first(list(span.lemma)) or "").lower()
         surface = word.lower()
         for candidate in {surface, lemma}:
             if not candidate:
@@ -1682,7 +1715,7 @@ def _check_capitalization(text: str) -> dict:
         if word.isupper() and len(word) > 1:
             continue
 
-        lemma_lower = (list(span.lemma)[0] if span.lemma else "").lower()
+        lemma_lower = (_first(list(span.lemma)) or "").lower()
         if not lemma_lower:
             continue
 
@@ -1727,7 +1760,7 @@ def _check_capitalization(text: str) -> dict:
             next_lemma = ""
             if i + 1 < len(spans):
                 next_lemma = (
-                    list(spans[i + 1].lemma)[0] if spans[i + 1].lemma else ""
+                    _first(list(spans[i + 1].lemma)) or ""
                 ).lower()
             if next_lemma in _CULTURE_NOUNS_ET:
                 rule = "language-adjective"
@@ -1948,7 +1981,7 @@ def _check_hyphenation(word: str) -> dict:
         }
     breaks: list[int] = []
     offset = 0
-    for i, s in enumerate(syls[:-1]):
+    for _i, s in enumerate(syls[:-1]):
         offset += len(s["syllable"])
         # poolitamine rule: don't leave <2 characters at either edge of
         # the broken word.
@@ -3687,34 +3720,30 @@ def _check_term_consistency(text: str) -> dict:
 
     # --- Rule B: shared WordNet synset.
     #
-    # WordNet ships pre-downloaded in the server image, so this is a local
-    # lookup with no network access. If the resource is somehow absent,
-    # EstNLTK tries to fetch it and prompts for confirmation — which would
-    # breach the no-outbound-network posture, and, worse, writes that
-    # prompt to STDOUT, which in stdio transport IS the MCP protocol
-    # channel. Redirecting stdout to stderr for the duration keeps the
-    # protocol stream clean whatever EstNLTK decides to print;
-    # BaseException covers the EOFError / SystemExit the prompt raises
-    # when stdin is closed. Rule B then degrades to off and `rules_run`
-    # says so rather than silently returning fewer groups.
-    import contextlib
-
+    # Check the resource is on disk FIRST (_wordnet_available is a pure
+    # filesystem lookup). The old code called Wordnet() and caught the
+    # fallout, which meant that on a machine without the resource EstNLTK
+    # would attempt a download — breaching the no-outbound-HTTP promise in
+    # PRIVACY.md — and print its prompt to stdout, which under stdio
+    # transport is the MCP protocol channel. Checking first means the
+    # running server never attempts either, and Rule B just reports itself
+    # as not run.
     ranked = [w for w, _ in counts.most_common(_TERM_CONSISTENCY_WORDNET_CAP)]
     synsets_by_lemma: dict[str, set[str]] = {}
-    wordnet_ok = True
-    try:
-        with contextlib.redirect_stdout(sys.stderr):
+    wordnet_ok = _wordnet_available()
+    if wordnet_ok:
+        try:
             wn = _wordnet()
-    except BaseException:
-        wn = None
-        wordnet_ok = False
-    if wn is not None:
-        for lemma in ranked:
-            try:
-                synsets_by_lemma[lemma] = {s.name for s in (wn[lemma] or [])}
-            except BaseException:
-                synsets_by_lemma[lemma] = set()
-                wordnet_ok = False
+        except Exception:
+            wn = None
+            wordnet_ok = False
+        if wn is not None:
+            for lemma in ranked:
+                try:
+                    synsets_by_lemma[lemma] = {s.name for s in (wn[lemma] or [])}
+                except Exception:
+                    synsets_by_lemma[lemma] = set()
+                    wordnet_ok = False
 
     seen_pairs: set[tuple[str, str]] = set()
     for i, a in enumerate(ranked):
@@ -3756,12 +3785,27 @@ def _check_term_consistency(text: str) -> dict:
             "shared-compound-head": True,
             "shared-wordnet-synset": wordnet_ok,
         },
+        # Top-level so a caller cannot miss it. A partial run that reports
+        # "nothing found" reads as a clean bill of health, which is exactly
+        # how a half-strength checker misleads someone — so say it here AND
+        # in summary_estonian, not only in rules_run.
+        "degraded": not wordnet_ok,
         "summary_estonian": (
-            f"Leiti {len(groups)} rühma, kus üht asja võidakse nimetada "
-            f"mitmel viisil. Vali igas rühmas üks termin ja kasuta seda "
-            f"läbivalt."
-            if groups else
-            "Ebajärjekindlat terminikasutust ei tuvastatud."
+            (
+                f"Leiti {len(groups)} rühma, kus üht asja võidakse nimetada "
+                f"mitmel viisil. Vali igas rühmas üks termin ja kasuta seda "
+                f"läbivalt."
+                if groups else
+                "Ebajärjekindlat terminikasutust ei tuvastatud."
+            )
+            + (
+                "" if wordnet_ok else
+                " TÄHELEPANU: tulemus on osaline. Eesti WordNet ei ole "
+                "paigaldatud, seetõttu jäi tähendusrühmade reegel "
+                "käivitamata ja osa kattuvaid termineid võib olla "
+                "leidmata. Paigalda ressurss käsuga "
+                "`uv run python scripts/fetch_resources.py`."
+            )
         ),
         "note": (
             "Heuristic terminology-consistency check: 'one referent, one "
@@ -3794,6 +3838,7 @@ class _TermConsistencyResult(TypedDict, total=False):
     groups: list[dict]
     terms_analysed: int
     rules_run: dict
+    degraded: bool
     summary_estonian: str
     note: str
 
@@ -4520,8 +4565,9 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
 
 
 def _run_http(host: str, port: int, token: str | None, rate_limit: int, public_mode: bool) -> None:
-    import uvicorn  # local import; only needed in HTTP mode
     import atexit
+
+    import uvicorn  # local import; only needed in HTTP mode
 
     # Restore metrics from disk if a Fly volume (or local override) has them.
     _load_persistent_stats()

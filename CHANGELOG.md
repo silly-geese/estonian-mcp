@@ -7,6 +7,64 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-08-23
+
+Fixes both issues reported by @Kivaste against 0.5.1. Neither affected the
+hosted server or the one-click image — verified by calling both tools on
+the live deployment before changing anything — so this is a source-install
+release. #37 asked whether the image was affected too; it is not, and CI
+now asserts that rather than leaving it to luck.
+
+### Fixed
+
+- **`check_term_consistency` reported a confident negative while running at
+  half strength** ([#38](https://github.com/silly-geese/estonian-mcp/issues/38)).
+  With Estonian WordNet missing it returned "Ebajärjekindlat terminikasutust
+  ei tuvastatud" — reads as a clean bill of health — while the
+  `shared-wordnet-synset` rule never ran. The only signal was a `rules_run`
+  flag you had to know to read. Now the degradation is stated in
+  `summary_estonian` itself, in Estonian, with the command that fixes it,
+  and a top-level `degraded: true` field. As the reporter put it: a crash is
+  honest, this was not.
+- **The server no longer attempts to DOWNLOAD a missing resource.** The old
+  code called `Wordnet()` and caught the fallout, so on a machine without
+  the resource EstNLTK would try to fetch it — breaching the "no outbound
+  HTTP calls" promise in PRIVACY.md — and print its confirmation prompt to
+  stdout, which under stdio transport *is* the MCP protocol channel. A new
+  `_wordnet_available()` checks the filesystem first via
+  `get_resource_paths(download_missing=False)`, so neither can happen.
+  `synonyms` now raises a clear, actionable error instead.
+
+### Added
+
+- **`scripts/fetch_resources.py`** — the missing setup step for source
+  installs ([#37](https://github.com/silly-geese/estonian-mcp/issues/37)).
+  Fetches NLTK `punkt_tab`, Estonian WordNet and the fastText model, none of
+  which can come from `uv.lock` because they are data, not Python
+  distributions. Sets `SSL_CERT_FILE` from `certifi` first — uv-provisioned
+  interpreters ship without a CA trust store, so the documented
+  `nltk.download()` route fails with `CERTIFICATE_VERIFY_FAILED`; credit to
+  the reporter for diagnosing that. fastText is checksum-verified and moved
+  into place only after verification, so an interrupted download cannot
+  masquerade as a good model. Idempotent.
+
+  It is a script, not lazy auto-download, on purpose: the network access is
+  yours at setup time, never the server's at request time.
+
+### Changed
+
+- **Dockerfile fetches `punkt_tab` explicitly and asserts it loads.** The
+  image already worked, but by accident rather than by construction — a
+  base-image change could have removed it silently and broken
+  `check_compounds` for every one-click user.
+- **CI covers both issues.** The container test now calls `check_compounds`
+  and asserts `check_term_consistency` comes back `degraded: false`, so the
+  image can never regress into serving confident-but-partial answers. The
+  smoke matrix runs the new `tests/test_resources.py` and executes
+  `fetch_resources.py` to prove it is idempotent.
+- **README** leads the source-install path with the fetch step and explains
+  why the server never downloads anything itself.
+
 ## [0.5.2] — 2026-08-23
 
 ### Added

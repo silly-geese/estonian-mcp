@@ -52,6 +52,23 @@ RUN set +e; \
       /opt/venv/bin/python -c "from estnltk.wordnet import Wordnet; assert Wordnet()['kasutama'], 'wordnet still not loadable after mirror fallback'" ; \
     fi
 
+# NLTK punkt_tab — the sentence tokenizer EstNLTK's `sentences` layer
+# uses. It is NLTK corpus data, not a Python distribution, so `uv sync`
+# cannot install it and it is absent from uv.lock. The image happened to
+# work without an explicit fetch, but "works by accident" is not a
+# property you want in a published image: a base-image or dependency
+# change could remove it silently and break check_compounds /
+# check_term_consistency for every one-click user. Fetch it explicitly
+# and assert it loads, so the build fails loudly instead.
+# Reported as https://github.com/silly-geese/estonian-mcp/issues/37.
+RUN /opt/venv/bin/python -c "import nltk; nltk.download('punkt_tab', quiet=False)" \
+ && /opt/venv/bin/python -c "import nltk; nltk.data.find('tokenizers/punkt_tab/estonian/')" \
+ && /opt/venv/bin/python -c "\
+from estnltk import Text; \
+t = Text('Kooli maja on suur. Teine lause siin.'); \
+t.tag_layer(['sentences', 'morph_analysis']); \
+assert len(list(t.sentences)) == 2, 'sentence layer broken after punkt_tab fetch'"
+
 # Estonian fastText word embeddings, compressed to ~33 MB with a 100K
 # vocabulary. Used by find_related_words + check_compound_familiarity.
 # Built locally from Facebook's cc.et.300.bin (Grave et al. 2018,
