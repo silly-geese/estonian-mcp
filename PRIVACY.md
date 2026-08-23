@@ -35,12 +35,20 @@ account to create.
   shipped to a log aggregator, never observable by us.
 - **No analytics or telemetry.** The server makes no outbound HTTP
   calls and reports no usage to any third party.
+- **No runtime resource downloads either.** The server never fetches a
+  missing resource to fill a gap it notices — not on import, not during
+  a tool call. Availability is checked against the local filesystem, and
+  a tool whose resource is absent says so (an actionable error, or a
+  `degraded: true` result) rather than reaching for the network. On a
+  source install you fetch resources yourself, once, by running
+  `scripts/fetch_resources.py`; that network access is yours at setup
+  time, never the server's while serving.
 - **No third-party processors.** All analysis runs locally inside the
   server container. We do not call OpenAI, Anthropic, Google, or any
   other inference provider. EstNLTK and Vabamorf models are bundled
-  into the Docker image; WordNet and fastText resources are
-  pre-downloaded at image-build time and served from the container
-  filesystem.
+  into the Docker image; NLTK `punkt_tab`, WordNet and fastText
+  resources are pre-downloaded at image-build time and served from the
+  container filesystem.
 - **No cookies, no tracking, no fingerprinting.**
 - **No training.** Your inputs are not used to train any model. The
   fastText, WordNet, and morphological models bundled with the
@@ -99,4 +107,4 @@ This policy may be updated; substantive changes will appear in git
 history. The latest version is always at
 `https://github.com/silly-geese/estonian-mcp/blob/master/PRIVACY.md`.
 
-Last updated: 2026-05-10.
+Last updated: 2026-08-23.

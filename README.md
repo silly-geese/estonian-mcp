@@ -300,8 +300,22 @@ EstNLTK requires Python 3.10–3.13.
 git clone https://github.com/silly-geese/estonian-mcp.git
 cd estonian-mcp
 uv sync
-uv run python tests/test_smoke.py     # verify
+uv run python scripts/fetch_resources.py   # required, see below
+uv run python tests/test_smoke.py          # verify
 ```
+
+**Don't skip the `fetch_resources.py` step.** `uv sync` installs Python
+packages, but three of the things the server needs are *data*, not Python
+distributions, so they can't live in `uv.lock`: NLTK's `punkt_tab`
+tokenizer, Estonian WordNet (~26 MB), and the fastText embeddings
+(~33 MB). Without them `check_compounds` and `check_term_consistency`
+raise, `synonyms` refuses to run, and `check_term_consistency` reports
+`degraded: true`. The script is idempotent, so re-running it is free.
+
+The server **never downloads anything itself** — not at import, not on a
+tool call. That's the [privacy promise](PRIVACY.md): no outbound HTTP from
+the running process. Fetching is a separate step *you* run knowingly, and
+the Docker image does the equivalent at build time.
 
 Then wire it into your client.
 
@@ -410,16 +424,24 @@ Terms of service for the hosted endpoint: [TERMS.md](TERMS.md).
 
 ## Notes
 
-- Most EstNLTK models (morph, NER, spell-check) ship inside the
-  wheel, no runtime downloads.
-- WordNet is a separate ~26 MB resource (used by `synonyms`); the
-  Docker image pre-downloads it at build time so the first call
-  doesn't pause to fetch it.
+- **The server never downloads anything at runtime.** Not on import, not
+  on a tool call, not to fill a gap it notices. That's the
+  [privacy promise](PRIVACY.md). Resources are fetched at Docker build
+  time, or by you running `scripts/fetch_resources.py` on a source
+  install. If a resource is missing, tools say so — `synonyms` raises an
+  actionable error, and `check_term_consistency` returns
+  `degraded: true` with the reason in its Estonian summary rather than a
+  confident-looking partial answer.
+- Most EstNLTK models (morph, NER, spell-check) ship inside the wheel.
+  Three things don't, because they're *data*, not Python distributions,
+  so `uv.lock` can't carry them: NLTK's `punkt_tab` tokenizer, WordNet,
+  and the fastText model.
+- WordNet is a separate ~26 MB resource (used by `synonyms` and one of
+  `check_term_consistency`'s two rules).
 - The fastText model used by `find_related_words` and
   `check_compound_familiarity` is a ~33 MB compressed resource with a
   100K-word vocabulary (built locally from Facebook's cc.et.300 via
-  compress-fasttext, CC-BY-SA-3.0; see [NOTICE](NOTICE)); pre-downloaded
-  at image-build time.
+  compress-fasttext, CC-BY-SA-3.0; see [NOTICE](NOTICE)).
 - Heavy neural taggers (`estnltk_neural`, BERT-based NER) are
   intentionally not pulled in; this server stays lean and fast.
 - First call after server start incurs a one-time tag-layer load
@@ -436,16 +458,16 @@ sharpen the linguistic rules. Here's how to get started:
 2. **Set up** the environment (Python 3.10–3.13):
    ```sh
    uv sync
-   # the fastText-backed tools need the embedding model for tests:
-   curl -fsSL -o ~/.cache/estnltk-mcp/fasttext-et-medium --create-dirs \
-     "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/fasttext-et-medium"
+   # punkt_tab + WordNet + fastText — none can come from uv.lock:
+   uv run python scripts/fetch_resources.py
    export ESTNLTK_MCP_FASTTEXT_PATH=~/.cache/estnltk-mcp/fasttext-et-medium
    ```
 3. **Create a feature branch** (`git checkout -b feature/my-feature`).
 4. **Run the tests**, both must pass:
    ```sh
-   uv run python tests/test_smoke.py   # tool behaviour
-   uv run python tests/test_http.py    # transport, auth, /metrics
+   uv run python tests/test_smoke.py       # tool behaviour
+   uv run python tests/test_http.py        # transport, auth, /metrics
+   uv run python tests/test_resources.py   # resource-availability handling
    ```
 5. **Commit** and open a pull request against `master`. CI (smoke on
    Python 3.11 + 3.13, plus a Docker build/boot check) must be green

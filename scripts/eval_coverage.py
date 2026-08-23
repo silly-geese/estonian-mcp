@@ -22,10 +22,11 @@ not capability scores. Run from repo root (sample size as argv[1]):
 from __future__ import annotations
 
 import sys
+
 from datasets import load_dataset
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
-import server  # noqa: E402
+import server
 
 
 def grammar_detection_recall(n: int) -> None:

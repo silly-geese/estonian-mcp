@@ -36,7 +36,7 @@ from estnltk.vabamorf.morf import Vabamorf
 # Reuse the MCP's own indeclinability knowledge so the score reflects a
 # real capability the server has, not an eval-only special case.
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
-from server import _is_indeclinable_attr  # noqa: E402
+from server import _is_indeclinable_attr
 
 # Estonian number / case names (as used in inflection_et) → Vabamorf
 # form codes. The illative maps to BOTH the long (ill) and the short /
