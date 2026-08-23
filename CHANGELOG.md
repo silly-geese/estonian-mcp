@@ -7,6 +7,110 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.6] — 2026-08-23
+
+Everything here came out of auditing the 13 `inflection_et` gold rows that
+contradict EKI. Those 13 are the dataset's, and they are reported upstream.
+The four defects below are ours, they were sitting behind the same
+benchmark, and none of them had a test.
+
+### Fixed
+
+- **`paradigm` reported that ordinals, comparatives and superlatives do not
+  inflect.** The nominal check listed `S`/`A`/`P`/`N` only, so `esimene`,
+  `teine`, `kolmas`, `parem`, `suurem`, `parim` and every other `O`, `C` or
+  `U` word came back as *"Sõnaliik 'O' ei käändu ega pöördu, paradigmat
+  pole."* with an empty `forms`. That is 1.5% of the 20k most frequent
+  Estonian word forms, and Vabamorf synthesises all three classes correctly
+  under their own POS code. The tool simply never asked.
+
+  This is the failure mode the server exists to prevent: an agent told a
+  word has no paradigm does not stop, it guesses.
+
+- **`paradigm` denied a paradigm to inflecting words with an adverb
+  reading.** `kaunis` on its own is disambiguated `D` (`kaunis hea` =
+  "quite good"), so `kaunis : kauni : kaunist`, an entirely ordinary
+  adjective, was reported as having no paradigm at all. When the
+  disambiguated reading does not inflect, the tool now looks for an
+  inflecting reading **of the word's own lemma** and uses it, disclosing
+  the other reading in `reading_estonian`.
+
+  The guard is deliberately narrow. `veel` also carries a noun reading, but
+  its lemma is `vesi`: answering a question about "still" with the paradigm
+  of "water" would be worse than the bug. So the reading must be the word's
+  own base form and must be an adjective, comparative, superlative or
+  ordinal. Noun readings are not promoted, because a function word's
+  surface routinely collides with a rare noun (`koos` to `koosi`, `miks` to
+  `miksi`).
+
+- **`paradigm` merged two different words into one table.** `kott` inflects
+  as either `koti` (bag) or `kota`, two words that share a nominative. The
+  output was a single table with `sg g: ["kota", "koti"]` and
+  `sg p: ["kotta", "kotti"]`, nothing saying those belong to different
+  words, and Vabamorf's lexicon order putting the rarer one first. An agent
+  taking the first candidate got `kota`.
+
+  Each inflection type is now generated separately under its own Vabamorf
+  `hint`, so a table can no longer take its genitive from one word and its
+  partitive from the other. `paradigm_key` names the type by its singular
+  genitive, `paradigm_count` says how many exist, the rest are in
+  `other_paradigms`, and `ambiguity_estonian` explains it in Estonian.
+
+  Ranking uses corpus attestation from the fastText vocabulary that
+  `find_related_words` already loads: `koti` is in it, `kota` is not. This
+  is a local read of an already-present file, no network, and it is
+  consulted **only** when a lemma has more than one inflection type (about
+  2.5% of words). With the model absent, the order is Vabamorf's,
+  `ranked_by_corpus_frequency` is `false`, the Estonian text says so, and
+  no paradigm is lost.
+
+- **`paradigm` threw away the caller's own evidence.** `paradigm("koti")`
+  returned exactly what `paradigm("kott")` returned, although the input
+  said which of the two words was meant. An inflected input now selects its
+  inflection type directly, which beats corpus frequency because it is
+  exact. The tool `note` used to advise the opposite ("pass the bare lemma
+  ... for the cleanest result"); it now says what is true.
+
+- **Smaller, same area.** Duplicate lexicon entries no longer surface as
+  `["halli", "halli"]`. A form is no longer dropped from the table when
+  POS-constrained synthesis comes up empty; synthesis falls back instead.
+  A word whose forms never change (`väärt`, `eri`) is labelled `invariant`
+  rather than quietly returning 28 identical strings.
+
+### Changed
+
+- **`inflection_et` benchmark: 96.5% to 99.1% first-candidate**, with
+  any-candidate unchanged at 99.1%. First-candidate now equals
+  any-candidate, and **every one of the 13 residual misses is a gold row
+  that contradicts EKI**, so the EKI-adjudicated score is 100% / 100%.
+  Without the fastText model the raw first-candidate figure is 96.6% and
+  any-candidate is still 99.1%, so nothing regresses when it is absent.
+
+- **`scripts/eval_inflection.py` now imports the server's synthesis path**
+  instead of re-implementing it, so the published number measures the
+  product. Only the phrase splitting and rejoining is harness code, and the
+  docstring says so. It reports the raw score and an EKI-adjudicated score
+  side by side.
+
+### Notes
+
+- **The 13 disputed gold rows** are recorded in
+  `data/inflection_et_eki_disputes.json` with the EKI form and the rule
+  cited: 12 decline a `-tud` participle that is invariant as a pre-modifier
+  (`läbimõeldu plaani` for `läbimõeldud plaani`), 1 leaves a `-v`
+  participle undeclined where it must agree (`rahuldav tulemuse` for
+  `rahuldava tulemuse`). The dataset looks generated word by word with a
+  synthesizer, which is exactly the operation that cannot know either rule.
+
+  The adjudication self-invalidates: each dispute is re-checked against the
+  live dataset before it counts, and is reported as stale and awarded
+  nothing once the data changes upstream.
+  `uv run python scripts/eval_inflection.py --report-disputes` prints them
+  as a markdown table for reporting upstream.
+
+- `tests/test_paradigm.py` is new: 202 checks over all four defects, both
+  EKI rules, the disputed rows, the degraded no-model path, and the guards
+  that keep the reading rescue from being worse than the bug.
 ## [0.5.5] — 2026-08-23
 
 ### Fixed

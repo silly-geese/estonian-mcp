@@ -1,0 +1,188 @@
+{
+  "dataset": "TalTechNLP/inflection_et",
+  "dataset_revision": "a14271169383e7210d165569fa3bf39323c4ae6f",
+  "dataset_rows": 1400,
+  "rules": {
+    "tud-partitsiip-eestaiendina": {
+      "rule_estonian": "Mineviku kesksõna -tud/-dud/-nud jääb eestäiendina käändumatuks.",
+      "rule_english": "A past participle in -tud/-dud/-nud is invariant as a pre-modifier.",
+      "example": "läbimõeldud plaani, mitte *läbimõeldu plaani"
+    },
+    "v-partitsiip-eestaiendina": {
+      "rule_estonian": "Oleviku kesksõna -v käändub eestäiendina koos põhisõnaga.",
+      "rule_english": "A present participle in -v agrees with its head noun.",
+      "example": "rahuldava tulemuse, mitte *rahuldav tulemuse"
+    }
+  },
+  "sources": [
+    "EKI keelenõuanne / Reeglid: kesksõna eestäiendina (https://reeglid.eki.ee/)",
+    "Eesti keele käsiraamat, Morfoloogia: kesksõnad (https://www.eki.ee/books/ekk09/)"
+  ],
+  "disputes": [
+    {
+      "noun_phrase": "läbimõeldud plaan",
+      "plurality": "ainsuse",
+      "case": "omastav",
+      "dataset_gold": [
+        "läbimõeldu plaani"
+      ],
+      "eki_forms": [
+        "läbimõeldud plaani"
+      ],
+      "rule": "tud-partitsiip-eestaiendina"
+    },
+    {
+      "noun_phrase": "läbimõeldud plaan",
+      "plurality": "ainsuse",
+      "case": "osastav",
+      "dataset_gold": [
+        "läbimõeldut plaani"
+      ],
+      "eki_forms": [
+        "läbimõeldud plaani"
+      ],
+      "rule": "tud-partitsiip-eestaiendina"
+    },
+    {
+      "noun_phrase": "läbimõeldud plaan",
+      "plurality": "ainsuse",
+      "case": "sisseütlev",
+      "dataset_gold": [
+        "läbimõeldusse plaanisse",
+        "läbimõeldusse plaani"
+      ],
+      "eki_forms": [
+        "läbimõeldud plaanisse",
+        "läbimõeldud plaani"
+      ],
+      "rule": "tud-partitsiip-eestaiendina"
+    },
+    {
+      "noun_phrase": "läbimõeldud plaan",
+      "plurality": "mitmuse",
+      "case": "omastav",
+      "dataset_gold": [
+        "läbimõeldute plaanide"
+      ],
+      "eki_forms": [
+        "läbimõeldud plaanide"
+      ],
+      "rule": "tud-partitsiip-eestaiendina"
+    },
+    {
+      "noun_phrase": "läbimõeldud plaan",
+      "plurality": "mitmuse",
+      "case": "osastav",
+      "dataset_gold": [
+        "läbimõelduid plaane",
+        "läbimõelduid plaanisid"
+      ],
+      "eki_forms": [
+        "läbimõeldud plaane",
+        "läbimõeldud plaanisid"
+      ],
+      "rule": "tud-partitsiip-eestaiendina"
+    },
+    {
+      "noun_phrase": "läbimõeldud plaan",
+      "plurality": "mitmuse",
+      "case": "sisseütlev",
+      "dataset_gold": [
+        "läbimõelduisse plaanidesse",
+        "läbimõeldutesse plaanidesse"
+      ],
+      "eki_forms": [
+        "läbimõeldud plaanidesse"
+      ],
+      "rule": "tud-partitsiip-eestaiendina"
+    },
+    {
+      "noun_phrase": "rafineeritud maitse",
+      "plurality": "ainsuse",
+      "case": "omastav",
+      "dataset_gold": [
+        "rafineeritu maitse"
+      ],
+      "eki_forms": [
+        "rafineeritud maitse"
+      ],
+      "rule": "tud-partitsiip-eestaiendina"
+    },
+    {
+      "noun_phrase": "rafineeritud maitse",
+      "plurality": "ainsuse",
+      "case": "osastav",
+      "dataset_gold": [
+        "rafineeritut maitset"
+      ],
+      "eki_forms": [
+        "rafineeritud maitset"
+      ],
+      "rule": "tud-partitsiip-eestaiendina"
+    },
+    {
+      "noun_phrase": "rafineeritud maitse",
+      "plurality": "ainsuse",
+      "case": "sisseütlev",
+      "dataset_gold": [
+        "rafineeritusse maitsesse"
+      ],
+      "eki_forms": [
+        "rafineeritud maitsesse"
+      ],
+      "rule": "tud-partitsiip-eestaiendina"
+    },
+    {
+      "noun_phrase": "rafineeritud maitse",
+      "plurality": "mitmuse",
+      "case": "omastav",
+      "dataset_gold": [
+        "rafineeritute maitsete"
+      ],
+      "eki_forms": [
+        "rafineeritud maitsete"
+      ],
+      "rule": "tud-partitsiip-eestaiendina"
+    },
+    {
+      "noun_phrase": "rafineeritud maitse",
+      "plurality": "mitmuse",
+      "case": "osastav",
+      "dataset_gold": [
+        "rafineerituid maitseid"
+      ],
+      "eki_forms": [
+        "rafineeritud maitseid"
+      ],
+      "rule": "tud-partitsiip-eestaiendina"
+    },
+    {
+      "noun_phrase": "rafineeritud maitse",
+      "plurality": "mitmuse",
+      "case": "sisseütlev",
+      "dataset_gold": [
+        "rafineerituisse maitseisse",
+        "rafineerituisse maitsetesse",
+        "rafineeritutesse maitseisse",
+        "rafineeritutesse maitsetesse"
+      ],
+      "eki_forms": [
+        "rafineeritud maitseisse",
+        "rafineeritud maitsetesse"
+      ],
+      "rule": "tud-partitsiip-eestaiendina"
+    },
+    {
+      "noun_phrase": "rahuldav tulemus",
+      "plurality": "ainsuse",
+      "case": "omastav",
+      "dataset_gold": [
+        "rahuldav tulemuse"
+      ],
+      "eki_forms": [
+        "rahuldava tulemuse"
+      ],
+      "rule": "v-partitsiip-eestaiendina"
+    }
+  ]
+}

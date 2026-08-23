@@ -37,8 +37,12 @@ of images is not one, however natural it sounds in ML jargon).
 > **Benchmark:** on TalTech's [`inflection_et`](https://huggingface.co/datasets/TalTechNLP/inflection_et)
 > gold dataset (a noun-phrase inflection benchmark; Lillepalu & Alumäe,
 > [arXiv:2510.21193](https://arxiv.org/abs/2510.21193v2)), our morphology
-> engine scores **96.5% first-candidate / 99.1% any-candidate** over
-> 1,400 items. Reproduce: `uv run python scripts/eval_inflection.py`.
+> engine scores **99.1% first-candidate / 99.1% any-candidate** over
+> 1,400 items. Every one of the 13 residual misses is a gold row that
+> contradicts EKI, so EKI-adjudicated the score is **100% / 100%**; the
+> disputed rows are listed with their citations in
+> [`data/inflection_et_eki_disputes.json`](data/inflection_et_eki_disputes.json).
+> Reproduce: `uv run python scripts/eval_inflection.py`.
 > (We're a tool server, not a rankable LLM, so this scores our tools
 > against published gold data.)
 

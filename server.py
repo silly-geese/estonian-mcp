@@ -71,7 +71,7 @@ DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.5.5"
+SERVER_VERSION = "0.5.6"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -1045,6 +1045,14 @@ class _ParadigmResult(TypedDict, total=False):
     partofspeech: str
     word_class: str
     forms: list[dict]
+    paradigm_count: int
+    paradigm_key: str
+    other_paradigms: list[dict]
+    ranked_by_corpus_frequency: bool
+    ambiguity_estonian: str
+    reading_estonian: str
+    invariant: bool
+    invariant_estonian: str
     summary_estonian: str
     note: str
 
@@ -1414,12 +1422,167 @@ def analyze_morphology(text: Annotated[str, Field(description="Estonian text to 
     return out
 
 
+# Vabamorf part-of-speech codes whose words inflect as nominals. O, C and
+# U were missing, so paradigm() answered "this word class does not inflect,
+# there is no paradigm" for every ordinal (esimene, kolmas), every
+# comparative (parem, suurem) and every superlative (parim, suurim) in
+# Estonian, 1.5% of the 20k most frequent word forms. Vabamorf synthesises
+# all three correctly under their own POS code; the tool just never asked.
+_NOMINAL_POS: frozenset[str] = frozenset({"S", "A", "P", "N", "O", "C", "U"})
+
+# POS codes we will promote a non-inflecting reading TO. Deliberately
+# excludes S: a function word's surface routinely collides with some rare
+# noun lemma (koos -> 'koosi', miks -> 'miksi', siin -> 'siini'), and
+# promoting those would answer a paradigm question with a word nobody
+# meant. Adjective / comparative / superlative / ordinal readings of the
+# same lemma are safe: at worst they are invariant (mööda, alasti), which
+# is a true statement about the word rather than an invented paradigm.
+_PROMOTABLE_POS: frozenset[str] = frozenset({"A", "C", "U", "O"})
+
+# The form that identifies WHICH paradigm a word belongs to. Estonian
+# grammar reads the muuttüüp off the singular genitive, and Vabamorf's
+# synthesizer accepts exactly that as its `hint`.
+_NOMINAL_KEY_FORM = "sg g"
+_VERB_KEY_FORM = "da"
+
+
+def _synthesize(lemma: str, form: str, pos: str = "", hint: str = "") -> list[str]:
+    """Vabamorf synthesis for one form: deduplicated, order preserved.
+
+    Two things the raw call does not do.
+
+    POS FALLBACK. `synthesize(lemma, form, pos)` returns nothing when the
+    POS is wrong for that lemma, and the caller then has no form at all.
+    The disambiguated POS of an ISOLATED word is regularly wrong, so a
+    strict constraint silently punched holes in the paradigm table. We keep
+    the constraint (it is what stops `hall` the noun leaking into `hall`
+    the adjective) but fall back to unconstrained synthesis rather than
+    return nothing.
+
+    DEDUPLICATION. Vabamorf lists one candidate per matching lexicon entry,
+    so homonyms with the same surface come back twice (`hall` sg g -> halli,
+    halli). Callers saw a two-element list and had to guess why.
+    """
+    vm = _vabamorf()
+    for p, h in ((pos, hint), ("", hint), (pos, ""), ("", "")):
+        try:
+            got = vm.synthesize(lemma, form, p, h) or []
+        except Exception:
+            got = []
+        if got:
+            return list(dict.fromkeys(got))
+    return []
+
+
+def _corpus_ranks() -> dict | None:
+    """fastText vocabulary as {surface: frequency rank}, or None when the
+    model is not installed.
+
+    The vocabulary is ordered by corpus frequency, which is the only
+    evidence available offline for which of two morphologically valid
+    paradigms Estonian actually uses. Read-only, local file, no network:
+    the same model `find_related_words` already loads.
+    """
+    try:
+        return _embeddings().key_to_index
+    except Exception:
+        return None
+
+
+def _rank_paradigm_keys(keys: list[str]) -> tuple[list[str], bool]:
+    """Order homonymous paradigms by corpus attestation, best first.
+
+    Vabamorf's candidate order is lexicon order, not a preference ranking:
+    for `kott` it offers `kota` before `koti`, and a caller taking the first
+    candidate gets a paradigm no Estonian speaker meant. Corpus frequency
+    settles it: `koti` is in the vocabulary, `kota` is not.
+
+    Returns (ordered keys, whether corpus evidence was actually used). With
+    no model installed the order is Vabamorf's, unchanged, and the caller
+    is told so rather than being handed a silent guess.
+    """
+    ranks = _corpus_ranks()
+    if not ranks or len(keys) < 2:
+        return (keys, False)
+    unattested = len(ranks) + 1
+    order = sorted(
+        range(len(keys)),
+        key=lambda i: (ranks.get(keys[i].lower(), unattested), i),
+    )
+    ordered = [keys[i] for i in order]
+    used = any(k.lower() in ranks for k in keys)
+    return (ordered, used)
+
+
+def _paradigm_hints(lemma: str, pos: str, key_form: str) -> tuple[list[str], bool]:
+    """The distinct paradigms this lemma has, best first, as Vabamorf hints.
+
+    Returns `([""], False)` for the ordinary case of a single paradigm. An
+    empty hint means "no constraint", so nothing changes for the ~97% of
+    words that are unambiguous. Otherwise one hint per paradigm, ranked, and
+    a flag saying whether corpus evidence decided the order.
+
+    Shared with scripts/eval_inflection.py so the published benchmark
+    number measures this code and not a re-implementation of it.
+    """
+    keys = _synthesize(lemma, key_form, pos)
+    ranked, used = _rank_paradigm_keys(keys)
+    if len(ranked) < 2:
+        return ([""], False)
+    return (ranked, used)
+
+
+def _inflecting_reading(word: str, analyses: list[dict]) -> dict | None:
+    """An inflecting reading of the word's OWN lemma, or None.
+
+    `kaunis` is analysed as a D (adverb, `kaunis hea` = "quite good") when
+    it stands alone, so paradigm() used to reply that it has no paradigm at
+    all, while `kaunis : kauni : kaunist` is one of the most ordinary
+    adjectives in the language, and Vabamorf generates it happily.
+
+    The guard is strict on purpose. `veel` also carries a noun reading, but
+    its lemma is `vesi`: rescuing that would answer a question about "still"
+    with the paradigm of "water". So the reading must be the word's own
+    base form (lemma == the input) and must be one of _PROMOTABLE_POS.
+    """
+    w = word.lower()
+    for a in analyses:
+        if a.get("partofspeech") not in _PROMOTABLE_POS:
+            continue
+        if (a.get("lemma") or "").lower() != w:
+            continue
+        if (a.get("form") or "") not in ("", "sg n"):
+            continue
+        return a
+    return None
+
+
+def _build_forms(lemma: str, pos: str, form_list, labels: dict, hint: str) -> list[dict]:
+    """One paradigm table, generated under a single paradigm hint."""
+    forms: list[dict] = []
+    for f in form_list:
+        generated = _synthesize(lemma, f, pos, hint)
+        if not generated:
+            continue
+        forms.append({
+            "form": f,
+            "form_estonian": labels.get(f, f),
+            "surface": generated[0] if len(generated) == 1 else generated,
+        })
+    return forms
+
+
 def _paradigm(word: str) -> dict:
     """Generate a full inflection paradigm for a word.
 
     Resolves the input through analyze() to find its lemma + POS, then
     calls Vabamorf.synthesize() for each form in the appropriate paradigm
     table.
+
+    A lemma can belong to more than one paradigm (`kott` inflects as either
+    `koti` or `kota`). Those are generated separately and ranked, instead of
+    being merged into a single table where `sg g` and `sg p` could come from
+    different words.
     """
     _check_text(word, limit=MAX_WORD_CHARS, name="word")
     if any(ch.isspace() for ch in word):
@@ -1440,15 +1603,36 @@ def _paradigm(word: str) -> dict:
     primary = analyses[0]["analysis"][0]
     lemma = primary["lemma"]
     pos = primary["partofspeech"]
+    reading_et = ""
 
-    if pos in {"S", "A", "P", "N"}:
+    if pos not in _NOMINAL_POS and pos != "V":
+        # The isolated-word reading does not inflect. Before claiming the
+        # word has no paradigm, check whether the word's own lemma has an
+        # inflecting reading (the `kaunis` case).
+        try:
+            allr = vm.analyze([word], disambiguate=False)[0].get("analysis") or []
+        except Exception:
+            allr = []
+        alt = _inflecting_reading(word, allr)
+        if alt is not None:
+            reading_et = (
+                f"Üksiku sõnana loeb Vabamorf selle sõnaliigiks '{pos}', mis ei käändu. "
+                f"Sõnal on ka sõnaliigi '{alt['partofspeech']}' tähendus, mis käändub, "
+                f"ja allpool on selle paradigma."
+            )
+            lemma = alt["lemma"]
+            pos = alt["partofspeech"]
+
+    if pos in _NOMINAL_POS:
         form_list = _NOMINAL_FORMS
         labels = _CASE_LABELS_ET
         class_name = "nominal"
+        key_form = _NOMINAL_KEY_FORM
     elif pos == "V":
         form_list = _VERB_FORMS
         labels = _VERB_LABELS_ET
         class_name = "verb"
+        key_form = _VERB_KEY_FORM
     else:
         return {
             "input": word,
@@ -1464,26 +1648,44 @@ def _paradigm(word: str) -> dict:
             ),
         }
 
-    forms: list[dict] = []
-    for f in form_list:
-        try:
-            generated = vm.synthesize(lemma, f, pos)
-        except Exception:
-            generated = []
-        if not generated:
-            continue
-        forms.append({
-            "form": f,
-            "form_estonian": labels.get(f, f),
-            "surface": generated[0] if len(generated) == 1 else generated,
-        })
+    # Which paradigms does this lemma have? Estonian reads the type off the
+    # singular genitive; Vabamorf takes exactly that back as a `hint`.
+    ranked, ranked_by_corpus = _paradigm_hints(lemma, pos, key_form)
+    chosen_by_input = False
 
-    return {
+    if len(ranked) < 2:
+        # One paradigm (the overwhelmingly common case): no hint needed, so
+        # nothing about the existing output changes.
+        tables = [("", _build_forms(lemma, pos, form_list, labels, ""))]
+    else:
+        tables = [(k, _build_forms(lemma, pos, form_list, labels, k)) for k in ranked]
+        # An inflected input already says which paradigm the caller means:
+        # `paradigm("koti")` must not lead with the `kota` table. This is
+        # exact evidence, so it outranks corpus frequency.
+        w = word.lower()
+        if w != lemma.lower():
+            for i, (_key, forms) in enumerate(tables):
+                surfaces = {
+                    s.lower()
+                    for entry in forms
+                    for s in ([entry["surface"]] if isinstance(entry["surface"], str)
+                              else entry["surface"])
+                }
+                if w in surfaces:
+                    tables.insert(0, tables.pop(i))
+                    chosen_by_input = True
+                    break
+
+    key, forms = tables[0]
+    others = [{"paradigm_key": k, "forms": f} for k, f in tables[1:]]
+
+    result = {
         "input": word,
         "lemma": lemma,
         "partofspeech": pos,
         "word_class": class_name,
         "forms": forms,
+        "paradigm_count": len(tables),
         "summary_estonian": (
             f"Sõna '{lemma}' ({pos}) paradigma: {len(forms)} vormi."
         ),
@@ -1491,11 +1693,42 @@ def _paradigm(word: str) -> dict:
             "Generated via Vabamorf.synthesize. Some forms may be marked, "
             "rare, or stylistically odd — Vabamorf produces what's "
             "morphologically possible, not what a native speaker would "
-            "necessarily use. For ambiguous lemmas pass the bare lemma "
-            "(e.g. 'kasutama') rather than an inflected form for the "
-            "cleanest result."
+            "necessarily use. Passing an INFLECTED form (e.g. 'koti') is "
+            "better than the bare lemma when a word has several paradigms: "
+            "it tells the server which one you mean."
         ),
     }
+    if key:
+        result["paradigm_key"] = key
+    if reading_et:
+        result["reading_estonian"] = reading_et
+    if others:
+        result["other_paradigms"] = others
+        result["ranked_by_corpus_frequency"] = ranked_by_corpus and not chosen_by_input
+        all_keys = ", ".join(k for k, _ in tables)
+        if chosen_by_input:
+            why = f"Esimesena on tüüp, kuhu sinu antud vorm '{word}' kuulub."
+        elif ranked_by_corpus:
+            why = "Esimesena on korpuses sagedasem tüüp."
+        else:
+            why = "Järjestus on Vabamorfi oma, sagedusandmeid ei olnud."
+        hint_et = (
+            "" if chosen_by_input
+            else " Kui tead, millist sõna silmas pead, anna sisendiks käändeline vorm."
+        )
+        result["ambiguity_estonian"] = (
+            f"Sõnal '{lemma}' on Vabamorfi sõnastikus {len(tables)} eri muuttüüpi "
+            f"({all_keys}). {why} Ülejäänud tüübid on väljal 'other_paradigms'.{hint_et}"
+        )
+    surfaces = {
+        s for entry in forms
+        for s in ([entry["surface"]] if isinstance(entry["surface"], str)
+                  else entry["surface"])
+    }
+    if forms and surfaces == {lemma}:
+        result["invariant"] = True
+        result["invariant_estonian"] = f"Sõna '{lemma}' ei muutu, kõik vormid on ühesugused."
+    return result
 
 
 @mcp.tool(annotations=ToolAnnotations(
@@ -1508,16 +1741,26 @@ def _paradigm(word: str) -> dict:
 def paradigm(word: Annotated[str, Field(description="A single Estonian word (lemma or inflected form) to generate the full paradigm for.")]) -> _ParadigmResult:
     """Generate the full inflection paradigm for an Estonian word.
 
-    For nominals (nouns, adjectives, pronouns, numerals): produces all 14
-    cases × 2 numbers = up to 28 forms. For verbs: produces infinitives,
-    present/past/conditional indicative, imperative, and participles
-    (~30 forms). Other parts of speech (adverbs, conjunctions,
-    particles) don't inflect — `forms` is empty.
+    For nominals (nouns, adjectives, pronouns, cardinals, ordinals,
+    comparatives, superlatives): produces all 14 cases × 2 numbers = up to
+    28 forms. For verbs: produces infinitives, present/past/conditional
+    indicative, imperative, and participles (~30 forms). Other parts of
+    speech (adverbs, conjunctions, particles) don't inflect, so `forms` is
+    empty.
 
     Each form entry has the Vabamorf form code (e.g. `sg p`, `ksin`),
     its Estonian label (e.g. `ainsuse osastav`, `tingiv 1.p ainsus`),
     and the surface form Vabamorf generated. Use `form_estonian` verbatim
     in Estonian replies — don't translate the English `form` code.
+
+    AMBIGUOUS LEMMAS. Some lemmas belong to more than one inflection type
+    (`kott` inflects as either `koti` or `kota`, two different words that
+    share a nominative). `forms` is then one internally consistent
+    paradigm, `paradigm_key` names it by its singular genitive,
+    `paradigm_count` says how many exist, and the rest are in
+    `other_paradigms`. Read `ambiguity_estonian` before quoting a form.
+    **Pass an inflected form (`koti`) rather than the bare lemma when you
+    know which word you mean**: that selects the paradigm exactly.
 
     Phase-1 scope: covers the most commonly-needed forms per word class,
     not every theoretical form Vabamorf can produce. Single-word input,
