@@ -70,10 +70,19 @@ silly-geese-hosted public Smithery listing. Defences:
 
 - **No bearer auth required.** Anyone on the network can call `/mcp`.
   Intentional, so Smithery installs are one-click.
-- **Per-IP rate limit.** Default 120 requests/minute keyed on
-  `scope["client"][0]` (populated from `X-Forwarded-For` by uvicorn's
-  `proxy_headers=True` so it reflects the originator IP, not Fly's
-  edge address).
+- **Per-IP rate limit.** Default 300 requests/minute keyed on the
+  originator IP, resolved by `_client_ip` from the **rightmost**
+  `X-Forwarded-For` entry — specifically the Nth-from-right, where N is
+  `ESTNLTK_MCP_TRUSTED_PROXY_HOPS` (default 1, matching Fly's single edge
+  proxy). A proxy *appends* to whatever the caller sent, so the leftmost
+  entry is caller-controlled and the rightmost is not.
+
+  Until 0.5.4 this read `scope["client"][0]`, which uvicorn had rewritten
+  from the leftmost entry — so a caller could mint a fresh bucket per
+  request by varying the header and evade the limit entirely. If you run
+  this server **directly exposed**, with no proxy in front, set
+  `ESTNLTK_MCP_TRUSTED_PROXY_HOPS=0` so `X-Forwarded-For` is not trusted
+  at all and bucketing falls back to the socket peer.
 - **All other hardening preserved.** No shell exec, no fs writes, no
   token logging (no tokens to log), no telemetry, size-bounded inputs.
 

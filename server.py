@@ -63,8 +63,15 @@ MAX_DOC_CHARS = 500_000
 DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 
+# How many reverse proxies sit in front of this server. Used to pick the
+# trustworthy entry out of X-Forwarded-For for the public-mode per-IP rate
+# limiter — see _client_ip. Fly.io puts exactly one proxy in front, which
+# is the default. Set to 0 if the server is directly internet-exposed, so
+# that a caller-supplied XFF is never trusted.
+_TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
+
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.5.3"
+SERVER_VERSION = "0.5.4"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -4400,8 +4407,43 @@ def _accept_header(scope: dict) -> str:
 
 
 def _client_ip(scope: dict) -> str:
-    """Best-effort originator IP. uvicorn(proxy_headers=True) populates
-    scope["client"] from X-Forwarded-For when running behind Fly/Smithery."""
+    """Originator IP for the public-mode per-IP rate limiter.
+
+    Reads X-Forwarded-For from the RIGHT, not the left. uvicorn runs with
+    `forwarded_allow_ips="*"` and rewrites `scope["client"]` from the
+    LEFTMOST XFF entry — which is fully caller-controlled, because a proxy
+    appends to whatever the client sent. Bucketing on that let any caller
+    mint a fresh rate-limit bucket per request simply by varying the
+    header, defeating the limiter entirely. Reproduced against a local
+    server in public mode at a 5/min limit: a fixed spoofed value gets 429
+    after five requests, while rotating the value stays 200 indefinitely.
+
+    The Nth-from-right entry is the one written by the Nth proxy in front
+    of us, and a caller cannot append after a proxy — so it is correct
+    whether the edge APPENDS to a client-supplied header or REPLACES it.
+    `_TRUSTED_PROXY_HOPS` is how many proxies we sit behind (Fly = 1).
+    Set it to 0 when the server is directly exposed, which makes XFF
+    untrusted entirely and buckets on the real peer.
+
+    Falls back to the peer address whenever XFF has fewer entries than
+    there are trusted hops, i.e. when the header is absent or too short to
+    have come through the expected chain.
+    """
+    hops = _TRUSTED_PROXY_HOPS
+    if hops > 0:
+        for raw_key, raw_val in (scope.get("headers") or []):
+            try:
+                if raw_key.decode("latin-1").lower() != "x-forwarded-for":
+                    continue
+                parts = [p.strip() for p in raw_val.decode("latin-1").split(",") if p.strip()]
+            except Exception:
+                continue
+            if len(parts) >= hops:
+                return parts[-hops]
+            break
+    # `scope["client"]` is uvicorn's parse of XFF and therefore spoofable;
+    # it is only reached when the header is missing or malformed, in which
+    # case it degrades to the true peer.
     client = scope.get("client") or ("unknown", 0)
     return client[0] if isinstance(client, (tuple, list)) and client else "unknown"
 
@@ -4703,8 +4745,14 @@ def _run_http(host: str, port: int, token: str | None, rate_limit: int, public_m
         port=port,
         log_level="info",
         access_log=False,  # keep tokens out of logs
-        proxy_headers=True,
-        forwarded_allow_ips="*",  # behind Fly/Smithery edge
+        # proxy_headers is OFF on purpose. With it on (and
+        # forwarded_allow_ips="*") uvicorn rewrites scope["client"] from the
+        # LEFTMOST X-Forwarded-For entry, which is fully caller-controlled —
+        # that is what let a caller defeat the per-IP rate limiter by
+        # varying the header. We interpret XFF ourselves in _client_ip,
+        # counting from the right, and we need scope["client"] to stay the
+        # true peer so it is a trustworthy fallback.
+        proxy_headers=False,
     )
 
 
