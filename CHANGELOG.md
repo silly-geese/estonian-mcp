@@ -7,6 +7,37 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-08-23
+
+### Security
+
+- **The public per-IP rate limit could be evaded entirely by varying
+  `X-Forwarded-For`.** `_client_ip` returned `scope["client"][0]`, which
+  uvicorn (`proxy_headers=True`, `forwarded_allow_ips="*"`) had rewritten
+  from the **leftmost** XFF entry. A proxy *appends* to whatever the caller
+  sent, so that entry is entirely caller-controlled: every request with a
+  different header got its own fresh bucket, and the public deployment's
+  only DoS protection did nothing.
+
+  Reproduced against a local server in public mode at a 5/min limit — a
+  fixed spoofed value gets 429 after five requests, rotating values stay
+  200 indefinitely. `SECURITY.md` asserted the opposite and has been
+  corrected.
+
+  `_client_ip` now reads the **Nth-from-right** entry, where N is
+  `ESTNLTK_MCP_TRUSTED_PROXY_HOPS` (default 1 for Fly's single edge proxy).
+  A caller cannot append after a proxy, so this is correct whether the edge
+  appends to a client-supplied header or replaces it. uvicorn's
+  `proxy_headers` is now **off**, because the fallback needs
+  `scope["client"]` to be the real peer — with it on, even
+  `TRUSTED_PROXY_HOPS=0` stayed bypassable, which the tests caught.
+
+  Set `ESTNLTK_MCP_TRUSTED_PROXY_HOPS=0` if you run the server directly
+  exposed with no proxy in front.
+
+  Surfaced while reviewing PR #36; credit to @laazik, whose nginx config
+  prompted the question even though the bug is ours, not theirs.
+
 ## [0.5.3] — 2026-08-23
 
 Fixes both issues reported by @Kivaste against 0.5.1. Neither affected the
