@@ -1043,7 +1043,9 @@ class _ParadigmResult(TypedDict, total=False):
     input: str
     lemma: str
     partofspeech: str
+    partofspeech_estonian: str
     word_class: str
+    word_class_estonian: str
     forms: list[dict]
     paradigm_count: int
     paradigm_key: str
@@ -1442,36 +1444,69 @@ _PROMOTABLE_POS: frozenset[str] = frozenset({"A", "C", "U", "O"})
 # The form that identifies WHICH paradigm a word belongs to. Estonian
 # grammar reads the muuttüüp off the singular genitive, and Vabamorf's
 # synthesizer accepts exactly that as its `hint`.
+#
+# Nominals only. Verbs are deliberately NOT split this way: a verb with two
+# da-infinitives (öelda / ütelda, mõelda / mõtelda) has rööpvormid, free
+# variants of one lexeme, not two muuttüüpi. Splitting them produced two
+# byte-identical tables and an Estonian sentence claiming a distinction
+# that does not exist.
 _NOMINAL_KEY_FORM = "sg g"
-_VERB_KEY_FORM = "da"
+
+# Estonian names for the Vabamorf POS codes this module puts in front of a
+# reader. A bare tagset letter in an Estonian sentence is not an answer.
+_POS_LABELS_ET: dict[str, str] = {
+    "S": "nimisõna",
+    "A": "omadussõna",
+    "C": "omadussõna keskvõrdes",
+    "U": "omadussõna ülivõrdes",
+    "P": "asesõna",
+    "N": "põhiarvsõna",
+    "O": "järgarvsõna",
+    "V": "tegusõna",
+    "D": "määrsõna",
+    "K": "kaassõna",
+    "J": "sidesõna",
+    "I": "hüüdsõna",
+    "Y": "lühend",
+    "G": "genitiivatribuut",
+    "Z": "kirjavahemärk",
+}
+
+_WORD_CLASS_ET: dict[str, str] = {"nominal": "käändsõna", "verb": "tegusõna"}
+
+
+def _pos_et(pos: str) -> str:
+    """'D (määrsõna)' when the code is known, otherwise just the code."""
+    label = _POS_LABELS_ET.get(pos or "")
+    return f"{pos} ({label})" if label else f"{pos}"
 
 
 def _synthesize(lemma: str, form: str, pos: str = "", hint: str = "") -> list[str]:
     """Vabamorf synthesis for one form: deduplicated, order preserved.
 
-    Two things the raw call does not do.
+    The constraints are honoured STRICTLY. An empty result means "this
+    lexeme has no such form", and that is a true and useful answer:
+    `iga` (pronoun) has no plural, `kogu` (invariant adjective) has only
+    a nominative, `ei` has no verb forms at all.
 
-    POS FALLBACK. `synthesize(lemma, form, pos)` returns nothing when the
-    POS is wrong for that lemma, and the caller then has no form at all.
-    The disambiguated POS of an ISOLATED word is regularly wrong, so a
-    strict constraint silently punched holes in the paradigm table. We keep
-    the constraint (it is what stops `hall` the noun leaking into `hall`
-    the adjective) but fall back to unconstrained synthesis rather than
-    return nothing.
+    Relaxing the POS when a form comes up empty looks helpful and is not.
+    It hands back another lexeme's forms, so the table's singular would be
+    the pronoun `iga` and its plural the noun `iga` "age" (`pl n: ead`).
+    That is the same splice this module separates paradigms to avoid, and
+    for a server whose job is to stop LLMs inventing Estonian morphology it
+    is the worst possible output. A caller that knows the POS is a
+    misanalysis should pass a corrected one, not be silently overruled.
 
-    DEDUPLICATION. Vabamorf lists one candidate per matching lexicon entry,
-    so homonyms with the same surface come back twice (`hall` sg g -> halli,
-    halli). Callers saw a two-element list and had to guess why.
+    DEDUPLICATION is the one thing added. Vabamorf lists one candidate per
+    matching lexicon entry, so homonyms with the same surface come back
+    twice (`hall` sg g -> halli, halli). Callers saw a two-element list and
+    had to guess why.
     """
-    vm = _vabamorf()
-    for p, h in ((pos, hint), ("", hint), (pos, ""), ("", "")):
-        try:
-            got = vm.synthesize(lemma, form, p, h) or []
-        except Exception:
-            got = []
-        if got:
-            return list(dict.fromkeys(got))
-    return []
+    try:
+        got = _vabamorf().synthesize(lemma, form, pos, hint) or []
+    except Exception:
+        return []
+    return list(dict.fromkeys(got))
 
 
 def _corpus_ranks() -> dict | None:
@@ -1501,8 +1536,14 @@ def _rank_paradigm_keys(keys: list[str]) -> tuple[list[str], bool]:
     no model installed the order is Vabamorf's, unchanged, and the caller
     is told so rather than being handed a silent guess.
     """
+    # The length check comes FIRST. _corpus_ranks() deserialises a 34 MB
+    # model, and there is nothing to rank below two candidates, so putting
+    # it second would load it on every paradigm call for every ordinary
+    # word, and load it once per concurrent caller during a cold burst.
+    if len(keys) < 2:
+        return (keys, False)
     ranks = _corpus_ranks()
-    if not ranks or len(keys) < 2:
+    if not ranks:
         return (keys, False)
     unattested = len(ranks) + 1
     order = sorted(
@@ -1540,10 +1581,24 @@ def _inflecting_reading(word: str, analyses: list[dict]) -> dict | None:
     all, while `kaunis : kauni : kaunist` is one of the most ordinary
     adjectives in the language, and Vabamorf generates it happily.
 
-    The guard is strict on purpose. `veel` also carries a noun reading, but
-    its lemma is `vesi`: rescuing that would answer a question about "still"
-    with the paradigm of "water". So the reading must be the word's own
-    base form (lemma == the input) and must be one of _PROMOTABLE_POS.
+    Two guards, because the naive version is worse than the bug.
+
+    OWN LEMMA. `veel` also carries a noun reading, but its lemma is `vesi`:
+    rescuing that would answer a question about "still" with the paradigm
+    of "water". So the reading must be the word's own base form, and must
+    be one of _PROMOTABLE_POS.
+
+    CORPUS ATTESTATION. That is still not enough. `kohe` ("immediately",
+    one of the commonest adverbs) carries an adjective reading of its own
+    lemma, `kohe : koheda`, which is a real word almost nobody means. The
+    promoted reading must therefore be one Estonian actually writes: its
+    singular genitive has to appear in the corpus vocabulary. `kauni` does
+    (rank 10765), `koheda` does not.
+
+    With no corpus model installed there is no evidence either way, so
+    nothing is promoted and the answer is what it was before this check
+    existed. Being unhelpful is recoverable; promoting the wrong word is
+    not.
     """
     w = word.lower()
     for a in analyses:
@@ -1553,7 +1608,14 @@ def _inflecting_reading(word: str, analyses: list[dict]) -> dict | None:
             continue
         if (a.get("form") or "") not in ("", "sg n"):
             continue
-        return a
+        # Only now is the model worth loading: this branch is reached by
+        # roughly 0.25% of words, and never by ja / ning / väga / et.
+        ranks = _corpus_ranks()
+        if not ranks:
+            return None
+        keys = _synthesize(a["lemma"], _NOMINAL_KEY_FORM, a["partofspeech"])
+        if any(k.lower() in ranks for k in keys):
+            return a
     return None
 
 
@@ -1597,6 +1659,7 @@ def _paradigm(word: str) -> dict:
             "lemma": None,
             "partofspeech": None,
             "forms": [],
+            "paradigm_count": 0,
             "summary_estonian": f"Sõnale '{word}' paradigmat ei leitud.",
             "note": "Vabamorf couldn't analyse this word.",
         }
@@ -1616,9 +1679,11 @@ def _paradigm(word: str) -> dict:
         alt = _inflecting_reading(word, allr)
         if alt is not None:
             reading_et = (
-                f"Üksiku sõnana loeb Vabamorf selle sõnaliigiks '{pos}', mis ei käändu. "
-                f"Sõnal on ka sõnaliigi '{alt['partofspeech']}' tähendus, mis käändub, "
-                f"ja allpool on selle paradigma."
+                f"Üksiku sõnana loeb Vabamorf selle sõnaliigiks {_pos_et(pos)}, "
+                f"mille vormid ei muutu. Sõnal on ka "
+                f"{_POS_LABELS_ET.get(alt['partofspeech'], alt['partofspeech'])} "
+                f"({alt['partofspeech']}) tähendus, mis käändub, ja selle paradigma "
+                f"on väljal 'forms'."
             )
             lemma = alt["lemma"]
             pos = alt["partofspeech"]
@@ -1627,20 +1692,20 @@ def _paradigm(word: str) -> dict:
         form_list = _NOMINAL_FORMS
         labels = _CASE_LABELS_ET
         class_name = "nominal"
-        key_form = _NOMINAL_KEY_FORM
     elif pos == "V":
         form_list = _VERB_FORMS
         labels = _VERB_LABELS_ET
         class_name = "verb"
-        key_form = _VERB_KEY_FORM
     else:
         return {
             "input": word,
             "lemma": lemma,
             "partofspeech": pos,
+            "partofspeech_estonian": _POS_LABELS_ET.get(pos, pos),
             "forms": [],
+            "paradigm_count": 0,
             "summary_estonian": (
-                f"Sõnaliik '{pos}' ei käändu ega pöördu — paradigmat pole."
+                f"Sõnaliik {_pos_et(pos)} ei käändu ega pöördu, paradigmat pole."
             ),
             "note": (
                 "This part of speech does not inflect (e.g. adverbs, "
@@ -1648,9 +1713,13 @@ def _paradigm(word: str) -> dict:
             ),
         }
 
-    # Which paradigms does this lemma have? Estonian reads the type off the
-    # singular genitive; Vabamorf takes exactly that back as a `hint`.
-    ranked, ranked_by_corpus = _paradigm_hints(lemma, pos, key_form)
+    # Which inflection types does this lemma have? Estonian reads the
+    # muuttüüp off the singular genitive; Vabamorf takes exactly that back
+    # as a `hint`. Verbs are not split (see _NOMINAL_KEY_FORM).
+    if class_name == "verb":
+        ranked, ranked_by_corpus = ([""], False)
+    else:
+        ranked, ranked_by_corpus = _paradigm_hints(lemma, pos, _NOMINAL_KEY_FORM)
     chosen_by_input = False
 
     if len(ranked) < 2:
@@ -1659,22 +1728,30 @@ def _paradigm(word: str) -> dict:
         tables = [("", _build_forms(lemma, pos, form_list, labels, ""))]
     else:
         tables = [(k, _build_forms(lemma, pos, form_list, labels, k)) for k in ranked]
-        # An inflected input already says which paradigm the caller means:
+        # An inflected input already says which type the caller means:
         # `paradigm("koti")` must not lead with the `kota` table. This is
         # exact evidence, so it outranks corpus frequency.
+        #
+        # Only when it IS exact, though. Types share surfaces: `kotti` is
+        # the singular partitive of `koti` AND the plural partitive of
+        # `kota`, so it identifies nothing. Taking the first table that
+        # contains it would have answered `paradigm("kotti")` with `kota`
+        # whenever corpus ranking was unavailable, while claiming the input
+        # had decided. A form in more than one table is left to the ranking.
         w = word.lower()
         if w != lemma.lower():
-            for i, (_key, forms) in enumerate(tables):
-                surfaces = {
+            matched = [
+                i for i, (_key, forms) in enumerate(tables)
+                if w in {
                     s.lower()
                     for entry in forms
                     for s in ([entry["surface"]] if isinstance(entry["surface"], str)
                               else entry["surface"])
                 }
-                if w in surfaces:
-                    tables.insert(0, tables.pop(i))
-                    chosen_by_input = True
-                    break
+            ]
+            if len(matched) == 1:
+                tables.insert(0, tables.pop(matched[0]))
+                chosen_by_input = True
 
     key, forms = tables[0]
     others = [{"paradigm_key": k, "forms": f} for k, f in tables[1:]]
@@ -1683,11 +1760,13 @@ def _paradigm(word: str) -> dict:
         "input": word,
         "lemma": lemma,
         "partofspeech": pos,
+        "partofspeech_estonian": _POS_LABELS_ET.get(pos, pos),
         "word_class": class_name,
+        "word_class_estonian": _WORD_CLASS_ET[class_name],
         "forms": forms,
         "paradigm_count": len(tables),
         "summary_estonian": (
-            f"Sõna '{lemma}' ({pos}) paradigma: {len(forms)} vormi."
+            f"Sõna '{lemma}' ({_pos_et(pos)}) paradigma: {len(forms)} vormi."
         ),
         "note": (
             "Generated via Vabamorf.synthesize. Some forms may be marked, "
@@ -1712,9 +1791,12 @@ def _paradigm(word: str) -> dict:
             why = "Esimesena on korpuses sagedasem tüüp."
         else:
             why = "Järjestus on Vabamorfi oma, sagedusandmeid ei olnud."
+        # "käändevorm", not "käändeline vorm": the latter is the term for a
+        # verb's nominal forms (infinitives, participles), so it would ask
+        # the caller for a participle.
         hint_et = (
             "" if chosen_by_input
-            else " Kui tead, millist sõna silmas pead, anna sisendiks käändeline vorm."
+            else " Kui tead, millist sõna silmas pead, anna sisendiks käändevorm."
         )
         result["ambiguity_estonian"] = (
             f"Sõnal '{lemma}' on Vabamorfi sõnastikus {len(tables)} eri muuttüüpi "

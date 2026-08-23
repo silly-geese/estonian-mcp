@@ -45,6 +45,7 @@ sys.path.insert(0, str(_ROOT))
 import server  # noqa: E402
 
 failures: list[str] = []
+skipped: list[str] = []
 
 
 def check(label: str, cond: bool, detail: str = "") -> None:
@@ -58,6 +59,15 @@ def check(label: str, cond: bool, detail: str = "") -> None:
 def surfaces(entry: dict) -> list[str]:
     s = entry["surface"]
     return [s] if isinstance(s, str) else list(s)
+
+
+def mine_only(by_form: list[dict], i: int, code: str) -> set:
+    """Surfaces of slot `code` that ONLY table i produces."""
+    others = set()
+    for j, t in enumerate(by_form):
+        if j != i:
+            others |= t.get(code, set())
+    return by_form[i].get(code, set()) - others
 
 
 def form_of(result: dict, code: str) -> list[str]:
@@ -107,6 +117,14 @@ def genuinely_uninflecting_words_still_say_so() -> None:
 
 def inflecting_reading_is_found() -> None:
     print("an inflecting reading of the word's own lemma is used")
+    if not HAVE_CORPUS:
+        # Promotion is gated on corpus attestation (see
+        # a_rare_reading_is_not_promoted), so with no model there is
+        # nothing to assert here beyond the degraded path, which that
+        # test covers.
+        print("  SKIP  no fastText model installed, promotion not exercised")
+        skipped.append("inflecting_reading_is_found")
+        return
     r = server._paradigm("kaunis")
     check("kaunis has a paradigm", len(r.get("forms", [])) == 28,
           f"{r.get('summary_estonian')}")
@@ -174,21 +192,27 @@ def homonym_paradigms_are_separated() -> None:
         r = server._paradigm(word)
         named = ([(r["paradigm_key"], r["forms"])]
                  + [(o["paradigm_key"], o["forms"]) for o in r["other_paradigms"]])
+        # The property that actually matters, checked exactly rather than
+        # by a prefix heuristic (a prefix test misses `kotta` leaking into
+        # the `koti` table, since it starts with neither key): every table
+        # must be EXACTLY what strict hinted synthesis produces. If any
+        # relaxation ever creeps back into _synthesize, this fails.
         for key, entries in named:
-            foreign = [k for k, _ in named if k != key]
-            leaked = [
-                (e["form"], s)
-                for e in entries for s in surfaces(e)
-                for k in foreign
-                if s == k or (s.startswith(k) and not s.startswith(key))
-            ]
-            check(f"{word}/{key}: no form from another type", not leaked, str(leaked[:3]))
+            for e in entries:
+                expect = server._synthesize(word, e["form"], r["partofspeech"], key)
+                got = surfaces(e)
+                check(f"{word}/{key} {e['form']}: exactly the hinted synthesis",
+                      got == expect, f"table={got} strict={expect}")
 
 
 def corpus_attestation_ranks_the_common_word_first() -> None:
     print("the paradigm Estonian actually uses is ranked first")
     if not HAVE_CORPUS:
-        check("SKIPPED: fastText model not installed", True)
+        # Not a pass. CI's smoke job runs fetch_resources.py first, so this
+        # branch only happens on a local run with no model, and it must be
+        # visible as a gap rather than counted as a green check.
+        print("  SKIP  no fastText model installed, ranking assertions not run")
+        skipped.append("corpus_attestation_ranks_the_common_word_first")
         return
     for word, expected in (("kott", "koti"), ("pilk", "pilgu")):
         r = server._paradigm(word)
@@ -250,9 +274,18 @@ def synthesis_invariants() -> None:
     check("duplicate lexicon entries collapse",
           server._synthesize("hall", "sg g", "A") == ["halli"],
           str(server._synthesize("hall", "sg g", "A")))
-    check("a wrong POS falls back instead of returning nothing",
-          server._synthesize("kaunis", "sg g", "D") == ["kauni"],
+    # The constraint is honoured strictly. Relaxing it on an empty result
+    # spliced another lexeme into the table: the pronoun `iga` has no
+    # plural, and the relaxed call filled it in from the noun `iga` "age".
+    check("a POS that cannot make the form returns nothing, not another word's",
+          server._synthesize("kaunis", "sg g", "D") == [],
           str(server._synthesize("kaunis", "sg g", "D")))
+    check("iga has no plural under its own POS",
+          server._synthesize("iga", "pl n", "P") == [],
+          str(server._synthesize("iga", "pl n", "P")))
+    check("and the relaxed call is what would have invented one",
+          "ead" in server._synthesize("iga", "pl n", ""),
+          "if this fails the example in the docstring is stale, not the code")
     check("free variants inside ONE paradigm are kept",
           set(server._synthesize("kaunis", "pl g", "A")) == {"kaunite", "kauniste"},
           str(server._synthesize("kaunis", "pl g", "A")))
@@ -260,8 +293,10 @@ def synthesis_invariants() -> None:
           isinstance(server._synthesize("qwertyxyz", "sg g", "S"), list))
 
     print("no form is silently dropped from a table")
-    for word, n in (("kott", 28), ("maitse", 28), ("kaunis", 28), ("esimene", 28),
-                    ("kasutama", 30)):
+    cases = [("kott", 28), ("maitse", 28), ("esimene", 28), ("kasutama", 30)]
+    if HAVE_CORPUS:
+        cases.append(("kaunis", 28))   # reaches 28 only once promoted
+    for word, n in cases:
         r = server._paradigm(word)
         check(f"{word} has {n} forms", len(r.get("forms", [])) == n,
               f"got {len(r.get('forms', []))}")
@@ -273,6 +308,172 @@ def synthesis_invariants() -> None:
     hints, _ = server._paradigm_hints("kott", "S", "sg g")
     check("an ambiguous lemma yields one hint per paradigm",
           sorted(hints) == ["kota", "koti"], str(hints))
+
+
+def no_form_is_invented_for_a_word_that_lacks_it() -> None:
+    """The regression the first cut of this change shipped.
+
+    `_synthesize` relaxed its POS constraint whenever a form came up
+    empty, which fills a real gap with another lexeme's forms. `iga` is a
+    pronoun with no plural; the noun `iga` "age" has one, so the table
+    grew `pl n: ead`. That is exactly the splice this module separates
+    inflection types to prevent. Numbers below are `origin/master`'s, which
+    was right here.
+    """
+    print("a word that lacks a form does not get one invented")
+    for word, n_forms in (("iga", 14), ("keegi", 14), ("midagi", 14),
+                          ("kogu", 1), ("ei", 0)):
+        r = server._paradigm(word)
+        check(f"{word} has {n_forms} forms", len(r.get("forms", [])) == n_forms,
+              f"got {len(r.get('forms', []))}: "
+              f"{[(e['form'], e['surface']) for e in r.get('forms', [])[:4]]}")
+    r = server._paradigm("iga")
+    check("iga has no plural at all",
+          not [e for e in r["forms"] if e["form"].startswith("pl")],
+          str([e["form"] for e in r["forms"] if e["form"].startswith("pl")]))
+    check("and specifically not the noun iga's plural",
+          "ead" not in {s for e in r["forms"] for s in surfaces(e)})
+
+
+def verb_free_variants_are_not_two_inflection_types() -> None:
+    """`öelda` / `ütelda` are rööpvormid of one lexeme, not two muuttüüpi.
+
+    Splitting on the da-infinitive produced `paradigm_count: 2`, a
+    byte-identical duplicate table in `other_paradigms`, and an Estonian
+    sentence asserting a distinction that does not exist.
+    """
+    print("verbs are not split on free-variant infinitives")
+    for verb in ("ütlema", "mõtlema", "jooksma", "kasutama"):
+        r = server._paradigm(verb)
+        check(f"{verb} is one paradigm", r.get("paradigm_count") == 1,
+              f"count={r.get('paradigm_count')} keys="
+              f"{[o['paradigm_key'] for o in r.get('other_paradigms', [])]}")
+        check(f"{verb} makes no ambiguity claim", "ambiguity_estonian" not in r,
+              str(r.get("ambiguity_estonian")))
+    # The free variants are still both there, inside the one table.
+    forms = {e["form"]: surfaces(e) for e in server._paradigm("ütlema")["forms"]}
+    check("both da-forms are kept as variants of the one paradigm",
+          set(forms.get("da", [])) == {"öelda", "ütelda"}, str(forms.get("da")))
+
+
+def a_shared_form_does_not_select_a_type() -> None:
+    """`kotti` is the sg partitive of `koti` AND the pl partitive of `kota`.
+
+    Taking the first table containing the input answered `paradigm("kotti")`
+    with `kota` whenever corpus ranking was unavailable, while claiming the
+    input had decided it.
+    """
+    print("an input form shared by both types decides nothing")
+    r = server._paradigm("kott")
+    named = ([(r["paradigm_key"], r["forms"])]
+             + [(o["paradigm_key"], o["forms"]) for o in r["other_paradigms"]])
+    sets = [{s.lower() for e in entries for s in surfaces(e)} for _k, entries in named]
+    check("kotti really is in both tables (the premise)",
+          "kotti" in sets[0] and "kotti" in sets[1], str(sorted(sets[0] & sets[1])))
+
+    original = server._corpus_ranks
+    server._corpus_ranks = lambda: None
+    try:
+        r = server._paradigm("kotti")
+        check("a shared form does not claim to have decided",
+              "sinu antud vorm" not in (r.get("ambiguity_estonian") or ""),
+              str(r.get("ambiguity_estonian")))
+        check("a shared form leaves ranked_by_corpus_frequency alone",
+              r.get("ranked_by_corpus_frequency") is False)
+        for word, key in (("koti", "koti"), ("kotta", "kota"), ("kotisse", "koti")):
+            r = server._paradigm(word)
+            check(f"{word} (unique to one type) still selects {key}",
+                  r.get("paradigm_key") == key, str(r.get("paradigm_key")))
+            check(f"{word} says the input decided",
+                  "sinu antud vorm" in (r.get("ambiguity_estonian") or ""))
+    finally:
+        server._corpus_ranks = original
+
+
+def a_rare_reading_is_not_promoted() -> None:
+    """`kohe` ("immediately") has an adjective reading of its own lemma,
+    `kohe : koheda`, that almost nobody means. Corpus attestation is what
+    separates it from `kaunis`, whose adjective reading is the common one."""
+    print("only corpus-attested readings are promoted")
+    r = server._paradigm("kohe")
+    check("kohe is not promoted to the koheda adjective",
+          r.get("forms") == [] and r.get("partofspeech") == "D",
+          f"pos={r.get('partofspeech')} forms={len(r.get('forms', []))}")
+    if HAVE_CORPUS:
+        ranks = server._corpus_ranks()
+        check("the premise: kauni is attested, koheda is not",
+              "kauni" in ranks and "koheda" not in ranks)
+        check("kaunis IS promoted", len(server._paradigm("kaunis")["forms"]) == 28)
+
+    original = server._corpus_ranks
+    server._corpus_ranks = lambda: None
+    try:
+        r = server._paradigm("kaunis")
+        check("without corpus data nothing is promoted", r.get("forms") == [],
+              f"got {len(r.get('forms', []))} forms")
+    finally:
+        server._corpus_ranks = original
+
+
+def unambiguous_words_never_touch_the_model() -> None:
+    """The model is 34 MB and lru_cache does not serialise misses, so a
+    cold burst on the cheapest tool in the server could load it once per
+    caller. Ranking is meaningless below two candidates, so it must not
+    even be consulted there."""
+    print("the corpus model is consulted only when there is something to rank")
+    calls = []
+    original = server._corpus_ranks
+
+    def counting():
+        calls.append(1)
+        return original()
+
+    server._corpus_ranks = counting
+    try:
+        for word in ("maja", "kasutama", "esimene", "raamat", "ilus"):
+            server._paradigm(word)
+        check("no lookup for unambiguous words", calls == [], f"{len(calls)} lookups")
+        server._paradigm("kott")
+        check("but there is one when a lemma has two types", len(calls) >= 1)
+    finally:
+        server._corpus_ranks = original
+
+
+def every_return_path_carries_paradigm_count() -> None:
+    """CI itself reads r["paradigm_count"]; the short-circuit returns used
+    to omit it, so any particle KeyError'd."""
+    print("paradigm_count is on every return path")
+    for word in ("ja", "väga", "qwertyuiopasdf", "kott", "kasutama", "esimene"):
+        r = server._paradigm(word)
+        check(f"{word} has paradigm_count", "paradigm_count" in r, str(sorted(r)))
+
+
+def estonian_labels_accompany_every_pos_code() -> None:
+    """Project rule: an English or tagset label never ships without a
+    correct Estonian rendering."""
+    print("POS codes are glossed in Estonian")
+    for word, pos, et in (("kott", "S", "nimisõna"), ("ilus", "A", "omadussõna"),
+                          ("esimene", "O", "järgarvsõna"),
+                          ("parem", "C", "omadussõna keskvõrdes"),
+                          ("parim", "U", "omadussõna ülivõrdes"),
+                          ("kasutama", "V", "tegusõna"),
+                          ("ja", "J", "sidesõna"), ("väga", "D", "määrsõna")):
+        r = server._paradigm(word)
+        check(f"{word}: {pos} = {et}",
+              r.get("partofspeech") == pos and r.get("partofspeech_estonian") == et,
+              f"pos={r.get('partofspeech')} et={r.get('partofspeech_estonian')}")
+    check("word_class is glossed too",
+          server._paradigm("kott")["word_class_estonian"] == "käändsõna")
+    check("and for verbs",
+          server._paradigm("kasutama")["word_class_estonian"] == "tegusõna")
+    missing = (server._NOMINAL_POS | {"V"}) - set(server._POS_LABELS_ET)
+    check("every code we can emit has an Estonian name", not missing, str(sorted(missing)))
+    # "käändeline vorm" is the term for a verb's nominal forms, so asking
+    # for one would be asking for a participle. The word wanted is
+    # "käändevorm".
+    et = server._paradigm("kott").get("ambiguity_estonian") or ""
+    check("asks for a käändevorm, not a käändeline vorm",
+          "käändevorm" in et and "käändeline" not in et, et)
 
 
 def invariant_words_are_labelled() -> None:
@@ -392,6 +593,13 @@ def disputes_file_is_well_formed() -> None:
 
 
 ordinals_comparatives_superlatives_inflect()
+no_form_is_invented_for_a_word_that_lacks_it()
+verb_free_variants_are_not_two_inflection_types()
+a_shared_form_does_not_select_a_type()
+a_rare_reading_is_not_promoted()
+unambiguous_words_never_touch_the_model()
+every_return_path_carries_paradigm_count()
+estonian_labels_accompany_every_pos_code()
 genuinely_uninflecting_words_still_say_so()
 inflecting_reading_is_found()
 wrong_lemma_readings_are_not_rescued()
@@ -411,4 +619,8 @@ if failures:
     for f in failures:
         print(" -", f)
     sys.exit(1)
+if skipped:
+    print(f"\n{len(skipped)} group(s) skipped for missing resources:")
+    for g in skipped:
+        print(" -", g)
 print("\nall paradigm tests passed")

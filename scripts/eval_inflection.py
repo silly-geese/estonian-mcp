@@ -94,20 +94,31 @@ def load_disputes() -> dict:
 
 
 def _pos_of(word: str) -> str:
-    """The POS Vabamorf gives an isolated word: what `paradigm` uses to
-    constrain synthesis.
+    """A POS constraint for this word that Vabamorf can actually synthesize
+    under, or "" for no constraint.
 
     Only the POS. The dataset supplies base forms, so the word IS its own
     lemma here and re-lemmatising it can only lose: `ergas` (adjective,
-    `ergas : erksa`) comes back as the past tense of a verb `ergama`, and
-    a verb lemma has no singular genitive to synthesize. `_synthesize`
-    falls back past a wrong POS; it cannot fall back past a wrong lemma.
+    `ergas : erksa`) comes back as the past tense of a verb `ergama`, and a
+    verb lemma has no singular genitive at all.
+
+    THE CONSTRAINT IS DROPPED WHEN IT CANNOT PRODUCE THE KEY FORM. That is
+    a harness rule, not a server one, and it is sound only because of a
+    fact about this dataset: every input is a nominal base form. So a POS
+    that yields no singular genitive is a misanalysis of a known nominal
+    (`ergas` again, tagged V), not a word that genuinely lacks one.
+    `_synthesize` refuses to make that inference for the server, and it is
+    right to: there `iga` really is a pronoun with no plural, and relaxing
+    the POS would splice the noun `iga` "age" into its table.
     """
     try:
         a = _vabamorf().analyze([word], disambiguate=True)[0].get("analysis") or []
     except Exception:
         a = []
-    return a[0]["partofspeech"] if a else ""
+    pos = a[0]["partofspeech"] if a else ""
+    if pos and not _synthesize(word, _KEY_FORM, pos):
+        return ""
+    return pos
 
 
 def word_surfaces(word: str, form_codes: list[str]) -> tuple[str, set[str]]:
@@ -153,6 +164,7 @@ def main() -> None:
         (d["noun_phrase"], d["plurality"], d["case"]): d for d in doc["disputes"]
     }
     stale: list[tuple] = []
+    seen_disputes: set[tuple] = set()
     adjudicated_any = 0
     adjudicated_first = 0
 
@@ -194,9 +206,11 @@ def main() -> None:
         if hit_first:
             first_ok += 1
 
-        d = disputes.get((phrase, row["plurality"], row["case"]))
+        dkey = (phrase, row["plurality"], row["case"])
+        d = disputes.get(dkey)
         if d is None:
             continue
+        seen_disputes.add(dkey)
         if sorted(d["dataset_gold"]) != sorted(gold):
             stale.append((phrase, row["plurality"], row["case"],
                           d["dataset_gold"], sorted(gold)))
@@ -212,10 +226,21 @@ def main() -> None:
     print(f"  any-candidate accuracy  : {any_ok}/{n} = {100*any_ok/n:.1f}%")
     print(f"  first-candidate accuracy: {first_ok}/{n} = {100*first_ok/n:.1f}%")
 
+    # A dispute whose row is GONE from the dataset never came up in the
+    # loop, so it can't have been compared. Without this it would sit in
+    # the file for ever, uncounted and unreported, while the header kept
+    # announcing 13 disputed rows.
+    for key in disputes:
+        if key not in seen_disputes:
+            stale.append((key[0], key[1], key[2], disputes[key]["dataset_gold"],
+                          ["(row no longer present in the dataset)"]))
+
+    live = len(doc["disputes"]) - len(stale)
     adj_any = any_ok + adjudicated_any
     adj_first = first_ok + adjudicated_first
-    print(f"\nEKI-adjudicated ({len(doc['disputes'])} gold rows contradict EKI; "
-          f"{adjudicated_any} any / {adjudicated_first} first awarded here):")
+    print(f"\nEKI-adjudicated ({live} of {len(doc['disputes'])} recorded disputes "
+          f"still match the dataset; {adjudicated_any} any / {adjudicated_first} "
+          f"first awarded here):")
     print(f"  any-candidate accuracy  : {adj_any}/{n} = {100*adj_any/n:.1f}%")
     print(f"  first-candidate accuracy: {adj_first}/{n} = {100*adj_first/n:.1f}%")
 

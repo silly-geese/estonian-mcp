@@ -60,9 +60,16 @@ benchmark, and none of them had a test.
   `find_related_words` already loads: `koti` is in it, `kota` is not. This
   is a local read of an already-present file, no network, and it is
   consulted **only** when a lemma has more than one inflection type (about
-  2.5% of words). With the model absent, the order is Vabamorf's,
-  `ranked_by_corpus_frequency` is `false`, the Estonian text says so, and
-  no paradigm is lost.
+  2.5% of words) or when a reading is a promotion candidate (about 0.25%).
+  It is never touched for an ordinary word, so a cold burst of `paradigm`
+  calls cannot multiply the load. With the model absent, the order is
+  Vabamorf's, `ranked_by_corpus_frequency` is `false`, the Estonian text
+  says so, and no inflection type is lost.
+
+  An input form that belongs to BOTH types (`kotti` is the singular
+  partitive of `koti` and the plural partitive of `kota`) identifies
+  nothing, and is left to the ranking rather than silently selecting
+  whichever table came first.
 
 - **`paradigm` threw away the caller's own evidence.** `paradigm("koti")`
   returned exactly what `paradigm("kott")` returned, although the input
@@ -71,11 +78,26 @@ benchmark, and none of them had a test.
   exact. The tool `note` used to advise the opposite ("pass the bare lemma
   ... for the cleanest result"); it now says what is true.
 
+- **Verbs are no longer split into inflection types they do not have.**
+  A verb with two da-infinitives (`öelda`/`ütelda`, `mõelda`/`mõtelda`) has
+  **rööpvormid**, free variants of one lexeme, not two muuttüüpi. Both
+  variants stay, inside the one table.
+
 - **Smaller, same area.** Duplicate lexicon entries no longer surface as
-  `["halli", "halli"]`. A form is no longer dropped from the table when
-  POS-constrained synthesis comes up empty; synthesis falls back instead.
-  A word whose forms never change (`väärt`, `eri`) is labelled `invariant`
-  rather than quietly returning 28 identical strings.
+  `["halli", "halli"]`. A word whose forms never change (`väärt`, `eri`) is
+  labelled `invariant` rather than quietly returning 28 identical strings.
+  `paradigm_count` is now on every return path, including the two
+  short-circuits, so a caller reading it does not `KeyError` on a particle.
+
+### Added
+
+- **Every part-of-speech code the tool prints now carries its Estonian
+  name** (`partofspeech_estonian`, and inline in the Estonian prose):
+  `S nimisõna`, `A omadussõna`, `C omadussõna keskvõrdes`,
+  `U omadussõna ülivõrdes`, `O järgarvsõna`, `V tegusõna`, `D määrsõna`
+  and the rest. `word_class` likewise gained `word_class_estonian`
+  (`käändsõna` / `tegusõna`). A bare tagset letter dropped into an
+  Estonian sentence is not an answer.
 
 ### Changed
 
@@ -108,9 +130,12 @@ benchmark, and none of them had a test.
   `uv run python scripts/eval_inflection.py --report-disputes` prints them
   as a markdown table for reporting upstream.
 
-- `tests/test_paradigm.py` is new: 202 checks over all four defects, both
-  EKI rules, the disputed rows, the degraded no-model path, and the guards
-  that keep the reading rescue from being worse than the bug.
+- `tests/test_paradigm.py` is new: 523 checks over all four defects, both
+  EKI rules, the 13 disputed rows, the degraded no-model path, the guards
+  that keep the reading rescue from being worse than the bug, and the
+  property that each inflection type's table is exactly what strict hinted
+  synthesis produces, so no relaxation can creep back in.
+
 ## [0.5.5] — 2026-08-23
 
 ### Fixed

@@ -38,7 +38,9 @@ of images is not one, however natural it sounds in ML jargon).
 > gold dataset (a noun-phrase inflection benchmark; Lillepalu & Alumäe,
 > [arXiv:2510.21193](https://arxiv.org/abs/2510.21193v2)), our morphology
 > engine scores **99.1% first-candidate / 99.1% any-candidate** over
-> 1,400 items. Every one of the 13 residual misses is a gold row that
+> 1,400 items (first-candidate is 96.6% without the optional fastText
+> model, which is what ranks a lemma's inflection types; any-candidate is
+> 99.1% either way). Every one of the 13 residual misses is a gold row that
 > contradicts EKI, so EKI-adjudicated the score is **100% / 100%**; the
 > disputed rows are listed with their citations in
 > [`data/inflection_et_eki_disputes.json`](data/inflection_et_eki_disputes.json).
