@@ -7,6 +7,88 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.5] — 2026-08-23
+
+### Fixed
+
+- **`analyze_morphology` reported `-mata` attributes as declinable**
+  ([#42](https://github.com/silly-geese/estonian-mcp/issues/42), reported
+  by @tomkabel with the normative citations). The `-mata` form is the
+  tud-participle's negative counterpart and EKI states it "jääb alati
+  käändumatuks": `täitmata lepingute reserv`, not *täitmatute. The ending
+  test listed only `-tud`/`-dud`/`-nud`, so every `-mata` attribute came
+  back `indeclinable: false`, nudging a consumer toward the non-standard
+  declined form. This bites hardest in the legal and administrative
+  register the editorial tools target, where `-mata` is everywhere.
+
+- **`-tu` caritive adjectives were frozen when they should agree.** Not
+  reported, but the reporter's own EKI citation points at it: `-tu`
+  caritives DO agree, and their nominative plural also ends in `-tud`
+  (`õnnetu` → `õnnetud`, `lugematu` → `lugematud`). An ending test cannot
+  tell those from participles, so it marked them invariant, which would
+  produce *`õnnetud laste` where the correct form is `õnnetute laste`.
+
+  Rather than add `-mata` to the ending list and leave that in place, the
+  check now consults Vabamorf, which separates *most* of them: a frozen
+  attributive has an adjective reading carrying no case/number form, a
+  declining one only ever carries `sg n` / `pl n`. Not all — see Known
+  limits below. The ending list stays as a fallback,
+  because Vabamorf sometimes misanalyses these as nouns (`hajutatud` →
+  `S/pl n/hajutatu`) and the ending is correct there.
+
+  `analyze_morphology` passes the analyses it already has, so the hot path
+  costs nothing extra; other callers get a cached lookup.
+
+- **A second `-mata` trap, caught while self-reviewing this fix.** A noun
+  whose stem ends in `-ma` forms its abessive in `-mata`: `teema` →
+  `teemata`, `kliima` → `kliimata`, `draama` → `draamata`. Those are
+  inflected nouns, not the `mata`-form, so simply adding `mata` to the
+  ending list froze them. The check now declines anything with an
+  abessive reading before the ending fallback runs. The issue author
+  predicted this class ("a handful of non-participle words end in
+  `-mata`") and they were right.
+
+- **Ordinary plural nouns were being frozen too, and that was the worst of
+  the three.** Any Estonian noun whose nominative plural ends `-tud`,
+  `-dud` or `-nud` hit the ending test: `raamatud`, `linnud`, `laenud`,
+  `kohtud`, `toidud`, `säästud`. An agent following the documented
+  contract would write *`paksude raamatud` for `paksude raamatute`. This
+  predates #42, but it sits in the same code path and the fix is the same
+  shape: the lemma separates them, because Vabamorf's misanalysed
+  participles lemmatise to a deverbal stem (`hajutatud` → `hajutatu`)
+  while an ordinary plural does not (`raamatud` → `raamat`). The ending
+  fallback now requires a deverbal lemma.
+
+- **The verdict no longer depends on Vabamorf's analysis ordering.** A
+  participle like `tuntud` comes back as `A/''`, `V/tud`, `A/pl n` and
+  `A/sg n`; reading only the first analysis meant a reordering upstream
+  could silently flip it. All adjective readings are considered, and one
+  with no case/number form is enough to freeze the word. The probe is also
+  looked up from the lowercased word, so capitalisation cannot change the
+  answer (`Täitmata` analysed as `H/sg n` where `täitmata` is `V/mata`).
+  Without this, `lugupeetud` — the standard salutation in Estonian
+  official correspondence — reported as declinable.
+
+### Known limits
+
+Stated here because the morphology cannot resolve them, and the tests
+assert them so the documentation and the behaviour stay in step:
+
+- A caritive whose lemma ends `-tu` and which Vabamorf tags only as a noun
+  (`korratud` → `korratu`, `maitsetud`) is still frozen. That lemma is
+  indistinguishable from a deverbal `hajutatu`.
+- Where the caritive plural and the participle are the same string
+  (`nõutud`, `kaalutud`, `kohatud`), the participle reading wins.
+  Separating them needs semantics, not morphology.
+
+### Notes
+
+- The `inflection_et` benchmark is **unchanged at 96.5% first-candidate /
+  99.1% any-candidate**, and that is not a coincidence worth trusting: its
+  200 noun phrases contain zero `-mata` attributes and no `-tu` caritive
+  plurals, so it exercises neither defect and could not have caught either.
+  `tests/test_indeclinable.py` is what guards this now.
+
 ## [0.5.4] — 2026-08-23
 
 ### Security

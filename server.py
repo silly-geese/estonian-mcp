@@ -71,7 +71,7 @@ DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.5.4"
+SERVER_VERSION = "0.5.5"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -1187,24 +1187,133 @@ _INDECLINABLE_ADJ_ET: frozenset[str] = frozenset({
 })
 
 
-def _is_indeclinable_attr(word: str) -> bool:
+# Lemma endings that mark a -tud/-dud/-nud surface form as genuinely
+# deverbal. Needed because Vabamorf misanalyses some participles as nouns
+# (hajutatud -> S/pl n, lemma `hajutatu`), and the ending alone cannot tell
+# those from an ordinary plural noun that happens to end the same way
+# (raamatud -> lemma `raamat`, linnud -> `lind`).
+_DEVERBAL_LEMMA_ENDINGS: tuple[str, ...] = ("tu", "nu", "du", "tud", "nud", "dud")
+
+
+@lru_cache(maxsize=4096)
+def _attr_analyses(word: str) -> tuple[tuple[str, str, str], ...]:
+    """Every (partofspeech, form, lemma) triple Vabamorf offers for a word
+    in isolation.
+
+    ALL analyses, not just the first: a participle like `tuntud` comes back
+    as A/'', V/tud, A/pl n and A/sg n, so picking index 0 would make the
+    verdict depend on Vabamorf's ordering. Cached, because callers hit the
+    same attributes repeatedly; only consulted when the caller has no
+    analysis of its own to pass in.
+
+    Returns () if the word cannot be analysed, which sends the caller to
+    the ending heuristic.
+    """
+    try:
+        t = _Text()(word)
+        t.tag_layer(["morph_analysis"])
+        spans = list(t.morph_analysis)
+        if not spans:
+            return ()
+        span = spans[0]
+        # strict=False on purpose: if Vabamorf ever returns mismatched list
+        # lengths, truncating beats raising inside a tool call over a
+        # morphology detail.
+        return tuple(
+            (p or "", f or "", (lm or "").lower())
+            for p, f, lm in zip(span.partofspeech, span.form, span.lemma, strict=False)
+        )
+    except Exception:
+        return ()
+
+
+def _is_indeclinable_attr(
+    word: str, analyses: tuple[tuple[str, str, str], ...] | None = None
+) -> bool:
     """True if a word does NOT inflect when used attributively (before a
     noun), so adjective-noun agreement should leave it in base form.
 
-    Two cases, both verified against TalTech's inflection_et benchmark:
+    Three invariant classes:
     - lexical indeclinables (täis, eri, väärt, ...)
-    - past participles in -tud / -dud / -nud, which are invariant in
-      attributive position (`tuntud laulja` → `tuntud laulja` in the
-      genitive, not *tuntu laulja). Detected by ending because Vabamorf
-      often misanalyses them (e.g. hajutatud → noun 'hajutatu').
+    - past participles in -tud / -dud / -nud (`tuntud laulja` stays
+      `tuntud` in the genitive, not *tuntu laulja)
+    - the -mata form, the tud-participle's negative counterpart, which EKI
+      states "jääb alati käändumatuks": `täitmata lepingute reserv`, not
+      *täitmatute. Issue #42.
 
-    NOT flagged: -v present participles (rahuldav → rahuldava), which do
+    WHY THIS IS NOT AN ENDING TEST. Three traps an ending test walks into:
+
+    1. -tu caritive adjectives DO agree, and their nominative plural also
+       ends in -tud: `õnnetu` → `õnnetud`. Freezing those yields
+       *`õnnetud laste` for `õnnetute laste`.
+    2. Ordinary plural nouns end the same way: `raamatud` (raamat),
+       `linnud` (lind), `kohtud` (kohus). Freezing those is worse still,
+       since they are common words.
+    3. A noun whose stem ends in -ma forms its abessive in -mata:
+       `teema` → `teemata`. That is an inflected noun, not the mata-form.
+
+    So the order is: an adjective reading decides it (an invariant
+    attributive has one with NO case/number form, a declining one only
+    ever carries `sg n` / `pl n`); then -mata is invariant unless it is a
+    NOUN abessive; then -tud/-dud/-nud is invariant only when some lemma
+    looks deverbal, which separates `hajutatu` from `raamat`.
+
+    KNOWN LIMITS, stated because the morphology cannot resolve them:
+
+    - A caritive whose lemma ends -tu and which Vabamorf tags ONLY as a
+      noun (`töötud` → `töötu`, `korratud`, `maitsetud`) is still frozen.
+      That lemma is shaped exactly like the deverbal `hajutatu`, and no
+      suffix test separates them. Checking whether a matching verb exists
+      is worse, not better: it breaks `lugupeetud` and `mahajäetud` while
+      falsely firing on `kasutud` and `raamatud`.
+    - Homographs where the caritive plural and the participle are the same
+      string cannot be resolved at all, and they fail in BOTH directions
+      depending on which readings Vabamorf offers: `nõutud` and `kaalutud`
+      have an A/'' reading and freeze, while a word Vabamorf knows only as
+      a caritive declines even where the participle sense was meant.
+      Disambiguating needs semantics, not morphology.
+
+    CONTEXT BEATS ISOLATION, and callers differ. `analyze_morphology`
+    supplies analyses disambiguated from the SENTENCE, which resolves most
+    of the first class correctly: `töötud inimesed` gives A/pl n and
+    declines, where the same word alone gives S/pl n and freezes. The
+    isolated lookup is a best-effort fallback for callers that have no
+    sentence, so the two can disagree on exactly those ambiguous words.
+    Prefer passing analyses when you have them.
+
+    `analyses` may be supplied by a caller that already has them, to avoid
+    a second pass; when omitted they are looked up from the LOWERCASED
+    word, so the verdict does not depend on incidental capitalisation.
+
+    NOT flagged: -v present participles (rahuldav -> rahuldava), which
     agree normally.
     """
     w = word.lower()
     if w in _INDECLINABLE_ADJ_ET:
         return True
-    return w.endswith(("tud", "dud", "nud"))
+    if analyses is None:
+        analyses = _attr_analyses(w)
+
+    adjective_readings = [f for p, f, _lm in analyses if p == "A"]
+    if adjective_readings:
+        return any(not (f or "").strip() for f in adjective_readings)
+
+    if w.endswith("mata"):
+        # Trap 3. Only a NOUN abessive is an inflected form here; the
+        # guesser also emits spurious abessive readings under other tags
+        # for real mata-forms (`võltsimata` → C/sg ab).
+        return not any(
+            p == "S" and (f or "").endswith("ab") for p, f, _lm in analyses
+        )
+
+    if w.endswith(("tud", "dud", "nud")):
+        # Trap 2. Vabamorf misanalyses some participles as nouns, so the
+        # ending still has work to do -- but only when a lemma looks
+        # deverbal. `hajutatu` yes, `raamat` no.
+        return any(
+            lm.endswith(_DEVERBAL_LEMMA_ENDINGS) for _p, _f, lm in analyses
+        )
+    return False
 
 
 @mcp.tool(annotations=ToolAnnotations(
@@ -1236,9 +1345,9 @@ def analyze_morphology(text: Annotated[str, Field(description="Estonian text to 
         same flag (quote this verbatim in Estonian replies; do NOT
         translate the English usage_note yourself)
       - indeclinable: True for words that stay in base form when used
-        attributively (lexical indeclinables like `täis`, and -tud/-nud
-        past participles like `tuntud`) — i.e. they do NOT take the
-        noun's case ending in agreement. Use this before inflecting a
+        attributively (lexical indeclinables like `täis`, -tud/-nud past
+        participles like `tuntud`, and the -mata form like `täitmata`)
+        — i.e. they do NOT take the noun's case ending in agreement. Use this before inflecting a
         noun phrase so you don't wrongly decline an invariant adjective.
 
     Input is capped at 100,000 characters.
@@ -1260,7 +1369,10 @@ def analyze_morphology(text: Annotated[str, Field(description="Estonian text to 
         analyses_count = len(lemmas)
         is_ambiguous = analyses_count > 1
         code, et = _usage_note(_first(lemmas), _first(pos))
-        indeclinable = _is_indeclinable_attr(word)
+        indeclinable = _is_indeclinable_attr(
+            word,
+            tuple((p or "", f or "", (lm or "").lower())
+                  for p, f, lm in zip(pos, forms, lemmas, strict=False)))
         if all_analyses:
             analyses = [
                 {
