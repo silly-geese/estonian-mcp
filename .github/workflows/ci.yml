@@ -100,6 +100,12 @@ jobs:
       - name: Run indeclinable-attribute tests (issue #42)
         run: uv run --python ${{ matrix.python-version }} python tests/test_indeclinable.py
 
+      # The inflection_et audit: paradigm generation, homonym inflection
+      # types, and the two EKI participle rules the disputed gold rows get
+      # wrong. Dataset-independent, so it needs no download.
+      - name: Run paradigm tests (inflection_et audit)
+        run: uv run --python ${{ matrix.python-version }} python tests/test_paradigm.py
+
   # Proves the DOCUMENTED source-install path works, from a clean state.
   # The existing `smoke` job pre-fetches resources through bespoke steps and
   # exports ESTNLTK_MCP_FASTTEXT_PATH, which masks exactly the class of bug
@@ -146,6 +152,18 @@ jobs:
               else:
                   raise SystemExit("expected the tool to fail before setup")
           print("all resource-dependent tools fail actionably before setup")
+
+          # paradigm must NOT join that list. It consults the fastText
+          # vocabulary to rank homonymous inflection types, and that must
+          # stay a bonus: with no model installed it still answers, still
+          # returns every inflection type, and says the ranking is not
+          # corpus-backed rather than implying it is.
+          r = server.paradigm("kott")
+          assert len(r["forms"]) == 28, r
+          assert r["paradigm_count"] == 2, r
+          assert r["ranked_by_corpus_frequency"] is False, r
+          assert server.paradigm("esimene")["forms"], "ordinals lost their paradigm"
+          print("paradigm works with no resources installed")
           EOF
 
       # The README's setup step, verbatim. No env overrides.
