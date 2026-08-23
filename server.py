@@ -1188,74 +1188,90 @@ _INDECLINABLE_ADJ_ET: frozenset[str] = frozenset({
 
 
 # Endings that mark an attributive as invariant when Vabamorf gives us no
-# usable adjective analysis. -mata is the tud-participle's negative form
-# (issue #42); EKI: "mata-vorm jääb alati käändumatuks".
+# usable analysis. -mata is the tud-participle's negative form (issue #42);
+# EKI: "mata-vorm jaab alati kaandumatuks".
 _INDECLINABLE_ATTR_ENDINGS: tuple[str, ...] = ("tud", "dud", "nud", "mata")
 
 
 @lru_cache(maxsize=4096)
-def _attr_morphology(word: str) -> tuple[str, str]:
-    """(partofspeech, form) for a single word in isolation, via Vabamorf.
+def _attr_analyses(word: str) -> tuple[tuple[str, str], ...]:
+    """Every (partofspeech, form) pair Vabamorf offers for a word in
+    isolation.
 
-    Cached because callers hit the same attributes repeatedly and this is
-    only consulted when the caller has no analysis of its own to pass in.
-    Returns ("", "") if the word cannot be analysed, which makes the caller
-    fall back to the ending heuristic.
+    ALL analyses, not just the first: a participle like `tuntud` comes back
+    as A/'', V/tud, A/pl n and A/sg n, and picking index 0 would make the
+    verdict depend on Vabamorf's ordering. Cached, because callers hit the
+    same attributes repeatedly; only consulted when the caller has no
+    analysis of its own to pass in.
+
+    Returns () if the word cannot be analysed, which sends the caller to
+    the ending heuristic.
     """
     try:
         t = _Text()(word)
         t.tag_layer(["morph_analysis"])
         spans = list(t.morph_analysis)
         if not spans:
-            return ("", "")
-        pos, form, _lemma = _span_bits(spans[0])
-        return (pos, form)
+            return ()
+        span = spans[0]
+        poss, forms = list(span.partofspeech), list(span.form)
+        # strict=False on purpose: if Vabamorf ever returns mismatched
+        # list lengths, truncating is far better than raising inside a
+        # tool call over a morphology detail.
+        return tuple((p or "", f or "") for p, f in zip(poss, forms, strict=False))
     except Exception:
-        return ("", "")
+        return ()
 
 
 def _is_indeclinable_attr(
-    word: str, pos: str | None = None, form: str | None = None
+    word: str, analyses: tuple[tuple[str, str], ...] | None = None
 ) -> bool:
     """True if a word does NOT inflect when used attributively (before a
     noun), so adjective-noun agreement should leave it in base form.
 
-    Three cases:
-    - lexical indeclinables (täis, eri, väärt, ...)
-    - past participles in -tud / -dud / -nud, invariant as an eestäiend
-      (`tuntud laulja` stays `tuntud laulja` in the genitive, not
-      *tuntu laulja)
+    Three invariant classes:
+    - lexical indeclinables (tais, eri, vaart, ...)
+    - past participles in -tud / -dud / -nud (`tuntud laulja` stays
+      `tuntud` in the genitive, not *tuntu laulja)
     - the -mata form, the tud-participle's negative counterpart, which EKI
-      states "jääb alati käändumatuks": `täitmata lepingute reserv`, not
-      *täitmatute. Reported as issue #42.
+      states "jaab alati kaandumatuks": `taitmata lepingute reserv`, not
+      *taitmatute. Issue #42.
 
-    THE -tu TRAP. An ending test alone cannot do this correctly, because
-    -tu caritive adjectives DO agree and their nominative plural also ends
-    in -tud: `õnnetu` → `õnnetud`, `lugematu` → `lugematud`. Treating those
-    as invariant produced *`õnnetud laste` instead of `õnnetute laste`.
-    Vabamorf separates the two cleanly: a frozen attributive is tagged as
-    an adjective carrying NO case/number form, while a declining one
-    carries `sg n` / `pl n` and lemmatises back to -tu.
+    WHY THIS IS NOT AN ENDING TEST. Two traps an ending test walks into:
 
-    So when the word analyses as an adjective we trust the form field, and
-    otherwise fall back to the ending. The fallback matters: Vabamorf
-    sometimes misanalyses these as nouns (`hajutatud` → S/pl n/`hajutatu`),
-    and the ending is right in that case.
+    1. -tu caritive adjectives DO agree, and their nominative plural also
+       ends in -tud: `onnetu` -> `onnetud`, `lugematu` -> `lugematud`.
+       Freezing those yields *`onnetud laste` for `onnetute laste`.
+    2. A noun whose stem ends in -ma forms its abessive in -mata:
+       `teema` -> `teemata`, `kliima` -> `kliimata`. Those are inflected
+       nouns, not the mata-form.
 
-    `pos` and `form` may be supplied by a caller that already has the
-    analysis, to avoid a second pass; when omitted they are looked up.
+    So: if any analysis is an adjective, trust morphology -- an invariant
+    attributive has an adjective reading with NO case/number form, while a
+    declining one only ever carries `sg n` / `pl n`. Otherwise, an
+    abessive reading means trap 2 and we decline. Only with no usable
+    analysis do we fall back to the ending, which still matters because
+    Vabamorf sometimes misanalyses a participle as a noun
+    (`hajutatud` -> S/pl n/`hajutatu`) and the ending is right there.
 
-    NOT flagged: -v present participles (rahuldav → rahuldava), which
+    `analyses` may be supplied by a caller that already has them, to avoid
+    a second pass; when omitted they are looked up from the LOWERCASED
+    word, so the verdict does not depend on incidental capitalisation.
+
+    NOT flagged: -v present participles (rahuldav -> rahuldava), which
     agree normally.
     """
     w = word.lower()
     if w in _INDECLINABLE_ADJ_ET:
         return True
-    if pos is None and form is None:
-        pos, form = _attr_morphology(word)
-    if (pos or "") == "A":
-        # Adjective with a case/number form => it declines.
-        return not (form or "").strip()
+    if analyses is None:
+        analyses = _attr_analyses(w)
+
+    adjective_readings = [f for p, f in analyses if p == "A"]
+    if adjective_readings:
+        return any(not (f or "").strip() for f in adjective_readings)
+    if any((f or "").endswith("ab") for _p, f in analyses):
+        return False
     return w.endswith(_INDECLINABLE_ATTR_ENDINGS)
 
 
@@ -1288,9 +1304,9 @@ def analyze_morphology(text: Annotated[str, Field(description="Estonian text to 
         same flag (quote this verbatim in Estonian replies; do NOT
         translate the English usage_note yourself)
       - indeclinable: True for words that stay in base form when used
-        attributively (lexical indeclinables like `täis`, and -tud/-nud
-        past participles like `tuntud`) — i.e. they do NOT take the
-        noun's case ending in agreement. Use this before inflecting a
+        attributively (lexical indeclinables like `täis`, -tud/-nud past
+        participles like `tuntud`, and the -mata form like `täitmata`)
+        — i.e. they do NOT take the noun's case ending in agreement. Use this before inflecting a
         noun phrase so you don't wrongly decline an invariant adjective.
 
     Input is capped at 100,000 characters.
@@ -1313,7 +1329,7 @@ def analyze_morphology(text: Annotated[str, Field(description="Estonian text to 
         is_ambiguous = analyses_count > 1
         code, et = _usage_note(_first(lemmas), _first(pos))
         indeclinable = _is_indeclinable_attr(
-            word, _first(pos) or "", _first(forms) or "")
+            word, tuple((p or "", f or "") for p, f in zip(pos, forms, strict=False)))
         if all_analyses:
             analyses = [
                 {

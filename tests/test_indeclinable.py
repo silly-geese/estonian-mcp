@@ -77,9 +77,10 @@ def participles_unchanged() -> None:
         check(f"{w}", server._is_indeclinable_attr(w) is True)
     # hajutatud is the documented Vabamorf misanalysis (S/pl n/hajutatu).
     # It must come out True via the ending fallback, not the adjective path.
-    pos, _form = server._attr_morphology("hajutatud")
+    analyses = server._attr_analyses("hajutatud")
     check("hajutatud is still misanalysed as a noun (fallback is exercised)",
-          pos != "A", f"pos={pos!r} — if this is now 'A', the fallback is untested here")
+          not any(p == "A" for p, _f in analyses),
+          f"{analyses} — if an 'A' reading appears, the fallback is untested here")
 
 
 def ordinary_adjectives_and_lexical_indeclinables() -> None:
@@ -90,25 +91,40 @@ def ordinary_adjectives_and_lexical_indeclinables() -> None:
         check(f"lexical indeclinable {w}", server._is_indeclinable_attr(w) is True)
 
 
-def caller_supplied_morphology() -> None:
-    """analyze_morphology passes the analysis it already has, to avoid a
+def caller_supplied_analyses() -> None:
+    """analyze_morphology passes the analyses it already has, to avoid a
     second Vabamorf pass. Both paths must agree."""
-    print("caller-supplied pos/form matches the looked-up answer")
-    for w in ("täitmata", "tuntud", "õnnetud", "suur"):
-        pos, form = server._attr_morphology(w)
-        supplied = server._is_indeclinable_attr(w, pos, form)
+    print("caller-supplied analyses match the looked-up answer")
+    for w in ("täitmata", "tuntud", "õnnetud", "suur", "teemata"):
+        supplied = server._is_indeclinable_attr(w, server._attr_analyses(w))
         looked_up = server._is_indeclinable_attr(w)
         check(f"{w}: supplied == looked up ({supplied})", supplied == looked_up,
               f"supplied={supplied} looked_up={looked_up}")
 
-    # An adjective carrying a case/number form declines, whatever it ends in.
-    check("A + 'pl n' declines even with a -tud ending",
-          server._is_indeclinable_attr("õnnetud", "A", "pl n") is False)
-    check("A + empty form is frozen",
-          server._is_indeclinable_attr("tuntud", "A", "") is True)
+    # Only adjective readings with a case/number form => it declines.
+    check("A/'pl n' alone declines even with a -tud ending",
+          server._is_indeclinable_attr("õnnetud", (("A", "pl n"),)) is False)
+    check("an A/'' reading anywhere freezes it",
+          server._is_indeclinable_attr("tuntud", (("A", "pl n"), ("A", ""))) is True)
+    # Ordering must not decide the verdict — that was the fragility of
+    # taking only Vabamorf's first analysis.
+    check("verdict is order-independent",
+          server._is_indeclinable_attr("tuntud", (("A", ""), ("V", "tud"))) ==
+          server._is_indeclinable_attr("tuntud", (("V", "tud"), ("A", ""))))
     # A lexical indeclinable wins regardless of what morphology says.
-    check("lexical list beats a supplied form",
-          server._is_indeclinable_attr("täis", "A", "sg n") is True)
+    check("lexical list beats supplied analyses",
+          server._is_indeclinable_attr("täis", (("A", "sg n"),)) is True)
+
+
+def abessive_nouns_are_not_frozen() -> None:
+    """A noun whose stem ends in -ma forms its abessive in -mata
+    (teema -> teemata). Adding 'mata' to the ending list froze those; the
+    abessive guard is what stops it."""
+    print("-mata abessive nouns still decline")
+    for w in ("teemata", "kliimata", "draamata", "skeemata", "reklaamata"):
+        check(f"{w} (abessive of a -ma stem)",
+              server._is_indeclinable_attr(w) is False,
+              "the -mata ending must not freeze an inflected noun")
 
 
 def end_to_end_through_the_tool() -> None:
@@ -123,10 +139,18 @@ def end_to_end_through_the_tool() -> None:
 
 
 def probe_is_cached_and_safe() -> None:
-    print("_attr_morphology")
-    check("returns a (pos, form) tuple",
-          isinstance(server._attr_morphology("suur"), tuple))
-    check("is cached", hasattr(server._attr_morphology, "cache_clear"))
+    print("_attr_analyses")
+    check("returns a tuple of (pos, form) pairs",
+          isinstance(server._attr_analyses("suur"), tuple))
+    check("is cached", hasattr(server._attr_analyses, "cache_clear"))
+    # Capitalisation must not change the verdict. The probe is looked up
+    # from the lowercased word, so 'Täitmata' and 'täitmata' agree and
+    # share one cache entry.
+    for w in ("täitmata", "tuntud", "õnnetud", "teemata", "suur"):
+        check(f"{w}: verdict is case-stable",
+              server._is_indeclinable_attr(w)
+              == server._is_indeclinable_attr(w.capitalize())
+              == server._is_indeclinable_attr(w.upper()))
     # Junk input must degrade to the ending fallback rather than raise.
     for junk in ("", "   ", "123", "!!!", "x" * 300):
         try:
@@ -140,7 +164,8 @@ mata_forms_are_invariant()
 tu_caritives_still_agree()
 participles_unchanged()
 ordinary_adjectives_and_lexical_indeclinables()
-caller_supplied_morphology()
+caller_supplied_analyses()
+abessive_nouns_are_not_frozen()
 end_to_end_through_the_tool()
 probe_is_cached_and_safe()
 

@@ -35,8 +35,25 @@ versions follow [Semantic Versioning](https://semver.org/).
   because Vabamorf sometimes misanalyses these as nouns (`hajutatud` →
   `S/pl n/hajutatu`) and the ending is correct there.
 
-  `analyze_morphology` passes the analysis it already has, so the hot path
+  `analyze_morphology` passes the analyses it already has, so the hot path
   costs nothing extra; other callers get a cached lookup.
+
+- **A second `-mata` trap, caught while self-reviewing this fix.** A noun
+  whose stem ends in `-ma` forms its abessive in `-mata`: `teema` →
+  `teemata`, `kliima` → `kliimata`, `draama` → `draamata`. Those are
+  inflected nouns, not the `mata`-form, so simply adding `mata` to the
+  ending list froze them. The check now declines anything with an
+  abessive reading before the ending fallback runs. The issue author
+  predicted this class ("a handful of non-participle words end in
+  `-mata`") and they were right.
+
+- **The verdict no longer depends on Vabamorf's analysis ordering.** A
+  participle like `tuntud` comes back as `A/''`, `V/tud`, `A/pl n` and
+  `A/sg n`; reading only the first analysis meant a reordering upstream
+  could silently flip it. All adjective readings are considered, and one
+  with no case/number form is enough to freeze the word. The probe is also
+  looked up from the lowercased word, so capitalisation cannot change the
+  answer (`Täitmata` analysed as `H/sg n` where `täitmata` is `V/mata`).
 
 ### Notes
 
