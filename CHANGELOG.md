@@ -7,6 +7,53 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-08-23
+
+### Added
+
+- **`mcp_methods` at `/metrics`** — POST `/mcp` traffic bucketed by JSON-RPC
+  method. This exists to answer a question the old counters could not:
+  `tool_calls_total / sessions_total` was 0.53, i.e. more than half of
+  `initialize` calls never led to a tool call, with no way to tell probes
+  from real clients bouncing. Now `initialize` vs
+  `notifications/initialized` shows how many handshakes actually completed
+  rather than being abandoned mid-probe, and `tools/list` vs `tools/call`
+  shows how many clients enumerate the tools but never call one.
+
+  Method names are bucketed against a **fixed allowlist**; anything else
+  counts as `other`. The method comes from a request body and is therefore
+  caller-controlled, so it is never stored verbatim — that keeps the
+  metrics dict bounded against a hostile client inventing method names and
+  keeps arbitrary caller strings off `/metrics`. Still PII-free: only the
+  `method` field is read, never params, arguments or clientInfo.
+
+  Deliberately NOT "sessions that made >=1 tool call". The transport runs
+  `stateless_http`, so an `initialize` cannot be tied to the calls that
+  follow it, and introducing a client identifier to make that possible
+  would be a privacy step backwards. The method mix answers the same
+  question from the other side.
+
+### Changed
+
+- `_is_initialize_request` is replaced by `_classify_mcp_method`, which
+  parses the method once and buckets it. The old helper could skip the
+  JSON parse via a substring gate; the new one parses every POST `/mcp`
+  body. The body is already fully buffered at that point and a `json.loads`
+  on even a 100k-char tool call is well under a millisecond against tool
+  executions that run 10ms-7s, so the visibility is worth the trade. Method
+  names are still matched by parsing rather than substring, so a tool call
+  whose Estonian text merely contains `initialize` is not miscounted —
+  pinned by test.
+
+### Security
+
+- **cryptography 48.0.1 → 50.0.0** (CVE-2026-69247, high): a Bleichenbacher
+  oracle in PKCS#7 EnvelopedData decryption via distinguishable errors and
+  timing. Transitive only (`mcp` → `pyjwt` → `cryptography`) and not in the
+  exploitable path — the server never touches JWT or PKCS#7; bearer auth is
+  a `secrets.compare_digest` comparison, and public mode has no auth at
+  all. Patched regardless.
+
 ## [0.5.1] — 2026-07-31
 
 ### Changed

@@ -293,6 +293,7 @@ def metrics_persistence_test() -> None:
     saved_pathd = dict(server._STATS["by_path"])
     saved_errors = list(server._recent_errors)
     saved_sessions = server._STATS.get("sessions", 0)
+    saved_methods = dict(server._STATS.get("mcp_methods", {}))
     try:
         with tempfile.TemporaryDirectory() as d:
             server._METRICS_PATH = Path(d) / "metrics.json"
@@ -300,6 +301,7 @@ def metrics_persistence_test() -> None:
             server._STATS["by_status"] = {"200": 12000, "429": 345}
             server._STATS["by_path"] = {"/mcp": 12300, "/health": 45}
             server._STATS["sessions"] = 678
+            server._STATS["mcp_methods"] = {"initialize": 678, "tools/call": 91, "other": 2}
             server._recent_errors.clear()
             server._recent_errors.append({"ts": 1700000000, "path": "/mcp", "status": 500, "error": "RuntimeError"})
             server._save_persistent_stats()
@@ -309,12 +311,16 @@ def metrics_persistence_test() -> None:
             server._STATS["by_status"] = {}
             server._STATS["by_path"] = {}
             server._STATS["sessions"] = 0
+            server._STATS["mcp_methods"] = {}
             server._recent_errors.clear()
             server._load_persistent_stats()
             check("total restored", server._STATS["total"] == 12345)
             check("by_status restored", server._STATS["by_status"] == {"200": 12000, "429": 345})
             check("by_path restored", server._STATS["by_path"] == {"/mcp": 12300, "/health": 45})
             check("sessions restored", server._STATS["sessions"] == 678, str(server._STATS["sessions"]))
+            check("mcp_methods restored",
+                  server._STATS["mcp_methods"] == {"initialize": 678, "tools/call": 91, "other": 2},
+                  str(server._STATS["mcp_methods"]))
             check("recent_errors restored", list(server._recent_errors) == [
                 {"ts": 1700000000, "path": "/mcp", "status": 500, "error": "RuntimeError"}], str(list(server._recent_errors)))
             # graceful no-op when parent dir is gone (local dev path)
@@ -330,26 +336,43 @@ def metrics_persistence_test() -> None:
         server._STATS["by_status"] = saved_status
         server._STATS["by_path"] = saved_pathd
         server._STATS["sessions"] = saved_sessions
+        server._STATS["mcp_methods"] = saved_methods
         server._recent_errors.clear()
         server._recent_errors.extend(saved_errors)
 
 
-def is_initialize_unit_test() -> None:
-    """Pure checks for the initialize detector — the heart of the session
-    counter. Critically, a tool call whose text merely contains the word
-    'initialize' must NOT be counted."""
-    print("_is_initialize_request (unit)")
+def classify_mcp_method_unit_test() -> None:
+    """Pure checks for the JSON-RPC method classifier — the heart of the
+    session counter and the mcp_methods breakdown. Critically, a tool call
+    whose text merely contains the word 'initialize' must NOT be counted as
+    one, and a caller-supplied method name must never become a metrics key."""
+    print("_classify_mcp_method (unit)")
+    cm = server._classify_mcp_method
     init = b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"x"}}'
-    check("initialize → True", server._is_initialize_request(init) is True)
+    check("initialize → 'initialize'", cm(init) == "initialize")
     tool = b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"spell_check"}}'
-    check("tools/call → False", server._is_initialize_request(tool) is False)
+    check("tools/call → 'tools/call'", cm(tool) == "tools/call")
+    check("tools/call is not counted as initialize", cm(tool) != "initialize")
     sneaky = b'{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"spell_check","arguments":{"text":"please initialize the session"}}}'
-    check("tool call mentioning 'initialize' in text → False",
-          server._is_initialize_request(sneaky) is False)
-    check("empty body → False", server._is_initialize_request(b"") is False)
-    check("malformed JSON → False", server._is_initialize_request(b'{not json initialize') is False)
+    check("tool call mentioning 'initialize' in text → 'tools/call'",
+          cm(sneaky) == "tools/call")
+    lister = b'{"jsonrpc":"2.0","id":4,"method":"tools/list"}'
+    check("tools/list → 'tools/list'", cm(lister) == "tools/list")
+    noti = b'{"jsonrpc":"2.0","method":"notifications/initialized"}'
+    check("notifications/initialized bucketed",
+          cm(noti) == "notifications/initialized")
+    check("empty body → None", cm(b"") is None)
+    check("malformed JSON → None", cm(b'{not json initialize') is None)
     batch = b'[{"jsonrpc":"2.0","id":1,"method":"initialize"},{"jsonrpc":"2.0","method":"ping"}]'
-    check("batch with initialize → True", server._is_initialize_request(batch) is True)
+    check("batch classified by first method", cm(batch) == "initialize")
+    # Caller-controlled method names must be bucketed, never stored verbatim.
+    hostile = b'{"jsonrpc":"2.0","id":5,"method":"evil/../../etc/passwd"}'
+    check("unknown method → 'other' (never verbatim)", cm(hostile) == "other")
+    huge = b'{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"spell_check","arguments":{"text":"' + b'ab'*40000 + b'"}}}'
+    check("100k-char tool call still classified", cm(huge) == "tools/call")
+    check("no unbounded key growth: every result is allowlisted",
+          all(cm(b) in server._MCP_METHODS or cm(b) in ("other", None)
+              for b in (init, tool, sneaky, lister, noti, batch, hostile, huge, b"")))
 
 
 async def inner_exc_capture_test() -> None:
@@ -406,7 +429,7 @@ async def session_counter_test() -> None:
 
 asyncio.run(run())
 metrics_persistence_test()
-is_initialize_unit_test()
+classify_mcp_method_unit_test()
 asyncio.run(session_counter_test())
 asyncio.run(inner_exc_capture_test())
 

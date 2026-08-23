@@ -64,7 +64,7 @@ DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.5.1"
+SERVER_VERSION = "0.5.2"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -3882,6 +3882,16 @@ _STATS: dict[str, Any] = {
     # reconnects counts again, and automated probes count too. No identity,
     # no IP, no body is stored — only the fact that an initialize occurred.
     "sessions": 0,
+    # JSON-RPC method mix on POST /mcp, bucketed to a FIXED allowlist (see
+    # _MCP_METHODS). Stateless HTTP means an `initialize` cannot be tied to
+    # the tool calls that follow it, so "sessions that made >=1 tool call"
+    # is not computable without inventing a client identifier — which would
+    # be a privacy step backwards. This breakdown answers the same question
+    # from the other side: `initialize` vs `notifications/initialized` shows
+    # how many handshakes were actually completed rather than abandoned by a
+    # probe, and `tools/list` vs `tools/call` shows how many clients
+    # enumerate the tools but never use one.
+    "mcp_methods": {},
 }
 
 # Ring buffer of recent 5xx errors so they're inspectable at /metrics
@@ -3912,6 +3922,10 @@ def _load_persistent_stats() -> None:
         _STATS["by_status"] = {str(k): int(v) for k, v in (data.get("by_status") or {}).items()}
         _STATS["by_path"] = {str(k): int(v) for k, v in (data.get("by_path") or {}).items()}
         _STATS["sessions"] = int(data.get("sessions", 0))
+        _STATS["mcp_methods"] = {
+            str(k): int(v) for k, v in (data.get("mcp_methods") or {}).items()
+            if str(k) in _MCP_METHODS or str(k) == "other"
+        }
         _TOOL_CALLS.clear()
         _TOOL_CALLS.update({str(k): int(v) for k, v in (data.get("tool_calls") or {}).items()})
         _recent_errors.clear()
@@ -3938,6 +3952,7 @@ def _save_persistent_stats() -> None:
             "by_status": _STATS["by_status"],
             "by_path": _STATS["by_path"],
             "sessions": _STATS["sessions"],
+            "mcp_methods": _STATS["mcp_methods"],
             "tool_calls": _TOOL_CALLS,
             "recent_errors": list(_recent_errors),
             "saved_at_unix": int(time.time()),
@@ -3947,24 +3962,52 @@ def _save_persistent_stats() -> None:
         log.warning("metrics persistence: failed to save %s: %s", _METRICS_PATH, e)
 
 
-def _is_initialize_request(body: bytes) -> bool:
-    """True if an MCP request body is a JSON-RPC `initialize` call.
+# Fixed allowlist of JSON-RPC methods we bucket into `mcp_methods`.
+# The method name comes from a request body, i.e. it is caller-controlled,
+# so it is NEVER stored verbatim — anything outside this set is counted as
+# "other". That keeps the metrics dict bounded (no unbounded key growth
+# from a hostile client) and keeps arbitrary caller strings off /metrics.
+_MCP_METHODS: frozenset[str] = frozenset({
+    "initialize",
+    "notifications/initialized",
+    "tools/list",
+    "tools/call",
+    "prompts/list",
+    "resources/list",
+    "resources/templates/list",
+    "ping",
+})
 
-    Used to count client connections (sessions) at /metrics. We parse only
-    to read the `method` field — never the params/clientInfo — and store
-    nothing from the body. The cheap substring gate skips the JSON parse
-    for the overwhelming majority of requests (tool calls), and parsing
-    the method (rather than substring-matching) means a tool call whose
-    text argument merely contains the word "initialize" is NOT counted."""
-    if b"initialize" not in body:
-        return False
+
+def _classify_mcp_method(body: bytes) -> str | None:
+    """Bucket an MCP request body by its JSON-RPC method name.
+
+    Returns an allowlisted method name, "other" for anything unrecognised,
+    or None if the body is not parseable JSON-RPC. Only the `method` field
+    is read — never params, arguments, or clientInfo — and nothing from the
+    body is stored.
+
+    Cost note: this parses every POST /mcp body, where the old
+    initialize-only check could skip the parse via a substring gate. The
+    body is already fully buffered by _drain_body at this point, and a
+    json.loads on even a 100k-char tool call is well under a millisecond
+    against tool executions that run 10ms-7s, so the trade is worth the
+    visibility. Method names are matched by parsing rather than substring
+    so a tool call whose Estonian text merely contains "tools/call" is not
+    miscounted.
+    """
     try:
         msg = json.loads(body)
     except (ValueError, UnicodeDecodeError):
-        return False
-    if isinstance(msg, list):  # JSON-RPC batch
-        return any(isinstance(m, dict) and m.get("method") == "initialize" for m in msg)
-    return isinstance(msg, dict) and msg.get("method") == "initialize"
+        return None
+    if isinstance(msg, list):  # JSON-RPC batch — classify by its first method
+        msg = next((m for m in msg if isinstance(m, dict) and m.get("method")), None)
+    if not isinstance(msg, dict):
+        return None
+    method = msg.get("method")
+    if not isinstance(method, str):
+        return None
+    return method if method in _MCP_METHODS else "other"
 
 
 async def _drain_body(receive):
@@ -4303,6 +4346,7 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                     "tool_calls_total": sum(_TOOL_CALLS.values()),
                     "tool_calls": dict(_TOOL_CALLS),
                     "sessions_total": _STATS["sessions"],
+                    "mcp_methods": dict(_STATS["mcp_methods"]),
                     "recent_errors": list(_recent_errors),
                     "uptime_seconds": int(time.time() - _STATS_START_TS),
                     "started_at_unix": int(_STATS_START_TS),
@@ -4317,6 +4361,19 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                         "too. No identity, IP, or request body is ever stored "
                         "— only the fact of an initialize. Daily connections "
                         "= the day-over-day delta in the metrics snapshot. "
+                        "mcp_methods buckets POST /mcp by JSON-RPC method "
+                        "against a FIXED allowlist (anything else counts as "
+                        "'other', so a caller-supplied method name can never "
+                        "become a metrics key). Read it to tell probes from "
+                        "real clients: initialize vs notifications/initialized "
+                        "shows how many handshakes completed rather than being "
+                        "abandoned, and tools/list vs tools/call shows how many "
+                        "clients enumerate the tools but never call one. NOTE "
+                        "this is NOT 'sessions that made >=1 tool call': the "
+                        "transport is stateless_http, so an initialize cannot "
+                        "be tied to the calls that follow it, and adding a "
+                        "client identifier to make that possible would be a "
+                        "privacy step backwards. "
                         "Counters persist to "
                         "/data/metrics.json every 30 s when a Fly volume is "
                         "mounted, surviving restarts; without a volume "
@@ -4405,18 +4462,25 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                 await _send_status(send, 429, {"error": "rate_limited"})
                 return
 
-            # Count MCP `initialize` calls as a privacy-safe session proxy.
-            # Only an authorized, non-rate-limited POST /mcp can carry one;
-            # for those we buffer the small JSON-RPC body to peek at the
-            # method, then replay it to the inner app byte-for-byte. Nothing
-            # from the body is stored — only _STATS["sessions"] is bumped on
-            # the fact of an initialize. All other traffic (GET SSE streams,
-            # other paths) passes straight through with the original receive.
+            # Bucket MCP traffic by JSON-RPC method. Only an authorized,
+            # non-rate-limited POST /mcp gets here; for those we buffer the
+            # JSON-RPC body to peek at the `method`, then replay it to the
+            # inner app byte-for-byte. Nothing from the body is stored — we
+            # bump _STATS["sessions"] on the fact of an initialize, and
+            # bucket the method into a FIXED allowlist so a caller-supplied
+            # string can never become a metrics key. All other traffic (GET
+            # SSE streams, other paths) passes straight through with the
+            # original receive.
             receive_for_inner = receive
             if scope.get("method") == "POST" and path in ("/mcp", "/mcp/"):
                 consumed, body = await _drain_body(receive)
-                if _is_initialize_request(body):
-                    _STATS["sessions"] += 1
+                method = _classify_mcp_method(body)
+                if method is not None:
+                    _STATS["mcp_methods"][method] = (
+                        _STATS["mcp_methods"].get(method, 0) + 1
+                    )
+                    if method == "initialize":
+                        _STATS["sessions"] += 1
                 receive_for_inner = _replay_receive(consumed, receive)
 
             await inner(scope, receive_for_inner, send)
