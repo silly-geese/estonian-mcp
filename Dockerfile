@@ -61,7 +61,14 @@ RUN set +e; \
 # check_term_consistency for every one-click user. Fetch it explicitly
 # and assert it loads, so the build fails loudly instead.
 # Reported as https://github.com/silly-geese/estonian-mcp/issues/37.
-RUN /opt/venv/bin/python -c "import nltk; nltk.download('punkt_tab', quiet=False)" \
+# download_dir is NOT optional here. This is a multi-stage build and the
+# runtime stage copies only /opt/venv, /opt/models and /app. NLTK's default
+# target for root is /root/nltk_data, which is never copied — the build
+# would pass every assertion below and still ship an image without the
+# data. /opt/venv/nltk_data rides along with the venv and is on NLTK's
+# default search path at runtime (it derives paths from sys.prefix).
+RUN /opt/venv/bin/python -c "import nltk; nltk.download('punkt_tab', download_dir='/opt/venv/nltk_data', quiet=False)" \
+ && test -d /opt/venv/nltk_data/tokenizers/punkt_tab/estonian \
  && /opt/venv/bin/python -c "import nltk; nltk.data.find('tokenizers/punkt_tab/estonian/')" \
  && /opt/venv/bin/python -c "\
 from estnltk import Text; \
