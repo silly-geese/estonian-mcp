@@ -42,7 +42,9 @@ present, so this is idempotent.
 """
 from __future__ import annotations
 
+import io
 import os
+import shutil
 import sys
 import urllib.request
 import zipfile
@@ -72,16 +74,42 @@ def _fasttext_target() -> Path:
     return Path.home() / ".cache" / "estnltk-mcp" / "fasttext-et-medium"
 
 
+def _md5(path: Path) -> str:
+    """Streaming MD5. `usedforsecurity=False` because this guards against
+    truncation and corruption over TLS from our own release asset, not
+    against a chosen-prefix attacker — and without it this raises on
+    FIPS-enabled builds (RHEL/UBI)."""
+    import hashlib
+
+    try:
+        h = hashlib.md5(usedforsecurity=False)
+    except TypeError:      # Python < 3.9 signature
+        h = hashlib.md5()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def fetch_fasttext() -> bool:
     """Download the compressed fastText model, verifying its checksum."""
-    import hashlib
 
     target = _fasttext_target()
     if target.exists():
-        print(f"  fasttext: already present at {target}, skipping")
-        return True
+        # "Exists" is not "good". A truncated leftover from an interrupted
+        # run would otherwise be accepted forever, and the server then fails
+        # to load it with an opaque error. Hashing 33 MB costs ~0.1 s.
+        if _md5(target) == FASTTEXT_MD5:
+            print(f"  fasttext: already present at {target}, skipping")
+            return True
+        print(f"  fasttext: existing file at {target} is corrupt, re-downloading")
+        target.unlink()
 
-    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(f"  fasttext: FAILED (cannot create {target.parent}: {e})")
+        return False
     print(f"  fasttext: downloading (~33 MB) -> {target}")
     # Append rather than with_suffix(): with_suffix REPLACES an existing
     # suffix, so an operator-supplied ESTNLTK_MCP_FASTTEXT_PATH ending in
@@ -95,7 +123,7 @@ def fetch_fasttext() -> bool:
         print(f"  fasttext: FAILED ({type(e).__name__}: {e})")
         return False
 
-    digest = hashlib.md5(tmp.read_bytes()).hexdigest()
+    digest = _md5(tmp)
     if digest != FASTTEXT_MD5:
         tmp.unlink(missing_ok=True)
         print(f"  fasttext: CHECKSUM MISMATCH (got {digest}, want {FASTTEXT_MD5})")
@@ -128,63 +156,132 @@ def _use_certifi_trust_store() -> str | None:
     return path
 
 
+def _safe_extract(zf: zipfile.ZipFile, dest: Path) -> None:
+    """Extract with zip-slip protection.
+
+    `ZipFile.extractall` will happily follow `../` in a member name and
+    write outside `dest`. This is a downloaded archive, so resolve every
+    member and refuse anything that escapes the destination.
+    """
+    dest_root = dest.resolve()
+    for member in zf.infolist():
+        out = (dest_root / member.filename).resolve()
+        if not out.is_relative_to(dest_root):
+            raise ValueError(f"unsafe path in archive: {member.filename!r}")
+    zf.extractall(dest)
+
+
+def _punkt_usable() -> bool:
+    """Validate by USE: the data is only good if it actually tokenises.
+
+    A directory-exists check accepts a partially-extracted tree — the zip
+    can fail after creating `punkt_tab/estonian/` but before writing all
+    its tables — and that partial state would then be skipped as
+    "already present" on every subsequent run.
+    """
+    try:
+        import nltk
+        nltk.data.find("tokenizers/punkt_tab/estonian/")
+        from nltk.tokenize.punkt import PunktTokenizer
+        tok = PunktTokenizer(lang="estonian")
+        return len(tok.tokenize("Kooli maja on suur. Teine lause siin.")) == 2
+    except Exception:
+        return False
+
+
 def fetch_punkt_tab() -> bool:
-    """Download NLTK punkt_tab into the first writable nltk_data dir."""
+    """Download NLTK punkt_tab, extracting atomically after validation."""
     import nltk
 
-    try:
-        nltk.data.find("tokenizers/punkt_tab/estonian/")
-        print("  punkt_tab: already present, skipping")
+    if _punkt_usable():
+        print("  punkt_tab: already present and usable, skipping")
         return True
-    except LookupError:
-        pass
 
-    # Prefer a venv-local dir so the fetch does not pollute the user's home
-    # and stays with the checkout it belongs to.
+    # Venv-local, so the fetch stays with the checkout it belongs to rather
+    # than polluting the user's home. <sys.prefix>/nltk_data is on NLTK's
+    # default search path.
     target = Path(sys.prefix) / "nltk_data"
     tokenizers = target / "tokenizers"
-    tokenizers.mkdir(parents=True, exist_ok=True)
+    try:
+        tokenizers.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(f"  punkt_tab: FAILED (cannot create {tokenizers}: {e})")
+        print("             is sys.prefix writable? run inside the venv (uv run ...)")
+        return False
     if str(target) not in nltk.data.path:
         nltk.data.path.insert(0, str(target))
 
     print(f"  punkt_tab: downloading -> {tokenizers}")
-    zip_path = tokenizers / "punkt_tab.zip"
+    # Extract into a staging dir first, validate, then swap into place, so a
+    # failure part-way through can never leave a half-installed tree that
+    # later runs mistake for a good one.
+    staging = tokenizers / ".punkt_tab.staging"
+    final = tokenizers / "punkt_tab"
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
     try:
-        with urllib.request.urlopen(PUNKT_TAB_URL, timeout=60) as r:
-            zip_path.write_bytes(r.read())
-        with zipfile.ZipFile(zip_path) as zf:
-            zf.extractall(tokenizers)
-        zip_path.unlink(missing_ok=True)
+        with urllib.request.urlopen(PUNKT_TAB_URL, timeout=120) as r:
+            payload = r.read()
+        staging.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+            _safe_extract(zf, staging)
     except Exception as e:
+        shutil.rmtree(staging, ignore_errors=True)
         print(f"  punkt_tab: FAILED ({type(e).__name__}: {e})")
         return False
 
-    try:
-        nltk.data.find("tokenizers/punkt_tab/estonian/")
-    except LookupError:
-        print("  punkt_tab: downloaded but Estonian model still not found")
+    extracted = staging / "punkt_tab"
+    if not (extracted / "estonian").is_dir():
+        shutil.rmtree(staging, ignore_errors=True)
+        print("  punkt_tab: archive did not contain an Estonian model")
         return False
+
+    backup = tokenizers / ".punkt_tab.previous"
+    shutil.rmtree(backup, ignore_errors=True)
+    if final.exists():
+        final.rename(backup)
+    extracted.rename(final)
+    shutil.rmtree(staging, ignore_errors=True)
+
+    if not _punkt_usable():
+        # Roll back rather than leave the checkout worse than we found it.
+        shutil.rmtree(final, ignore_errors=True)
+        if backup.exists():
+            backup.rename(final)
+        print("  punkt_tab: downloaded data does not tokenise; rolled back")
+        return False
+    shutil.rmtree(backup, ignore_errors=True)
     print("  punkt_tab: OK")
     return True
 
 
+def _wordnet_usable() -> bool:
+    """Validate by USE. An interrupted extraction can leave the version
+    directory in place with an incomplete set of sqlite files, which an
+    index/exists check would accept forever."""
+    try:
+        from estnltk.wordnet import Wordnet
+        return bool(Wordnet()["kasutama"])
+    except Exception:
+        return False
+
+
 def fetch_wordnet() -> bool:
     """Download Estonian WordNet via EstNLTK's own resource downloader."""
-    from estnltk.downloader import download, get_resource_paths
-
-    if get_resource_paths("wordnet", only_latest=True, download_missing=False):
-        print("  wordnet: already present, skipping")
+    if _wordnet_usable():
+        print("  wordnet: already present and usable, skipping")
         return True
 
     print("  wordnet: downloading (~26 MB)")
     try:
+        from estnltk.downloader import download
         download("wordnet")
     except Exception as e:
         print(f"  wordnet: FAILED ({type(e).__name__}: {e})")
         return False
 
-    if not get_resource_paths("wordnet", only_latest=True, download_missing=False):
-        print("  wordnet: download reported success but resource is not found")
+    if not _wordnet_usable():
+        print("  wordnet: download reported success but the data does not load")
         return False
     print("  wordnet: OK")
     return True

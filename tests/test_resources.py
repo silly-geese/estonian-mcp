@@ -12,8 +12,10 @@ to DOWNLOAD a missing resource. PRIVACY.md promises no outbound HTTP calls,
 and under stdio transport EstNLTK's download prompt goes to stdout, which
 is the MCP protocol channel.
 
-Runs with or without WordNet installed — the degraded path is exercised by
-monkeypatching availability, not by requiring a broken environment.
+Runs with or without WordNet installed. BOTH paths are faked: the
+available=True path uses a stand-in WordNet rather than the real resource,
+so running this suite on a fresh clone cannot itself trigger the download
+and stdin prompt that the change forbids.
 
 Run via:
 
@@ -53,10 +55,25 @@ def _with_wordnet(available: bool):
     real_avail = server._wordnet_available
     real_wn = server._wordnet
 
+    class _FakeWordnet:
+        """Deterministic stand-in so the available=True path never touches
+        the real resource. Without this, running these tests on the very
+        machine this change targets — a fresh clone with no WordNet — would
+        itself trigger EstNLTK's download and stdin prompt, i.e. the exact
+        behaviour under test."""
+
+        class _Synset:
+            def __init__(self, name): self.name = name
+
+        def __getitem__(self, lemma):
+            return [self._Synset("test.n.01")] if lemma == "andmestik" else []
+
     class _Ctx:
         def __enter__(self):
             server._wordnet_available = lambda: available
-            if not available:
+            if available:
+                server._wordnet = lambda: _FakeWordnet()
+            else:
                 def _boom():
                     raise AssertionError(
                         "_wordnet() must NOT be called when the resource is "
@@ -167,19 +184,28 @@ def availability_probe_is_local_only() -> None:
           "an lru_cache here would go stale after the operator installs "
           "the resource mid-process")
 
-    # Prove it re-probes: flip the underlying answer and confirm the next
-    # call reflects it without any cache invalidation step.
-    import estnltk.downloader as dl
-    real = dl.get_resource_paths
+    # Prove it re-probes: point the resources dir at an empty tree, then at
+    # one containing an unpacked WordNet, and confirm each call reflects the
+    # current state with no cache-invalidation step in between.
+    import tempfile
+
+    import estnltk.resource_utils as ru
+    real_dir = ru.get_resources_dir
     try:
-        dl.get_resource_paths = lambda *a, **k: None
-        check("re-probes and sees a resource disappear",
-              server._wordnet_available() is False)
-        dl.get_resource_paths = lambda *a, **k: ["/fake/wordnet"]
-        check("re-probes and sees a resource appear",
-              server._wordnet_available() is True)
+        with tempfile.TemporaryDirectory() as empty:
+            ru.get_resources_dir = lambda: empty
+            check("re-probes and sees a resource disappear",
+                  server._wordnet_available() is False)
+
+        with tempfile.TemporaryDirectory() as populated:
+            wn = Path(populated) / "wordnet" / "estwn-et-2.7.0"
+            wn.mkdir(parents=True)
+            (wn / "wordnet_entry.db").write_bytes(b"")
+            ru.get_resources_dir = lambda: populated
+            check("re-probes and sees a resource appear",
+                  server._wordnet_available() is True)
     finally:
-        dl.get_resource_paths = real
+        ru.get_resources_dir = real_dir
     check("restored real probe still returns a bool",
           isinstance(server._wordnet_available(), bool))
 

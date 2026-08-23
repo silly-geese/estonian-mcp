@@ -216,41 +216,88 @@ def _vabamorf():
     return Vabamorf.instance()
 
 
-def _wordnet_available() -> bool:
-    """True if Estonian WordNet is already on disk, WITHOUT downloading it.
+_RESOURCE_FETCH_HINT = (
+    "Fetch it from a checkout with: uv run python scripts/fetch_resources.py "
+    "(the server never downloads resources by itself — see PRIVACY.md)."
+)
 
-    `estnltk.downloader.get_resource_paths(..., download_missing=False)` is a
-    pure filesystem lookup against the local resources index — no network
-    call, no interactive prompt.
+
+def _forbid_resource_downloads() -> None:
+    """Make PRIVACY.md's "no outbound HTTP calls" structural, not aspirational.
+
+    Two libraries below us will silently reach for the network mid-tool-call
+    if a resource is missing, and neither is reachable from our own call
+    sites, so guarding each tool individually cannot close them:
+
+    1. `estnltk.resource_utils.get_resources_index()` re-fetches its index
+       from RESOURCES_INDEX_URL whenever the local copy is missing OR older
+       than INDEX_TIMEOUT (2 h). On a long-lived server that is a periodic
+       outbound request, and when it fails the caller sees "resource
+       missing" rather than "lookup failed" — a false negative on top of a
+       broken promise. Setting the timeout to effectively infinite pins us
+       to the on-disk index.
+    2. `estnltk`'s sentence tokenizer catches `LookupError` for NLTK's
+       `punkt_tab` and calls `nltk.downloader.download()`. The `sentences`
+       layer is built by `tag_layer(["morph_analysis"])`, so nearly every
+       tool reaches it. Replacing the downloader with a refusal turns a
+       silent fetch into an actionable error.
+
+    Best-effort and non-fatal: if either library's internals move, we lose
+    the guard but not the server. tests/test_no_network.py is what actually
+    proves the promise holds.
+    """
+    try:
+        import estnltk.resource_utils as _ru
+        _ru.INDEX_TIMEOUT = sys.maxsize
+    except Exception:
+        pass
+
+    def _refuse(*args, **kwargs):
+        name = args[0] if args else kwargs.get("info_or_id", "a resource")
+        raise RuntimeError(
+            f"estonian-mcp does not download resources while serving "
+            f"(tried to fetch {name!r}). {_RESOURCE_FETCH_HINT}"
+        )
+
+    try:
+        import nltk
+        import nltk.downloader as _nd
+        _nd.download = _refuse
+        nltk.download = _refuse
+    except Exception:
+        pass
+
+
+_forbid_resource_downloads()
+
+
+def _wordnet_available() -> bool:
+    """True if Estonian WordNet is unpacked on disk, WITHOUT any network.
+
+    Checks the resources directory directly rather than calling
+    `get_resource_paths()`, which consults EstNLTK's resource *index* and
+    re-fetches that index over HTTPS when it is more than two hours old —
+    an outbound call from inside a tool, and a false "missing" verdict
+    whenever it fails. See _forbid_resource_downloads.
 
     Deliberately NOT cached, unlike `_wordnet()` below. Caching the probe
     would reintroduce the very confusion issue #38 was about: an operator
     sees `degraded: true`, runs `scripts/fetch_resources.py` as the message
     tells them to, calls the tool again — and a cached `False` still says
-    degraded until they restart the process. The probe costs ~0.3 ms
-    against tool runtimes of 10 ms to 7 s, so there is nothing to buy here.
-    `_wordnet()` stays cached because it loads a heavy object, and it is
-    only ever reached once this returns True.
-
-    This matters for more than tidiness. Calling `Wordnet()` on a machine
-    that lacks the resource makes EstNLTK try to FETCH it, which would
-    breach the "no outbound HTTP calls" promise in PRIVACY.md, and it
-    prints its confirmation prompt to STDOUT — which under stdio transport
-    IS the MCP protocol channel, so it corrupts the stream. Checking first
-    means the running server never attempts either.
+    degraded until they restart the process. The probe is a directory
+    listing; there is nothing to buy here. `_wordnet()` stays cached
+    because it loads a heavy object, and is only reached once this is True.
     """
     try:
-        from estnltk.downloader import get_resource_paths
-        return bool(get_resource_paths("wordnet", only_latest=True,
-                                       download_missing=False))
+        from estnltk.resource_utils import get_resources_dir
+        root = Path(get_resources_dir()) / "wordnet"
+        if not root.is_dir():
+            return False
+        # A version subdirectory with the sqlite files unpacked inside it.
+        return any(
+            any(child.glob("*.db")) for child in root.iterdir() if child.is_dir()
+        )
     except Exception:
-        # Load-bearing, not lazy. EstNLTK consults a local resources index,
-        # and when that index is itself absent it would want to fetch it
-        # from RESOURCES_INDEX_URL. Swallowing the failure and answering
-        # "not available" keeps the no-outbound-HTTP promise in the one
-        # case where the library would otherwise reach out. Pinned by
-        # tests/test_no_network.py, which deletes the index and asserts no
-        # connection is attempted.
         return False
 
 
@@ -260,15 +307,43 @@ def _wordnet():
     return Wordnet()
 
 
+# Where the fastText model may live, in priority order. The container path
+# comes first for the image; the cache path is where
+# scripts/fetch_resources.py puts it on a source install. Having only the
+# container default meant a source install could follow the documented
+# setup, be told "All resources present", and still fail every fastText
+# tool — the script cannot export a variable into the server process, and
+# JSON-configured MCP clients cannot run a shell `export` at all.
+_FASTTEXT_CANDIDATES: tuple[str, ...] = (
+    "/opt/models/fasttext-et-medium",
+    str(Path.home() / ".cache" / "estnltk-mcp" / "fasttext-et-medium"),
+)
+
+
+def _fasttext_path() -> str:
+    """Resolve the model path: explicit env override, else first candidate
+    that exists. Returns the container default when none exist, so the
+    error message names a concrete path."""
+    env = os.environ.get("ESTNLTK_MCP_FASTTEXT_PATH")
+    if env:
+        return env
+    for candidate in _FASTTEXT_CANDIDATES:
+        if Path(candidate).exists():
+            return candidate
+    return _FASTTEXT_CANDIDATES[0]
+
+
 @lru_cache(maxsize=1)
 def _embeddings():
     """Lazy-load the compressed fastText model used by find_related_words
     and check_compound_familiarity."""
     import compress_fasttext
-    path = os.environ.get(
-        "ESTNLTK_MCP_FASTTEXT_PATH",
-        "/opt/models/fasttext-et-medium",
-    )
+    path = _fasttext_path()
+    if not Path(path).exists():
+        raise RuntimeError(
+            f"The fastText model is not installed (looked in "
+            f"{', '.join(_FASTTEXT_CANDIDATES)}). {_RESOURCE_FETCH_HINT}"
+        )
     return compress_fasttext.models.CompressedFastTextKeyedVectors.load(path)
 
 
@@ -3816,8 +3891,8 @@ def _check_term_consistency(text: str) -> dict:
             + (
                 "" if wordnet_ok else
                 " TÄHELEPANU: tulemus on osaline. Eesti WordNet ei ole "
-                "paigaldatud, seetõttu jäi tähendusrühmade reegel "
-                "käivitamata ja osa kattuvaid termineid võib olla "
+                "paigaldatud, mistõttu jäi tähendusrühmade reegel "
+                "käivitamata ja osa kattuvaid termineid võib jääda "
                 "leidmata. Paigalda ressurss käsuga "
                 "`uv run python scripts/fetch_resources.py`."
             )
@@ -3830,7 +3905,10 @@ def _check_term_consistency(text: str) -> dict:
             "compounds sharing a head is deliberately NOT enough, since "
             "those are usually distinct things. Rule "
             "`shared-wordnet-synset` fires when two lemmas sit in the same "
-            "Estonian WordNet synset. The tool does NOT decide which "
+            "Estonian WordNet synset — and does not run at all when that "
+            "resource is missing, in which case `degraded` is true and an "
+            "empty `groups` list means only that the compound-head rule "
+            "found nothing. The tool does NOT decide which "
             "variant is correct — that needs domain context it cannot see; "
             "it reports counts so you can pick the dominant term, and some "
             "groups are legitimately distinct concepts. KNOWN GAP: "
@@ -3883,6 +3961,13 @@ def check_term_consistency(text: Annotated[str, Field(description="Estonian docu
     one, so you can standardise on the most-used term. The tool does not
     decide which variant is right — some groups are genuinely distinct
     concepts, so read them before rewriting.
+
+    CHECK `degraded` BEFORE TRUSTING AN EMPTY RESULT. When Estonian WordNet
+    is not installed, the `shared-wordnet-synset` rule cannot run; the tool
+    then returns `degraded: true`, says so in `summary_estonian`, and marks
+    the rule false in `rules_run`. "No groups found" from a degraded run
+    means "the compound-head rule found nothing", NOT "the terminology is
+    consistent".
 
     Known gap: synonyms sharing neither a head nor a synset (korpus /
     andmestik) are not caught. Input capped at 100,000 characters.

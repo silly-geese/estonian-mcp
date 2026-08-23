@@ -25,9 +25,10 @@ Run via:
 from __future__ import annotations
 
 import os
-import shutil
 import socket
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -51,19 +52,37 @@ class NetworkBlocked(AssertionError):
 
 _real_connect = socket.socket.connect
 _real_create = socket.create_connection
+_real_getaddrinfo = socket.getaddrinfo
+
+# Every blocked attempt is RECORDED here before the exception is raised.
+# Raising alone is not enough: the code under test catches broad exceptions
+# by design, which silently converts "a connection was attempted" into "the
+# test saw nothing" and passes. The earlier version of this file did
+# exactly that and passed against a live privacy violation.
+ATTEMPTS: list[str] = []
 
 
 def _arm() -> None:
+    ATTEMPTS.clear()
+
     def _blocked(*a, **k):
         target = a[1] if len(a) > 1 else (a[0] if a else "?")
+        ATTEMPTS.append(repr(target))
         raise NetworkBlocked(f"outbound connection attempted to {target!r}")
+
+    def _blocked_dns(host, *a, **k):
+        ATTEMPTS.append(f"DNS {host!r}")
+        raise NetworkBlocked(f"DNS lookup attempted for {host!r}")
+
     socket.socket.connect = _blocked
     socket.create_connection = _blocked
+    socket.getaddrinfo = _blocked_dns          # DNS is egress too
 
 
 def _disarm() -> None:
     socket.socket.connect = _real_connect
     socket.create_connection = _real_create
+    socket.getaddrinfo = _real_getaddrinfo
 
 
 # One representative call per tool. Args are deliberately small: this test
@@ -133,8 +152,11 @@ def every_tool_is_offline() -> None:
     finally:
         _disarm()
 
+    # ATTEMPTS is the real assertion: a tool that swallows NetworkBlocked
+    # still leaves a record here.
     check(f"all {len(TOOL_CALLS)} tools ran without outbound connections",
-          not attempted, "; ".join(attempted))
+          not ATTEMPTS and not attempted,
+          f"recorded={ATTEMPTS[:5]} raised={attempted[:3]}")
     # Guard against the list silently drifting out of sync with the server.
     registered = {t.name for t in _registered_tools()}
     missing = registered - set(TOOL_CALLS)
@@ -148,41 +170,76 @@ def _registered_tools():
 
 
 def availability_probe_never_reaches_out() -> None:
-    """The probe must answer from disk even when EstNLTK's local resources
-    index is missing — that is precisely when EstNLTK would want to fetch
-    it from RESOURCES_INDEX_URL."""
+    """The probe must answer from disk in the two states where EstNLTK
+    would otherwise fetch its resources index over HTTPS:
+
+      A. index STALE — the production steady state. EstNLTK refreshes any
+         index older than INDEX_TIMEOUT (2 h), so a server up longer than
+         that made an outbound call on the next lookup. This is the case
+         the previous version of this file never covered.
+      B. index ABSENT.
+
+    Uses ESTNLTK_RESOURCES to point at a temp dir rather than moving the
+    developer's venv copy aside, so a killed process cannot corrupt it.
+    """
     print("_wordnet_available never reaches the network")
-    from estnltk.resource_utils import get_resources_dir
+    import estnltk.resource_utils as ru
 
-    idx = Path(get_resources_dir()) / "resources_index.json"
-
-    _arm()
-    try:
+    # A. stale index, real resources dir.
+    idx = Path(ru.get_resources_dir()) / "resources_index.json"
+    if idx.exists():
+        original = idx.stat().st_mtime
+        stale = time.time() - 100_000        # far beyond any INDEX_TIMEOUT
+        os.utime(idx, (stale, stale))
+        _arm()
         try:
-            a = server._wordnet_available()
-            check("index present: answers locally", isinstance(a, bool), repr(a))
-        except NetworkBlocked as e:
-            check("index present: answers locally", False, str(e))
-    finally:
-        _disarm()
+            server._wordnet_available()
+        except NetworkBlocked:
+            pass
+        finally:
+            _disarm()
+            os.utime(idx, (original, original))
+        check("stale index: no outbound call", not ATTEMPTS, str(ATTEMPTS[:3]))
+    else:
+        print("  SKIP stale-index case (no local index present)")
 
-    if not idx.exists():
-        print("  SKIP index-missing case (no local index to move aside)")
-        return
+    # B. absent index, via an isolated resources dir.
+    with tempfile.TemporaryDirectory() as tmp:
+        prev = os.environ.get("ESTNLTK_RESOURCES")
+        os.environ["ESTNLTK_RESOURCES"] = tmp
+        _arm()
+        try:
+            result = server._wordnet_available()
+        except NetworkBlocked:
+            result = None
+        finally:
+            _disarm()
+            if prev is None:
+                os.environ.pop("ESTNLTK_RESOURCES", None)
+            else:
+                os.environ["ESTNLTK_RESOURCES"] = prev
+        check("absent index: no outbound call", not ATTEMPTS, str(ATTEMPTS[:3]))
+        check("absent index: reports unavailable rather than raising",
+              result is False, repr(result))
 
-    bak = idx.with_suffix(".json.testbak")
-    shutil.move(str(idx), str(bak))
-    _arm()
+
+def index_refresh_is_pinned() -> None:
+    """_forbid_resource_downloads must neutralise both auto-fetch paths."""
+    print("resource auto-download is structurally refused")
+    import estnltk.resource_utils as ru
+    check("EstNLTK index refresh is pinned (no periodic re-fetch)",
+          ru.INDEX_TIMEOUT > 10 ** 9, str(ru.INDEX_TIMEOUT))
+
+    import nltk.downloader as nd
+    raised = None
     try:
-        b = server._wordnet_available()
-        check("index missing: still answers locally, no fetch",
-              b is False, repr(b))
-    except NetworkBlocked as e:
-        check("index missing: still answers locally, no fetch", False, str(e))
-    finally:
-        _disarm()
-        shutil.move(str(bak), str(idx))
-    check("resources index restored", idx.exists())
+        nd.download("punkt_tab")
+    except Exception as e:
+        raised = e
+    check("nltk.downloader.download refuses instead of fetching",
+          isinstance(raised, RuntimeError), f"{type(raised).__name__}: {raised}")
+    check("refusal message is actionable",
+          raised is not None and "fetch_resources.py" in str(raised), str(raised))
 
 
 def server_module_has_no_http_client() -> None:
@@ -197,6 +254,7 @@ def server_module_has_no_http_client() -> None:
 
 every_tool_is_offline()
 availability_probe_never_reaches_out()
+index_refresh_is_pinned()
 server_module_has_no_http_client()
 
 if failures:

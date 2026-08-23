@@ -53,6 +53,29 @@ now asserts that rather than leaving it to luck.
 
 ### Changed
 
+- **The server now structurally refuses resource downloads.** Adversarial
+  review caught that the first version of this fix made things *worse*, not
+  better: `get_resource_paths()` consults EstNLTK's resource index and
+  re-fetches it over HTTPS whenever the local copy is more than two hours
+  old. So a healthy, long-running server made a periodic outbound call to
+  `raw.githubusercontent.com` on the next `synonyms` or
+  `check_term_consistency` — and when that call failed it reported an
+  *installed* WordNet as missing. `_wordnet_available()` now reads the
+  resources directory directly.
+
+  A second path was open in the same way: EstNLTK's sentence tokenizer
+  catches `LookupError` for NLTK's `punkt_tab` and calls
+  `nltk.downloader.download()`. The `sentences` layer is built by
+  `tag_layer(["morph_analysis"])`, so nearly every tool could reach it.
+  `_forbid_resource_downloads()` now pins the index timeout and replaces
+  NLTK's downloader with a refusal that names the setup script.
+- **`find_related_words` and `check_compound_familiarity` now find the
+  model a source install actually has.** `_embeddings()` defaulted to the
+  container path only, while `fetch_resources.py` writes to
+  `~/.cache/estnltk-mcp/`. Following the documented setup and then running
+  the documented verify step failed, because the script cannot export a
+  variable into the server process — and a JSON-configured MCP client
+  cannot run a shell `export` at all. The lookup now tries both.
 - **Dockerfile fetches `punkt_tab` explicitly and asserts it loads.** The
   image already worked, but by accident rather than by construction — a
   base-image change could have removed it silently and broken
@@ -64,6 +87,23 @@ now asserts that rather than leaving it to luck.
   `fetch_resources.py` to prove it is idempotent.
 - **README** leads the source-install path with the fetch step and explains
   why the server never downloads anything itself.
+- **`tests/test_no_network.py` enforces the privacy promise** rather than
+  documenting it: every tool runs with sockets and DNS blocked, and the
+  blocker *records* each attempt instead of only raising — the first
+  version raised, and the code under test caught the exception by design,
+  so it passed against a live violation. Covers the stale-index case
+  specifically, which is the production steady state.
+- **A `source-install` CI job follows the README verbatim** from a clean
+  state with every resource path isolated: it asserts the tools fail
+  *actionably* before setup, runs the documented command, then proves they
+  work with no environment override. The existing `smoke` job pre-fetches
+  resources and exports `ESTNLTK_MCP_FASTTEXT_PATH`, which is precisely why
+  it stayed green while a README-following user got a broken install.
+- **`scripts/fetch_resources.py` validates by use, not by existence.** Each
+  resource is checked by actually tokenising / querying / hashing it, so a
+  truncated or partially-extracted artifact is replaced rather than
+  accepted forever. punkt_tab extracts to a staging dir with zip-slip
+  protection and is swapped in only after it tokenises, with rollback.
 
 ## [0.5.2] — 2026-08-23
 
