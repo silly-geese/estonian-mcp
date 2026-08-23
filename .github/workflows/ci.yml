@@ -85,6 +85,11 @@ jobs:
       - name: Run resource-availability tests (issues #37, #38)
         run: uv run --python ${{ matrix.python-version }} python tests/test_resources.py
 
+      # Enforces the PRIVACY.md promise instead of trusting it: every tool
+      # is invoked with outbound sockets blocked.
+      - name: Run no-outbound-network tests
+        run: uv run --python ${{ matrix.python-version }} python tests/test_no_network.py
+
       # The setup path a source install actually follows. Runs last so a
       # break here is unambiguous, and proves the script is idempotent
       # against resources CI already fetched by other means.

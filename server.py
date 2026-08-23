@@ -244,6 +244,13 @@ def _wordnet_available() -> bool:
         return bool(get_resource_paths("wordnet", only_latest=True,
                                        download_missing=False))
     except Exception:
+        # Load-bearing, not lazy. EstNLTK consults a local resources index,
+        # and when that index is itself absent it would want to fetch it
+        # from RESOURCES_INDEX_URL. Swallowing the failure and answering
+        # "not available" keeps the no-outbound-HTTP promise in the one
+        # case where the library would otherwise reach out. Pinned by
+        # tests/test_no_network.py, which deletes the index and asserts no
+        # connection is attempted.
         return False
 
 
