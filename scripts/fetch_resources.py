@@ -83,7 +83,10 @@ def fetch_fasttext() -> bool:
 
     target.parent.mkdir(parents=True, exist_ok=True)
     print(f"  fasttext: downloading (~33 MB) -> {target}")
-    tmp = target.with_suffix(".partial")
+    # Append rather than with_suffix(): with_suffix REPLACES an existing
+    # suffix, so an operator-supplied ESTNLTK_MCP_FASTTEXT_PATH ending in
+    # e.g. `.bin` would produce a temp name derived from a different stem.
+    tmp = target.parent / (target.name + ".partial")
     try:
         with urllib.request.urlopen(FASTTEXT_URL, timeout=300) as r:
             tmp.write_bytes(r.read())

@@ -216,13 +216,21 @@ def _vabamorf():
     return Vabamorf.instance()
 
 
-@lru_cache(maxsize=1)
 def _wordnet_available() -> bool:
     """True if Estonian WordNet is already on disk, WITHOUT downloading it.
 
     `estnltk.downloader.get_resource_paths(..., download_missing=False)` is a
     pure filesystem lookup against the local resources index — no network
     call, no interactive prompt.
+
+    Deliberately NOT cached, unlike `_wordnet()` below. Caching the probe
+    would reintroduce the very confusion issue #38 was about: an operator
+    sees `degraded: true`, runs `scripts/fetch_resources.py` as the message
+    tells them to, calls the tool again — and a cached `False` still says
+    degraded until they restart the process. The probe costs ~0.3 ms
+    against tool runtimes of 10 ms to 7 s, so there is nothing to buy here.
+    `_wordnet()` stays cached because it loads a heavy object, and it is
+    only ever reached once this returns True.
 
     This matters for more than tidiness. Calling `Wordnet()` on a machine
     that lacks the resource makes EstNLTK try to FETCH it, which would

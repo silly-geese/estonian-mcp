@@ -152,14 +152,36 @@ def no_download_attempt_at_runtime() -> None:
 
 
 def availability_probe_is_local_only() -> None:
-    """_wordnet_available must answer from disk, never from the network."""
-    print("_wordnet_available — pure local probe")
+    """_wordnet_available must answer from disk, never from the network,
+    and must NOT be cached."""
+    print("_wordnet_available — pure local, uncached probe")
     v = server._wordnet_available()
     check("returns a bool", isinstance(v, bool), repr(v))
-    # Cached, so repeated calls cannot turn into repeated probes.
-    check("is cached", server._wordnet_available() is v)
-    check("has a cache_clear (lru_cache applied)",
-          hasattr(server._wordnet_available, "cache_clear"))
+
+    # Not cached, on purpose. A cached probe reintroduces exactly the
+    # confusion issue #38 was about: the operator is told to run
+    # fetch_resources.py, does so, calls the tool again, and a stale False
+    # still reports degraded until the process restarts.
+    check("probe is NOT lru_cached",
+          not hasattr(server._wordnet_available, "cache_clear"),
+          "an lru_cache here would go stale after the operator installs "
+          "the resource mid-process")
+
+    # Prove it re-probes: flip the underlying answer and confirm the next
+    # call reflects it without any cache invalidation step.
+    import estnltk.downloader as dl
+    real = dl.get_resource_paths
+    try:
+        dl.get_resource_paths = lambda *a, **k: None
+        check("re-probes and sees a resource disappear",
+              server._wordnet_available() is False)
+        dl.get_resource_paths = lambda *a, **k: ["/fake/wordnet"]
+        check("re-probes and sees a resource appear",
+              server._wordnet_available() is True)
+    finally:
+        dl.get_resource_paths = real
+    check("restored real probe still returns a bool",
+          isinstance(server._wordnet_available(), bool))
 
 
 def schema_advertises_degraded() -> None:
