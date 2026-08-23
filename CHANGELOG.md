@@ -114,6 +114,28 @@ benchmark, and none of them had a test.
   docstring says so. It reports the raw score and an EKI-adjudicated score
   side by side.
 
+### Documentation
+
+Found by auditing every place that describes this product, prompted by the
+benchmark number changing. Three of these were already wrong before this
+release:
+
+- **`README.md` and `SECURITY.md` both still claimed `proxy_headers=True`.**
+  0.5.4 turned it **off**, as the fix for the rate-limit evasion: with it on,
+  uvicorn rewrites the peer address from the caller-controlled leftmost
+  `X-Forwarded-For` entry. That release corrected SECURITY.md's rate-limit
+  claim and missed this one, so the security posture was documented as the
+  opposite of what ships. Both now describe the actual behaviour, including
+  `ESTNLTK_MCP_TRUSTED_PROXY_HOPS`.
+- **The public-mode rate limit was documented as 120/min** in `README.md` and
+  `smithery.yaml`. It is 300/min (`DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE`).
+  The 120/min figure quoted for bearer mode is correct and unchanged.
+- **The `paradigm` row in the README's tool table** did not mention ordinals,
+  comparatives and superlatives, or the inflection-type split.
+- **The MCP server instructions** (what a client model reads before choosing
+  a tool) now say to read `ambiguity_estonian` and to pass an inflected form
+  when `paradigm_count > 1`. A capability no client is told about is not one.
+
 ### Notes
 
 - **The 13 disputed gold rows** are recorded in

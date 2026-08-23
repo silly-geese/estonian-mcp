@@ -64,7 +64,7 @@ of images is not one, however natural it sounds in ML jargon).
 | --- | --- |
 | `tokenize(text)` | Split text into sentences and words |
 | `analyze_morphology(text)` | Lemma, POS, form, root, ending, clitic, compound parts, ambiguity count, and usage flags (archaic / foreign / interjection / abbreviation / proper-noun) per word |
-| `paradigm(word)` | Full Vabamorf-generated inflection paradigm, 14 cases × 2 numbers for nominals, ~30 verb forms, with Estonian labels per form |
+| `paradigm(word)` | Full Vabamorf-generated inflection paradigm, 14 cases × 2 numbers for nominals (including ordinals, comparatives and superlatives), ~30 verb forms, with Estonian labels per form. A lemma with several inflection types (`kott` → `koti` or `kota`, two different words) returns one consistent table per type, corpus-ranked, rather than a merged one; pass an inflected form (`koti`) to select the type you mean |
 | `lemmatize(text)` | Just the dictionary form per word |
 | `pos_tag(text)` | Just the part-of-speech tag per word |
 | `spell_check(text)` | Spelling check + correction suggestions |
@@ -356,7 +356,7 @@ The same `server.py` speaks `streamable-http` over the network.
 Two auth postures:
 
 - **Public mode** (`ESTNLTK_MCP_PUBLIC_MODE=1`), no bearer token,
-  per-IP rate limit (default 120/min). This is how the silly-geese
+  per-IP rate limit (default 300/min). This is how the silly-geese
   hosted instance runs.
 - **Bearer mode** (default), every request must carry
   `Authorization: Bearer <token>` (or Smithery's `?config=<base64>`);
@@ -414,8 +414,12 @@ to a bearer-mode setup.
   required, server refuses to start without it. Bearer auth on every
   request, constant-time comparison, per-token rate limit (120/min).
 - **Common to all HTTP**: `/health` is the only unauthenticated path.
-  No request or token logging. `proxy_headers=True` so client IPs
-  reflect the originator, not the platform's edge.
+  No request or token logging. `proxy_headers` is **off**: the server
+  reads `X-Forwarded-For` itself, counting
+  `ESTNLTK_MCP_TRUSTED_PROXY_HOPS` entries from the RIGHT (default 1,
+  for Fly's single edge proxy), because the leftmost entry is
+  caller-controlled and letting uvicorn trust it defeated the per-IP
+  rate limit (0.5.4).
 - **Inputs**: 100 KB cap per text tool, 200 chars for `syllabify`.
   Oversized inputs return a structured error rather than hanging.
 - **Supply chain**: deps pinned + hashed in `uv.lock`. Dependabot

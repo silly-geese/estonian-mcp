@@ -94,8 +94,13 @@ defence-in-depth.
   disabled; only operational events (boot, shutdown) are logged.
 - **HTTPS termination at the edge.** The server itself listens on
   HTTP — terminate TLS at Fly's load balancer / Smithery's gateway /
-  your reverse proxy. `proxy_headers=True` and `forwarded_allow_ips="*"`
-  are set so the server trusts the platform's `X-Forwarded-*` headers.
+  your reverse proxy. Uvicorn's `proxy_headers` is **off**, and this is
+  deliberate: with it on (plus `forwarded_allow_ips="*"`) uvicorn
+  rewrites the peer address from the LEFTMOST `X-Forwarded-For` entry,
+  which the caller controls, and that is what let a caller defeat the
+  per-IP rate limit before 0.5.4. The server parses `X-Forwarded-For`
+  itself instead, counting `ESTNLTK_MCP_TRUSTED_PROXY_HOPS` entries from
+  the right; see the client-IP note above.
 - **Public health endpoint.** `/health` returns `{"ok": true}` with
   no auth and is bypassed by the rate limiter. Used for Fly health
   probes and uptime monitoring.
