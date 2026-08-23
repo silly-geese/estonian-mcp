@@ -97,6 +97,9 @@ jobs:
       - name: Run client-IP bucketing tests (rate-limit evasion)
         run: uv run --python ${{ matrix.python-version }} python tests/test_client_ip.py
 
+      - name: Run indeclinable-attribute tests (issue #42)
+        run: uv run --python ${{ matrix.python-version }} python tests/test_indeclinable.py
+
   # Proves the DOCUMENTED source-install path works, from a clean state.
   # The existing `smoke` job pre-fetches resources through bespoke steps and
   # exports ESTNLTK_MCP_FASTTEXT_PATH, which masks exactly the class of bug

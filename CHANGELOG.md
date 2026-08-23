@@ -7,6 +7,45 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.5] — 2026-08-23
+
+### Fixed
+
+- **`analyze_morphology` reported `-mata` attributes as declinable**
+  ([#42](https://github.com/silly-geese/estonian-mcp/issues/42), reported
+  by @tomkabel with the normative citations). The `-mata` form is the
+  tud-participle's negative counterpart and EKI states it "jääb alati
+  käändumatuks": `täitmata lepingute reserv`, not *täitmatute. The ending
+  test listed only `-tud`/`-dud`/`-nud`, so every `-mata` attribute came
+  back `indeclinable: false`, nudging a consumer toward the non-standard
+  declined form. This bites hardest in the legal and administrative
+  register the editorial tools target, where `-mata` is everywhere.
+
+- **`-tu` caritive adjectives were frozen when they should agree.** Not
+  reported, but the reporter's own EKI citation points at it: `-tu`
+  caritives DO agree, and their nominative plural also ends in `-tud`
+  (`õnnetu` → `õnnetud`, `lugematu` → `lugematud`). An ending test cannot
+  tell those from participles, so it marked them invariant, which would
+  produce *`õnnetud laste` where the correct form is `õnnetute laste`.
+
+  Rather than add `-mata` to the ending list and leave that in place, the
+  check now consults Vabamorf: a frozen attributive is an adjective
+  carrying no case/number form, a declining one carries `sg n` / `pl n`
+  and lemmatises back to `-tu`. The ending list stays as a fallback,
+  because Vabamorf sometimes misanalyses these as nouns (`hajutatud` →
+  `S/pl n/hajutatu`) and the ending is correct there.
+
+  `analyze_morphology` passes the analysis it already has, so the hot path
+  costs nothing extra; other callers get a cached lookup.
+
+### Notes
+
+- The `inflection_et` benchmark is **unchanged at 96.5% first-candidate /
+  99.1% any-candidate**, and that is not a coincidence worth trusting: its
+  200 noun phrases contain zero `-mata` attributes and no `-tu` caritive
+  plurals, so it exercises neither defect and could not have caught either.
+  `tests/test_indeclinable.py` is what guards this now.
+
 ## [0.5.4] — 2026-08-23
 
 ### Security

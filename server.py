@@ -71,7 +71,7 @@ DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.5.4"
+SERVER_VERSION = "0.5.5"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -1187,24 +1187,76 @@ _INDECLINABLE_ADJ_ET: frozenset[str] = frozenset({
 })
 
 
-def _is_indeclinable_attr(word: str) -> bool:
+# Endings that mark an attributive as invariant when Vabamorf gives us no
+# usable adjective analysis. -mata is the tud-participle's negative form
+# (issue #42); EKI: "mata-vorm jääb alati käändumatuks".
+_INDECLINABLE_ATTR_ENDINGS: tuple[str, ...] = ("tud", "dud", "nud", "mata")
+
+
+@lru_cache(maxsize=4096)
+def _attr_morphology(word: str) -> tuple[str, str]:
+    """(partofspeech, form) for a single word in isolation, via Vabamorf.
+
+    Cached because callers hit the same attributes repeatedly and this is
+    only consulted when the caller has no analysis of its own to pass in.
+    Returns ("", "") if the word cannot be analysed, which makes the caller
+    fall back to the ending heuristic.
+    """
+    try:
+        t = _Text()(word)
+        t.tag_layer(["morph_analysis"])
+        spans = list(t.morph_analysis)
+        if not spans:
+            return ("", "")
+        pos, form, _lemma = _span_bits(spans[0])
+        return (pos, form)
+    except Exception:
+        return ("", "")
+
+
+def _is_indeclinable_attr(
+    word: str, pos: str | None = None, form: str | None = None
+) -> bool:
     """True if a word does NOT inflect when used attributively (before a
     noun), so adjective-noun agreement should leave it in base form.
 
-    Two cases, both verified against TalTech's inflection_et benchmark:
+    Three cases:
     - lexical indeclinables (täis, eri, väärt, ...)
-    - past participles in -tud / -dud / -nud, which are invariant in
-      attributive position (`tuntud laulja` → `tuntud laulja` in the
-      genitive, not *tuntu laulja). Detected by ending because Vabamorf
-      often misanalyses them (e.g. hajutatud → noun 'hajutatu').
+    - past participles in -tud / -dud / -nud, invariant as an eestäiend
+      (`tuntud laulja` stays `tuntud laulja` in the genitive, not
+      *tuntu laulja)
+    - the -mata form, the tud-participle's negative counterpart, which EKI
+      states "jääb alati käändumatuks": `täitmata lepingute reserv`, not
+      *täitmatute. Reported as issue #42.
 
-    NOT flagged: -v present participles (rahuldav → rahuldava), which do
+    THE -tu TRAP. An ending test alone cannot do this correctly, because
+    -tu caritive adjectives DO agree and their nominative plural also ends
+    in -tud: `õnnetu` → `õnnetud`, `lugematu` → `lugematud`. Treating those
+    as invariant produced *`õnnetud laste` instead of `õnnetute laste`.
+    Vabamorf separates the two cleanly: a frozen attributive is tagged as
+    an adjective carrying NO case/number form, while a declining one
+    carries `sg n` / `pl n` and lemmatises back to -tu.
+
+    So when the word analyses as an adjective we trust the form field, and
+    otherwise fall back to the ending. The fallback matters: Vabamorf
+    sometimes misanalyses these as nouns (`hajutatud` → S/pl n/`hajutatu`),
+    and the ending is right in that case.
+
+    `pos` and `form` may be supplied by a caller that already has the
+    analysis, to avoid a second pass; when omitted they are looked up.
+
+    NOT flagged: -v present participles (rahuldav → rahuldava), which
     agree normally.
     """
     w = word.lower()
     if w in _INDECLINABLE_ADJ_ET:
         return True
-    return w.endswith(("tud", "dud", "nud"))
+    if pos is None and form is None:
+        pos, form = _attr_morphology(word)
+    if (pos or "") == "A":
+        # Adjective with a case/number form => it declines.
+        return not (form or "").strip()
+    return w.endswith(_INDECLINABLE_ATTR_ENDINGS)
 
 
 @mcp.tool(annotations=ToolAnnotations(
@@ -1260,7 +1312,8 @@ def analyze_morphology(text: Annotated[str, Field(description="Estonian text to 
         analyses_count = len(lemmas)
         is_ambiguous = analyses_count > 1
         code, et = _usage_note(_first(lemmas), _first(pos))
-        indeclinable = _is_indeclinable_attr(word)
+        indeclinable = _is_indeclinable_attr(
+            word, _first(pos) or "", _first(forms) or "")
         if all_analyses:
             analyses = [
                 {
