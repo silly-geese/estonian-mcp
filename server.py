@@ -1234,23 +1234,23 @@ def _is_indeclinable_attr(
     noun), so adjective-noun agreement should leave it in base form.
 
     Three invariant classes:
-    - lexical indeclinables (tais, eri, vaart, ...)
+    - lexical indeclinables (täis, eri, väärt, ...)
     - past participles in -tud / -dud / -nud (`tuntud laulja` stays
       `tuntud` in the genitive, not *tuntu laulja)
     - the -mata form, the tud-participle's negative counterpart, which EKI
-      states "jaab alati kaandumatuks": `taitmata lepingute reserv`, not
-      *taitmatute. Issue #42.
+      states "jääb alati käändumatuks": `täitmata lepingute reserv`, not
+      *täitmatute. Issue #42.
 
     WHY THIS IS NOT AN ENDING TEST. Three traps an ending test walks into:
 
     1. -tu caritive adjectives DO agree, and their nominative plural also
-       ends in -tud: `onnetu` -> `onnetud`. Freezing those yields
-       *`onnetud laste` for `onnetute laste`.
+       ends in -tud: `õnnetu` → `õnnetud`. Freezing those yields
+       *`õnnetud laste` for `õnnetute laste`.
     2. Ordinary plural nouns end the same way: `raamatud` (raamat),
        `linnud` (lind), `kohtud` (kohus). Freezing those is worse still,
        since they are common words.
     3. A noun whose stem ends in -ma forms its abessive in -mata:
-       `teema` -> `teemata`. That is an inflected noun, not the mata-form.
+       `teema` → `teemata`. That is an inflected noun, not the mata-form.
 
     So the order is: an adjective reading decides it (an invariant
     attributive has one with NO case/number form, a declining one only
@@ -1258,13 +1258,28 @@ def _is_indeclinable_attr(
     NOUN abessive; then -tud/-dud/-nud is invariant only when some lemma
     looks deverbal, which separates `hajutatu` from `raamat`.
 
-    KNOWN LIMITS, stated because the ending cannot resolve them:
-    - Caritives whose lemma ends -tu and which Vabamorf tags only as a
-      noun (`korratud` -> `korratu`, `maitsetud`) are still frozen; the
-      lemma is indistinguishable from a deverbal `hajutatu`.
+    KNOWN LIMITS, stated because the morphology cannot resolve them:
+
+    - A caritive whose lemma ends -tu and which Vabamorf tags ONLY as a
+      noun (`töötud` → `töötu`, `korratud`, `maitsetud`) is still frozen.
+      That lemma is shaped exactly like the deverbal `hajutatu`, and no
+      suffix test separates them. Checking whether a matching verb exists
+      is worse, not better: it breaks `lugupeetud` and `mahajäetud` while
+      falsely firing on `kasutud` and `raamatud`.
     - Homographs where the caritive plural and the participle are the same
-      string (`noutud`, `kaalutud`, `kohatud`) resolve to the participle
-      reading. Disambiguating needs semantics, not morphology.
+      string cannot be resolved at all, and they fail in BOTH directions
+      depending on which readings Vabamorf offers: `nõutud` and `kaalutud`
+      have an A/'' reading and freeze, while a word Vabamorf knows only as
+      a caritive declines even where the participle sense was meant.
+      Disambiguating needs semantics, not morphology.
+
+    CONTEXT BEATS ISOLATION, and callers differ. `analyze_morphology`
+    supplies analyses disambiguated from the SENTENCE, which resolves most
+    of the first class correctly: `töötud inimesed` gives A/pl n and
+    declines, where the same word alone gives S/pl n and freezes. The
+    isolated lookup is a best-effort fallback for callers that have no
+    sentence, so the two can disagree on exactly those ambiguous words.
+    Prefer passing analyses when you have them.
 
     `analyses` may be supplied by a caller that already has them, to avoid
     a second pass; when omitted they are looked up from the LOWERCASED
@@ -1286,7 +1301,7 @@ def _is_indeclinable_attr(
     if w.endswith("mata"):
         # Trap 3. Only a NOUN abessive is an inflected form here; the
         # guesser also emits spurious abessive readings under other tags
-        # for real mata-forms (`voltsimata` -> C/sg ab).
+        # for real mata-forms (`võltsimata` → C/sg ab).
         return not any(
             p == "S" and (f or "").endswith("ab") for p, f, _lm in analyses
         )

@@ -95,8 +95,12 @@ def ordinary_adjectives_and_lexical_indeclinables() -> None:
     print("everything else is unchanged")
     for w in ("suur", "ilus", "rahuldav", "kiire", "sinine"):
         check(f"{w} declines", server._is_indeclinable_attr(w) is False)
-    for w in sorted(server._INDECLINABLE_ADJ_ET)[:5]:
-        check(f"lexical indeclinable {w}", server._is_indeclinable_attr(w) is True)
+    # Explicit words, not `sorted(_INDECLINABLE_ADJ_ET)[:5]` — deriving the
+    # cases from the set under test means the assertion cannot fail.
+    for w in ("täis", "eri", "väärt", "alasti", "purjus"):
+        check(f"lexical indeclinable {w}",
+              server._is_indeclinable_attr(w) is True,
+              "expected in _INDECLINABLE_ADJ_ET")
 
 
 def caller_supplied_analyses() -> None:
@@ -182,14 +186,26 @@ def known_limits_are_documented() -> None:
     documented behaviour and the real behaviour in step: if a future change
     fixes them, this test fails and the docstring gets updated with it."""
     print("documented known limits")
-    for w in ("korratud", "maitsetud"):
+    for w in ("töötud", "korratud", "maitsetud"):
         check(f"{w}: caritive whose lemma is indistinguishable from deverbal",
               server._is_indeclinable_attr(w) is True,
               "documented limit — lemma -tu matches both classes")
     for w in ("nõutud", "kaalutud"):
         check(f"{w}: participle/caritive homograph resolves to the participle",
               server._is_indeclinable_attr(w) is True,
-              "documented limit — needs semantics, not morphology")
+              "documented limit, needs semantics not morphology")
+
+    # Context resolves what isolation cannot. This is the honest shape of
+    # the limit: the TOOL gets töötud right, the bare-word fallback does
+    # not, and callers with a sentence should pass their analyses.
+    in_context = {t["word"]: t["indeclinable"]
+                  for t in server.analyze_morphology("töötud inimesed said abi")}
+    check("context resolves töötud correctly where isolation cannot",
+          in_context["töötud"] is False,
+          f"{in_context} — analyze_morphology should decline this caritive")
+    check("...and that is a genuine isolated/contextual divergence",
+          server._is_indeclinable_attr("töötud") is True,
+          "if isolation now agrees, tighten the docstring's KNOWN LIMITS")
 
 
 def end_to_end_through_the_tool() -> None:
