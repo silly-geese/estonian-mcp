@@ -37,35 +37,39 @@ jobs:
       - name: Install dependencies (locked)
         run: uv sync --frozen --python ${{ matrix.python-version }}
 
-      - name: Pre-download EstNLTK WordNet (used by synonyms tool)
-        # Try EstNLTK's built-in S3 download; fall back to our GH
-        # Release mirror if the upstream S3 (hpc.ut.ee) is down.
+      # The documented setup path, not a bespoke one. This job used to
+      # hand-roll the WordNet + fastText fetches and let EstNLTK silently
+      # auto-download punkt_tab on first use — which is exactly the
+      # behaviour the server now refuses, so a divergent CI would have gone
+      # green while users hit issues #37/#38.
+      - name: Fetch resources (the documented setup step)
+        run: uv run --python ${{ matrix.python-version }} python scripts/fetch_resources.py
+
+      # EstNLTK's upstream S3 (hpc.ut.ee) goes down periodically; keep the
+      # GH Release mirror as a fallback so an upstream outage doesn't red
+      # the build. Only runs if the step above left WordNet unusable.
+      - name: WordNet mirror fallback (only if upstream failed)
         run: |
-          set +e
-          echo "y" | uv run --python ${{ matrix.python-version }} python -c "from estnltk.wordnet import Wordnet; Wordnet()"
-          status=$?
           set -e
-          if [ $status -ne 0 ]; then
-            echo "Upstream WordNet download failed; falling back to GH Release mirror."
+          usable=$(uv run --python ${{ matrix.python-version }} python -c "
+          try:
+              from estnltk.wordnet import Wordnet
+              print('yes' if Wordnet()['kasutama'] else 'no')
+          except Exception:
+              print('no')
+          " 2>/dev/null | tail -1)
+          if [ "$usable" != "yes" ]; then
+            echo "WordNet unusable after setup; falling back to the GH Release mirror."
             WN_DIR=$(uv run --python ${{ matrix.python-version }} python -c "from estnltk.resource_utils import get_resources_dir; print(get_resources_dir())")
             mkdir -p "$WN_DIR/wordnet"
-            curl -fsSL --retry 3 --retry-delay 2 \
-              -o /tmp/wn.zip \
+            curl -fsSL --retry 3 --retry-delay 2 -o /tmp/wn.zip \
               "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/wordnet_2026-02-13.zip"
             unzip -q -o /tmp/wn.zip -d "$WN_DIR/wordnet/"
             rm /tmp/wn.zip
-            # sanity: confirm Wordnet() now loads from the unpacked tree
             uv run --python ${{ matrix.python-version }} python -c "from estnltk.wordnet import Wordnet; assert Wordnet()['kasutama'], 'wordnet still not loadable after mirror fallback'"
+          else
+            echo "WordNet OK from the documented setup step."
           fi
-
-      - name: Pre-download fastText-et-medium (used by find_related_words + check_compound_familiarity)
-        run: |
-          mkdir -p $HOME/.cache/estnltk-mcp
-          F="$HOME/.cache/estnltk-mcp/fasttext-et-medium"
-          curl -fsSL --retry 3 --retry-delay 2 -o "$F" \
-            "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/fasttext-et-medium"
-          echo "3690ee9983fc95740a61125fd58ed385  $F" | md5sum -c -
-          echo "ESTNLTK_MCP_FASTTEXT_PATH=$F" >> $GITHUB_ENV
 
       - name: Run tool smoke tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_smoke.py
@@ -89,12 +93,6 @@ jobs:
       # is invoked with outbound sockets blocked.
       - name: Run no-outbound-network tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_no_network.py
-
-      # The setup path a source install actually follows. Runs last so a
-      # break here is unambiguous, and proves the script is idempotent
-      # against resources CI already fetched by other means.
-      - name: Verify scripts/fetch_resources.py is idempotent
-        run: uv run --python ${{ matrix.python-version }} python scripts/fetch_resources.py
 
   # Proves the DOCUMENTED source-install path works, from a clean state.
   # The existing `smoke` job pre-fetches resources through bespoke steps and
@@ -123,16 +121,25 @@ jobs:
           mkdir -p /tmp/empty-nltk /tmp/empty-estnltk
           uv run --python 3.13 python - <<'EOF'
           import server
-          try:
-              server.synonyms("kohv")
-              raise SystemExit("expected synonyms to fail without WordNet")
-          except RuntimeError as e:
-              assert "fetch_resources.py" in str(e), e
-              print("synonyms fails with an actionable message, as intended")
-          r = server.check_term_consistency("Andmestik ja teadusandmestik.")
-          assert r["degraded"] is True, r
-          assert "osaline" in r["summary_estonian"], r["summary_estonian"]
-          print("check_term_consistency reports degraded, as intended")
+          # Every resource-dependent tool must fail with an ACTIONABLE
+          # message naming the setup script — never a raw NLTK LookupError
+          # telling the user to run nltk.download(), which is advice this
+          # server deliberately does not follow.
+          for call in (
+              lambda: server.synonyms("kohv"),
+              lambda: server.check_compounds("Kooli maja on suur."),
+              lambda: server.check_term_consistency("Andmestik ja teadusandmestik."),
+              lambda: server.find_related_words("kohv", 3),
+          ):
+              try:
+                  call()
+              except RuntimeError as e:
+                  assert "fetch_resources.py" in str(e), f"unhelpful message: {e}"
+              except Exception as e:
+                  raise SystemExit(f"expected an actionable RuntimeError, got {type(e).__name__}: {e}")
+              else:
+                  raise SystemExit("expected the tool to fail before setup")
+          print("all resource-dependent tools fail actionably before setup")
           EOF
 
       # The README's setup step, verbatim. No env overrides.

@@ -996,7 +996,25 @@ def _counted(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         _TOOL_CALLS[fn.__name__] = _TOOL_CALLS.get(fn.__name__, 0) + 1
-        return fn(*args, **kwargs)
+        try:
+            return fn(*args, **kwargs)
+        except LookupError as e:
+            # NLTK raises a LookupError with a wall of text telling the
+            # caller to run nltk.download() — advice this server
+            # deliberately does not follow (see _forbid_resource_downloads).
+            # Translate it once, here, into the instruction that actually
+            # applies. Costs nothing on the success path, and catching at
+            # the tool boundary covers every tool that builds a layer
+            # rather than needing a guard at ~19 call sites.
+            missing = "an NLTK resource"
+            for name in ("punkt_tab", "punkt"):
+                if name in str(e):
+                    missing = f"NLTK {name}"
+                    break
+            raise RuntimeError(
+                f"{missing} is not installed, so {fn.__name__} cannot run. "
+                f"{_RESOURCE_FETCH_HINT}"
+            ) from e
 
     return wrapper
 

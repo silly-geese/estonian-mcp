@@ -42,19 +42,10 @@ present, so this is idempotent.
 """
 from __future__ import annotations
 
-import io
 import os
-import shutil
 import sys
 import urllib.request
-import zipfile
 from pathlib import Path
-
-# NLTK's own mirror. Pinned to the gh-pages package path NLTK itself serves.
-PUNKT_TAB_URL = (
-    "https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/"
-    "packages/tokenizers/punkt_tab.zip"
-)
 
 # Same artifact the Dockerfile pulls, from this project's own release, so
 # a source install and the image end up on identical bytes.
@@ -156,21 +147,6 @@ def _use_certifi_trust_store() -> str | None:
     return path
 
 
-def _safe_extract(zf: zipfile.ZipFile, dest: Path) -> None:
-    """Extract with zip-slip protection.
-
-    `ZipFile.extractall` will happily follow `../` in a member name and
-    write outside `dest`. This is a downloaded archive, so resolve every
-    member and refuse anything that escapes the destination.
-    """
-    dest_root = dest.resolve()
-    for member in zf.infolist():
-        out = (dest_root / member.filename).resolve()
-        if not out.is_relative_to(dest_root):
-            raise ValueError(f"unsafe path in archive: {member.filename!r}")
-    zf.extractall(dest)
-
-
 def _punkt_usable() -> bool:
     """Validate by USE: the data is only good if it actually tokenises.
 
@@ -190,67 +166,63 @@ def _punkt_usable() -> bool:
 
 
 def fetch_punkt_tab() -> bool:
-    """Download NLTK punkt_tab, extracting atomically after validation."""
+    """Download NLTK punkt_tab via NLTK's own downloader, then validate.
+
+    Uses `nltk.download` rather than fetching the zip by hand, deliberately.
+    NLTK publishes size + sha256 for each package in an `index.xml` on the
+    same branch as the data, fetched at download time, and installs via a
+    temp file + `os.replace`. That check cannot go stale, whereas a checksum
+    hardcoded here would break every user the moment NLTK republishes the
+    archive in place — which it does: `nltk_data` carries no tags or
+    releases, and punkt_tab has already been rewritten under the same URL
+    (2024-07-09, then 2025-02-17 to add Malayalam). Pin what you control or
+    what is immutable; verify dynamically what rolls.
+
+    `download_dir` is not optional. NLTK's default picks the first existing
+    writable dir on `nltk.data.path`, which is `~/nltk_data` — that
+    pollutes the user's home and detaches the data from the checkout it
+    belongs to. `<sys.prefix>/nltk_data` is on NLTK's default search path,
+    so the server finds it with no configuration.
+    """
+    import socket
+
     import nltk
 
     if _punkt_usable():
         print("  punkt_tab: already present and usable, skipping")
         return True
 
-    # Venv-local, so the fetch stays with the checkout it belongs to rather
-    # than polluting the user's home. <sys.prefix>/nltk_data is on NLTK's
-    # default search path.
     target = Path(sys.prefix) / "nltk_data"
-    tokenizers = target / "tokenizers"
     try:
-        tokenizers.mkdir(parents=True, exist_ok=True)
+        target.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        print(f"  punkt_tab: FAILED (cannot create {tokenizers}: {e})")
+        print(f"  punkt_tab: FAILED (cannot create {target}: {e})")
         print("             is sys.prefix writable? run inside the venv (uv run ...)")
         return False
     if str(target) not in nltk.data.path:
         nltk.data.path.insert(0, str(target))
 
-    print(f"  punkt_tab: downloading -> {tokenizers}")
-    # Extract into a staging dir first, validate, then swap into place, so a
-    # failure part-way through can never leave a half-installed tree that
-    # later runs mistake for a good one.
-    staging = tokenizers / ".punkt_tab.staging"
-    final = tokenizers / "punkt_tab"
-    if staging.exists():
-        shutil.rmtree(staging, ignore_errors=True)
+    print(f"  punkt_tab: downloading -> {target}")
+    # NLTK's urlopen carries no timeout of its own.
+    socket.setdefaulttimeout(120)
     try:
-        with urllib.request.urlopen(PUNKT_TAB_URL, timeout=120) as r:
-            payload = r.read()
-        staging.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(io.BytesIO(payload)) as zf:
-            _safe_extract(zf, staging)
+        ok = nltk.download("punkt_tab", download_dir=str(target), quiet=True)
     except Exception as e:
-        shutil.rmtree(staging, ignore_errors=True)
         print(f"  punkt_tab: FAILED ({type(e).__name__}: {e})")
         return False
+    finally:
+        socket.setdefaulttimeout(None)
 
-    extracted = staging / "punkt_tab"
-    if not (extracted / "estonian").is_dir():
-        shutil.rmtree(staging, ignore_errors=True)
-        print("  punkt_tab: archive did not contain an Estonian model")
+    if not ok:
+        print("  punkt_tab: FAILED (nltk downloader reported an error)")
         return False
 
-    backup = tokenizers / ".punkt_tab.previous"
-    shutil.rmtree(backup, ignore_errors=True)
-    if final.exists():
-        final.rename(backup)
-    extracted.rename(final)
-    shutil.rmtree(staging, ignore_errors=True)
-
+    # Validate by use. The checksum proves we received upstream's bytes;
+    # this proves those bytes actually tokenise Estonian — a class of
+    # failure no checksum can catch.
     if not _punkt_usable():
-        # Roll back rather than leave the checkout worse than we found it.
-        shutil.rmtree(final, ignore_errors=True)
-        if backup.exists():
-            backup.rename(final)
-        print("  punkt_tab: downloaded data does not tokenise; rolled back")
+        print("  punkt_tab: downloaded but does not tokenise Estonian")
         return False
-    shutil.rmtree(backup, ignore_errors=True)
     print("  punkt_tab: OK")
     return True
 
@@ -258,7 +230,7 @@ def fetch_punkt_tab() -> bool:
 def _wordnet_usable() -> bool:
     """Validate by USE. An interrupted extraction can leave the version
     directory in place with an incomplete set of sqlite files, which an
-    index/exists check would accept forever."""
+    index or exists check would accept forever."""
     try:
         from estnltk.wordnet import Wordnet
         return bool(Wordnet()["kasutama"])
