@@ -73,14 +73,22 @@ def participles_unchanged() -> None:
     """The behaviour that was already correct must stay correct."""
     print("participles remain indeclinable")
     for w in ("tuntud", "ettenähtud", "läbimõeldud", "rafineeritud",
-              "surnud", "närbunud", "hajutatud"):
+              "surnud", "närbunud", "hajutatud",
+              # Regressions an ordering-dependent lookup introduced;
+              # lugupeetud is the standard Estonian salutation.
+              "lugupeetud", "mahajäetud", "joobnud", "väljavenitatud"):
         check(f"{w}", server._is_indeclinable_attr(w) is True)
     # hajutatud is the documented Vabamorf misanalysis (S/pl n/hajutatu).
     # It must come out True via the ending fallback, not the adjective path.
-    analyses = server._attr_analyses("hajutatud")
-    check("hajutatud is still misanalysed as a noun (fallback is exercised)",
-          not any(p == "A" for p, _f in analyses),
-          f"{analyses} — if an 'A' reading appears, the fallback is untested here")
+    # Exercise the fallback directly rather than asserting on Vabamorf's
+    # current tagging: a pinned-version canary turns CI red on an upstream
+    # bump even when this code is still correct.
+    check("noun-tagged participle still freezes (fallback path)",
+          server._is_indeclinable_attr(
+              "hajutatud", (("S", "pl n", "hajutatu"),)) is True)
+    check("noun-tagged ordinary plural does not (same path, real lemma)",
+          server._is_indeclinable_attr(
+              "raamatud", (("S", "pl n", "raamat"),)) is False)
 
 
 def ordinary_adjectives_and_lexical_indeclinables() -> None:
@@ -94,37 +102,94 @@ def ordinary_adjectives_and_lexical_indeclinables() -> None:
 def caller_supplied_analyses() -> None:
     """analyze_morphology passes the analyses it already has, to avoid a
     second Vabamorf pass. Both paths must agree."""
-    print("caller-supplied analyses match the looked-up answer")
-    for w in ("täitmata", "tuntud", "õnnetud", "suur", "teemata"):
-        supplied = server._is_indeclinable_attr(w, server._attr_analyses(w))
-        looked_up = server._is_indeclinable_attr(w)
-        check(f"{w}: supplied == looked up ({supplied})", supplied == looked_up,
-              f"supplied={supplied} looked_up={looked_up}")
+    print("in-context verdict matches the isolated one")
+    # Comparing _is_indeclinable_attr(w, _attr_analyses(w)) against
+    # _is_indeclinable_attr(w) would be the same computation twice and
+    # could not fail. analyze_morphology derives its analyses from SENTENCE
+    # CONTEXT, so this is the comparison that can actually catch a
+    # divergence between the two callers.
+    SENTENCES = [
+        ("Täitmata kohustused jäid sahtlisse.", "Täitmata"),
+        ("Saatsin kirja lugupeetud kolleegile.", "lugupeetud"),
+        ("Õnnetud lapsed said abi.", "Õnnetud"),
+        ("Haruldased linnud lendasid üle.", "linnud"),
+        ("Suur maja seisis tänaval.", "Suur"),
+    ]
+    for sentence, target in SENTENCES:
+        toks = {t["word"]: t["indeclinable"]
+                for t in server.analyze_morphology(sentence)}
+        in_context = toks[target]
+        isolated = server._is_indeclinable_attr(target)
+        check(f"{target!r}: context={in_context} isolated={isolated}",
+              in_context == isolated,
+              f"the two callers disagree for {target!r}")
 
     # Only adjective readings with a case/number form => it declines.
     check("A/'pl n' alone declines even with a -tud ending",
-          server._is_indeclinable_attr("õnnetud", (("A", "pl n"),)) is False)
+          server._is_indeclinable_attr("õnnetud", (("A", "pl n", "õnnetu"),)) is False)
     check("an A/'' reading anywhere freezes it",
-          server._is_indeclinable_attr("tuntud", (("A", "pl n"), ("A", ""))) is True)
+          server._is_indeclinable_attr(
+              "tuntud", (("A", "pl n", "tuntud"), ("A", "", "tuntud"))) is True)
     # Ordering must not decide the verdict — that was the fragility of
     # taking only Vabamorf's first analysis.
     check("verdict is order-independent",
-          server._is_indeclinable_attr("tuntud", (("A", ""), ("V", "tud"))) ==
-          server._is_indeclinable_attr("tuntud", (("V", "tud"), ("A", ""))))
+          server._is_indeclinable_attr("tuntud", (("A", "", "tuntud"), ("V", "tud", "tundma")))
+          == server._is_indeclinable_attr("tuntud", (("V", "tud", "tundma"), ("A", "", "tuntud"))))
     # A lexical indeclinable wins regardless of what morphology says.
     check("lexical list beats supplied analyses",
-          server._is_indeclinable_attr("täis", (("A", "sg n"),)) is True)
+          server._is_indeclinable_attr("täis", (("A", "sg n", "täis"),)) is True)
 
 
 def abessive_nouns_are_not_frozen() -> None:
-    """A noun whose stem ends in -ma forms its abessive in -mata
-    (teema -> teemata). Adding 'mata' to the ending list froze those; the
-    abessive guard is what stops it."""
+    """Estonian abessive is genitive + -ta, so a noun whose genitive ends
+    in -ma produces a genuine -mata form: teema -> teemata. Those are
+    inflected nouns, not the mata-form, and adding 'mata' to the ending
+    list froze them.
+
+    Only -ma stems qualify. `skeem` gives `skeemita`, not *skeemata, so
+    strings like that are guesser artifacts rather than Estonian words and
+    are deliberately not asserted on here."""
     print("-mata abessive nouns still decline")
-    for w in ("teemata", "kliimata", "draamata", "skeemata", "reklaamata"):
-        check(f"{w} (abessive of a -ma stem)",
+    for w in ("teemata", "kliimata", "draamata"):
+        check(f"{w} (genuine abessive of a -ma stem)",
               server._is_indeclinable_attr(w) is False,
               "the -mata ending must not freeze an inflected noun")
+    # ...while a real mata-form that the guesser also tags abessive must
+    # survive. The guard is narrowed to NOUN abessives for exactly this.
+    for w in ("võltsimata", "kontrollimata"):
+        check(f"{w} (real mata-form, guesser also offers an abessive)",
+              server._is_indeclinable_attr(w) is True)
+
+
+def ordinary_plural_nouns_are_not_frozen() -> None:
+    """Any Estonian noun whose nominative plural ends -tud/-dud/-nud was
+    frozen by the bare ending test: raamatud, linnud, kohtud. An agent
+    following that would write *`paksude raamatud` for `paksude
+    raamatute`. The lemma check separates them: `hajutatu` is deverbal,
+    `raamat` is not."""
+    print("ordinary plural nouns still decline")
+    for w in ("raamatud", "linnud", "laenud", "kohtud", "toidud",
+              "säästud", "juustud", "sõidud"):
+        check(f"{w}", server._is_indeclinable_attr(w) is False,
+              "an ordinary plural noun must not be frozen")
+    got = {t["word"]: t["indeclinable"]
+           for t in server.analyze_morphology("haruldased linnud lendasid")}
+    check(f"in context: {got}", got.get("linnud") is False, str(got))
+
+
+def known_limits_are_documented() -> None:
+    """These stay frozen and the docstring says so. Asserted to keep the
+    documented behaviour and the real behaviour in step: if a future change
+    fixes them, this test fails and the docstring gets updated with it."""
+    print("documented known limits")
+    for w in ("korratud", "maitsetud"):
+        check(f"{w}: caritive whose lemma is indistinguishable from deverbal",
+              server._is_indeclinable_attr(w) is True,
+              "documented limit — lemma -tu matches both classes")
+    for w in ("nõutud", "kaalutud"):
+        check(f"{w}: participle/caritive homograph resolves to the participle",
+              server._is_indeclinable_attr(w) is True,
+              "documented limit — needs semantics, not morphology")
 
 
 def end_to_end_through_the_tool() -> None:
@@ -166,6 +231,8 @@ participles_unchanged()
 ordinary_adjectives_and_lexical_indeclinables()
 caller_supplied_analyses()
 abessive_nouns_are_not_frozen()
+ordinary_plural_nouns_are_not_frozen()
+known_limits_are_documented()
 end_to_end_through_the_tool()
 probe_is_cached_and_safe()
 

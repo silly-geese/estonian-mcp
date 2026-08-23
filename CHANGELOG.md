@@ -29,9 +29,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   produce *`õnnetud laste` where the correct form is `õnnetute laste`.
 
   Rather than add `-mata` to the ending list and leave that in place, the
-  check now consults Vabamorf: a frozen attributive is an adjective
-  carrying no case/number form, a declining one carries `sg n` / `pl n`
-  and lemmatises back to `-tu`. The ending list stays as a fallback,
+  check now consults Vabamorf, which separates *most* of them: a frozen
+  attributive has an adjective reading carrying no case/number form, a
+  declining one only ever carries `sg n` / `pl n`. Not all — see Known
+  limits below. The ending list stays as a fallback,
   because Vabamorf sometimes misanalyses these as nouns (`hajutatud` →
   `S/pl n/hajutatu`) and the ending is correct there.
 
@@ -47,6 +48,17 @@ versions follow [Semantic Versioning](https://semver.org/).
   predicted this class ("a handful of non-participle words end in
   `-mata`") and they were right.
 
+- **Ordinary plural nouns were being frozen too, and that was the worst of
+  the three.** Any Estonian noun whose nominative plural ends `-tud`,
+  `-dud` or `-nud` hit the ending test: `raamatud`, `linnud`, `laenud`,
+  `kohtud`, `toidud`, `säästud`. An agent following the documented
+  contract would write *`paksude raamatud` for `paksude raamatute`. This
+  predates #42, but it sits in the same code path and the fix is the same
+  shape: the lemma separates them, because Vabamorf's misanalysed
+  participles lemmatise to a deverbal stem (`hajutatud` → `hajutatu`)
+  while an ordinary plural does not (`raamatud` → `raamat`). The ending
+  fallback now requires a deverbal lemma.
+
 - **The verdict no longer depends on Vabamorf's analysis ordering.** A
   participle like `tuntud` comes back as `A/''`, `V/tud`, `A/pl n` and
   `A/sg n`; reading only the first analysis meant a reordering upstream
@@ -54,6 +66,20 @@ versions follow [Semantic Versioning](https://semver.org/).
   with no case/number form is enough to freeze the word. The probe is also
   looked up from the lowercased word, so capitalisation cannot change the
   answer (`Täitmata` analysed as `H/sg n` where `täitmata` is `V/mata`).
+  Without this, `lugupeetud` — the standard salutation in Estonian
+  official correspondence — reported as declinable.
+
+### Known limits
+
+Stated here because the morphology cannot resolve them, and the tests
+assert them so the documentation and the behaviour stay in step:
+
+- A caritive whose lemma ends `-tu` and which Vabamorf tags only as a noun
+  (`korratud` → `korratu`, `maitsetud`) is still frozen. That lemma is
+  indistinguishable from a deverbal `hajutatu`.
+- Where the caritive plural and the participle are the same string
+  (`nõutud`, `kaalutud`, `kohatud`), the participle reading wins.
+  Separating them needs semantics, not morphology.
 
 ### Notes
 
