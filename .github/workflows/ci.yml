@@ -188,6 +188,43 @@ jobs:
       - name: Setup step is idempotent
         run: uv run --python 3.13 python scripts/fetch_resources.py
 
+  # The self-host stack in deploy/ is security-relevant configuration that
+  # no Python test would notice going wrong: it is what terminates TLS,
+  # authenticates clients and decides what reaches a log. Two jobs' worth
+  # of checks, because config drifts silently otherwise.
+  deploy-stack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Invariants that hold without Docker: logging off by default, no
+      # credential reachable from a log, forward-secret ciphers, secret
+      # files at 0600, every template placeholder present in the envsubst
+      # filter. Also runs the credential scripts for real.
+      - name: Deploy-stack invariants and credential scripts
+        run: python3 tests/test_deploy.py
+
+      - name: shellcheck
+        run: shellcheck deploy/*.sh deploy/nginx/*.sh deploy/nginx/*.envsh tests/deploy_e2e.sh
+
+      - name: docker compose config parses
+        env:
+          DOMAIN: ci.example.test
+          INTERNAL_TOKEN: ci-internal-token-0123456789
+        run: docker compose config -q
+
+      - uses: docker/setup-buildx-action@v4
+
+      # Builds the proxy image, renders the config with envsubst, runs
+      # nginx -t, then drives the running proxy with curl: bearer auth,
+      # header rewriting, 405/404/413, the OAuth and PKCE flows, the
+      # forward-secrecy handshake, what does and does not reach a log, and
+      # that a flood of REFUSED requests is still rate limited.
+      - name: End-to-end against the running proxy
+        run: ./tests/deploy_e2e.sh
+
   lint:
     runs-on: ubuntu-latest
     steps:

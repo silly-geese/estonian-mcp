@@ -13,3 +13,17 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     labels: ["dependencies", "security"]
+
+  # Base images: the app's Dockerfile, the nginx proxy's, and the certbot
+  # image pinned in docker-compose.yaml. certbot is the container that
+  # holds the TLS private key, so an unattended `latest` there is exactly
+  # what pinning is meant to prevent - and a pin only helps if something
+  # offers the bumps.
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/deploy/nginx"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "security"]
