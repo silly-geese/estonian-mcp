@@ -37,8 +37,14 @@ of images is not one, however natural it sounds in ML jargon).
 > **Benchmark:** on TalTech's [`inflection_et`](https://huggingface.co/datasets/TalTechNLP/inflection_et)
 > gold dataset (a noun-phrase inflection benchmark; Lillepalu & Alumäe,
 > [arXiv:2510.21193](https://arxiv.org/abs/2510.21193v2)), our morphology
-> engine scores **96.5% first-candidate / 99.1% any-candidate** over
-> 1,400 items. Reproduce: `uv run python scripts/eval_inflection.py`.
+> engine scores **99.1% first-candidate / 99.1% any-candidate** over
+> 1,400 items (first-candidate is 96.6% without the optional fastText
+> model, which is what ranks a lemma's inflection types; any-candidate is
+> 99.1% either way). Every one of the 13 residual misses is a gold row that
+> contradicts EKI, so EKI-adjudicated the score is **100% / 100%**; the
+> disputed rows are listed with their citations in
+> [`data/inflection_et_eki_disputes.json`](data/inflection_et_eki_disputes.json).
+> Reproduce: `uv run python scripts/eval_inflection.py`.
 > (We're a tool server, not a rankable LLM, so this scores our tools
 > against published gold data.)
 
@@ -58,7 +64,7 @@ of images is not one, however natural it sounds in ML jargon).
 | --- | --- |
 | `tokenize(text)` | Split text into sentences and words |
 | `analyze_morphology(text)` | Lemma, POS, form, root, ending, clitic, compound parts, ambiguity count, and usage flags (archaic / foreign / interjection / abbreviation / proper-noun) per word |
-| `paradigm(word)` | Full Vabamorf-generated inflection paradigm, 14 cases × 2 numbers for nominals, ~30 verb forms, with Estonian labels per form |
+| `paradigm(word)` | Full Vabamorf-generated inflection paradigm, 14 cases × 2 numbers for nominals (including ordinals, comparatives and superlatives), ~30 verb forms, with Estonian labels per form. A lemma with several inflection types (`kott` → `koti` or `kota`, two different words) returns one consistent table per type, corpus-ranked, rather than a merged one; pass an inflected form (`koti`) to select the type you mean |
 | `lemmatize(text)` | Just the dictionary form per word |
 | `pos_tag(text)` | Just the part-of-speech tag per word |
 | `spell_check(text)` | Spelling check + correction suggestions |
@@ -300,8 +306,22 @@ EstNLTK requires Python 3.10–3.13.
 git clone https://github.com/silly-geese/estonian-mcp.git
 cd estonian-mcp
 uv sync
-uv run python tests/test_smoke.py     # verify
+uv run python scripts/fetch_resources.py   # required, see below
+uv run python tests/test_smoke.py          # verify
 ```
+
+**Don't skip the `fetch_resources.py` step.** `uv sync` installs Python
+packages, but three of the things the server needs are *data*, not Python
+distributions, so they can't live in `uv.lock`: NLTK's `punkt_tab`
+tokenizer, Estonian WordNet (~26 MB), and the fastText embeddings
+(~33 MB). Without them `check_compounds` and `check_term_consistency`
+raise, `synonyms` refuses to run, and `check_term_consistency` reports
+`degraded: true`. The script is idempotent, so re-running it is free.
+
+The server **never downloads anything itself** — not at import, not on a
+tool call. That's the [privacy promise](PRIVACY.md): no outbound HTTP from
+the running process. Fetching is a separate step *you* run knowingly, and
+the Docker image does the equivalent at build time.
 
 Then wire it into your client.
 
@@ -336,7 +356,7 @@ The same `server.py` speaks `streamable-http` over the network.
 Two auth postures:
 
 - **Public mode** (`ESTNLTK_MCP_PUBLIC_MODE=1`), no bearer token,
-  per-IP rate limit (default 120/min). This is how the silly-geese
+  per-IP rate limit (default 300/min). This is how the silly-geese
   hosted instance runs.
 - **Bearer mode** (default), every request must carry
   `Authorization: Bearer <token>` (or Smithery's `?config=<base64>`);
@@ -394,8 +414,12 @@ to a bearer-mode setup.
   required, server refuses to start without it. Bearer auth on every
   request, constant-time comparison, per-token rate limit (120/min).
 - **Common to all HTTP**: `/health` is the only unauthenticated path.
-  No request or token logging. `proxy_headers=True` so client IPs
-  reflect the originator, not the platform's edge.
+  No request or token logging. `proxy_headers` is **off**: the server
+  reads `X-Forwarded-For` itself, counting
+  `ESTNLTK_MCP_TRUSTED_PROXY_HOPS` entries from the RIGHT (default 1,
+  for Fly's single edge proxy), because the leftmost entry is
+  caller-controlled and letting uvicorn trust it defeated the per-IP
+  rate limit (0.5.4).
 - **Inputs**: 100 KB cap per text tool, 200 chars for `syllabify`.
   Oversized inputs return a structured error rather than hanging.
 - **Supply chain**: deps pinned + hashed in `uv.lock`. Dependabot
@@ -410,16 +434,24 @@ Terms of service for the hosted endpoint: [TERMS.md](TERMS.md).
 
 ## Notes
 
-- Most EstNLTK models (morph, NER, spell-check) ship inside the
-  wheel, no runtime downloads.
-- WordNet is a separate ~26 MB resource (used by `synonyms`); the
-  Docker image pre-downloads it at build time so the first call
-  doesn't pause to fetch it.
+- **The server never downloads anything at runtime.** Not on import, not
+  on a tool call, not to fill a gap it notices. That's the
+  [privacy promise](PRIVACY.md). Resources are fetched at Docker build
+  time, or by you running `scripts/fetch_resources.py` on a source
+  install. If a resource is missing, tools say so — `synonyms` raises an
+  actionable error, and `check_term_consistency` returns
+  `degraded: true` with the reason in its Estonian summary rather than a
+  confident-looking partial answer.
+- Most EstNLTK models (morph, NER, spell-check) ship inside the wheel.
+  Three things don't, because they're *data*, not Python distributions,
+  so `uv.lock` can't carry them: NLTK's `punkt_tab` tokenizer, WordNet,
+  and the fastText model.
+- WordNet is a separate ~26 MB resource (used by `synonyms` and one of
+  `check_term_consistency`'s two rules).
 - The fastText model used by `find_related_words` and
   `check_compound_familiarity` is a ~33 MB compressed resource with a
   100K-word vocabulary (built locally from Facebook's cc.et.300 via
-  compress-fasttext, CC-BY-SA-3.0; see [NOTICE](NOTICE)); pre-downloaded
-  at image-build time.
+  compress-fasttext, CC-BY-SA-3.0; see [NOTICE](NOTICE)).
 - Heavy neural taggers (`estnltk_neural`, BERT-based NER) are
   intentionally not pulled in; this server stays lean and fast.
 - First call after server start incurs a one-time tag-layer load
@@ -436,16 +468,16 @@ sharpen the linguistic rules. Here's how to get started:
 2. **Set up** the environment (Python 3.10–3.13):
    ```sh
    uv sync
-   # the fastText-backed tools need the embedding model for tests:
-   curl -fsSL -o ~/.cache/estnltk-mcp/fasttext-et-medium --create-dirs \
-     "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/fasttext-et-medium"
+   # punkt_tab + WordNet + fastText — none can come from uv.lock:
+   uv run python scripts/fetch_resources.py
    export ESTNLTK_MCP_FASTTEXT_PATH=~/.cache/estnltk-mcp/fasttext-et-medium
    ```
 3. **Create a feature branch** (`git checkout -b feature/my-feature`).
 4. **Run the tests**, both must pass:
    ```sh
-   uv run python tests/test_smoke.py   # tool behaviour
-   uv run python tests/test_http.py    # transport, auth, /metrics
+   uv run python tests/test_smoke.py       # tool behaviour
+   uv run python tests/test_http.py        # transport, auth, /metrics
+   uv run python tests/test_resources.py   # resource-availability handling
    ```
 5. **Commit** and open a pull request against `master`. CI (smoke on
    Python 3.11 + 3.13, plus a Docker build/boot check) must be green

@@ -37,35 +37,39 @@ jobs:
       - name: Install dependencies (locked)
         run: uv sync --frozen --python ${{ matrix.python-version }}
 
-      - name: Pre-download EstNLTK WordNet (used by synonyms tool)
-        # Try EstNLTK's built-in S3 download; fall back to our GH
-        # Release mirror if the upstream S3 (hpc.ut.ee) is down.
+      # The documented setup path, not a bespoke one. This job used to
+      # hand-roll the WordNet + fastText fetches and let EstNLTK silently
+      # auto-download punkt_tab on first use — which is exactly the
+      # behaviour the server now refuses, so a divergent CI would have gone
+      # green while users hit issues #37/#38.
+      - name: Fetch resources (the documented setup step)
+        run: uv run --python ${{ matrix.python-version }} python scripts/fetch_resources.py
+
+      # EstNLTK's upstream S3 (hpc.ut.ee) goes down periodically; keep the
+      # GH Release mirror as a fallback so an upstream outage doesn't red
+      # the build. Only runs if the step above left WordNet unusable.
+      - name: WordNet mirror fallback (only if upstream failed)
         run: |
-          set +e
-          echo "y" | uv run --python ${{ matrix.python-version }} python -c "from estnltk.wordnet import Wordnet; Wordnet()"
-          status=$?
           set -e
-          if [ $status -ne 0 ]; then
-            echo "Upstream WordNet download failed; falling back to GH Release mirror."
+          usable=$(uv run --python ${{ matrix.python-version }} python -c "
+          try:
+              from estnltk.wordnet import Wordnet
+              print('yes' if Wordnet()['kasutama'] else 'no')
+          except Exception:
+              print('no')
+          " 2>/dev/null | tail -1)
+          if [ "$usable" != "yes" ]; then
+            echo "WordNet unusable after setup; falling back to the GH Release mirror."
             WN_DIR=$(uv run --python ${{ matrix.python-version }} python -c "from estnltk.resource_utils import get_resources_dir; print(get_resources_dir())")
             mkdir -p "$WN_DIR/wordnet"
-            curl -fsSL --retry 3 --retry-delay 2 \
-              -o /tmp/wn.zip \
+            curl -fsSL --retry 3 --retry-delay 2 -o /tmp/wn.zip \
               "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/wordnet_2026-02-13.zip"
             unzip -q -o /tmp/wn.zip -d "$WN_DIR/wordnet/"
             rm /tmp/wn.zip
-            # sanity: confirm Wordnet() now loads from the unpacked tree
             uv run --python ${{ matrix.python-version }} python -c "from estnltk.wordnet import Wordnet; assert Wordnet()['kasutama'], 'wordnet still not loadable after mirror fallback'"
+          else
+            echo "WordNet OK from the documented setup step."
           fi
-
-      - name: Pre-download fastText-et-medium (used by find_related_words + check_compound_familiarity)
-        run: |
-          mkdir -p $HOME/.cache/estnltk-mcp
-          F="$HOME/.cache/estnltk-mcp/fasttext-et-medium"
-          curl -fsSL --retry 3 --retry-delay 2 -o "$F" \
-            "https://github.com/silly-geese/estonian-mcp/releases/download/v0.1.0-models/fasttext-et-medium"
-          echo "3690ee9983fc95740a61125fd58ed385  $F" | md5sum -c -
-          echo "ESTNLTK_MCP_FASTTEXT_PATH=$F" >> $GITHUB_ENV
 
       - name: Run tool smoke tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_smoke.py
@@ -81,6 +85,124 @@ jobs:
 
       - name: Run officialese / term-consistency tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_officialese.py
+
+      - name: Run resource-availability tests (issues #37, #38)
+        run: uv run --python ${{ matrix.python-version }} python tests/test_resources.py
+
+      # Enforces the PRIVACY.md promise instead of trusting it: every tool
+      # is invoked with outbound sockets blocked.
+      - name: Run no-outbound-network tests
+        run: uv run --python ${{ matrix.python-version }} python tests/test_no_network.py
+
+      - name: Run client-IP bucketing tests (rate-limit evasion)
+        run: uv run --python ${{ matrix.python-version }} python tests/test_client_ip.py
+
+      - name: Run indeclinable-attribute tests (issue #42)
+        run: uv run --python ${{ matrix.python-version }} python tests/test_indeclinable.py
+
+      # The inflection_et audit: paradigm generation, homonym inflection
+      # types, and the two EKI participle rules the disputed gold rows get
+      # wrong. Dataset-independent, so it needs no download.
+      - name: Run paradigm tests (inflection_et audit)
+        run: uv run --python ${{ matrix.python-version }} python tests/test_paradigm.py
+
+  # Proves the DOCUMENTED source-install path works, from a clean state.
+  # The existing `smoke` job pre-fetches resources through bespoke steps and
+  # exports ESTNLTK_MCP_FASTTEXT_PATH, which masks exactly the class of bug
+  # issues #37/#38 were about: it could stay green while a user following
+  # the README got a broken install. This job follows the README instead.
+  source-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+      - run: uv python install 3.13
+
+      - name: uv sync (nothing else)
+        run: uv sync --frozen --python 3.13
+
+      # Isolate every resource search path so nothing pre-seeded on the
+      # runner can make this pass for the wrong reason.
+      - name: Confirm the tools are genuinely broken before setup
+        env:
+          NLTK_DATA: /tmp/empty-nltk
+          ESTNLTK_RESOURCES: /tmp/empty-estnltk
+        run: |
+          mkdir -p /tmp/empty-nltk /tmp/empty-estnltk
+          uv run --python 3.13 python - <<'EOF'
+          import server
+          # Every resource-dependent tool must fail with an ACTIONABLE
+          # message naming the setup script — never a raw NLTK LookupError
+          # telling the user to run nltk.download(), which is advice this
+          # server deliberately does not follow.
+          for call in (
+              lambda: server.synonyms("kohv"),
+              lambda: server.check_compounds("Kooli maja on suur."),
+              lambda: server.check_term_consistency("Andmestik ja teadusandmestik."),
+              lambda: server.find_related_words("kohv", 3),
+          ):
+              try:
+                  call()
+              except RuntimeError as e:
+                  assert "fetch_resources.py" in str(e), f"unhelpful message: {e}"
+              except Exception as e:
+                  raise SystemExit(f"expected an actionable RuntimeError, got {type(e).__name__}: {e}")
+              else:
+                  raise SystemExit("expected the tool to fail before setup")
+          print("all resource-dependent tools fail actionably before setup")
+
+          # paradigm must NOT join that list. It consults the fastText
+          # vocabulary to rank homonymous inflection types, and that must
+          # stay a bonus: with no model installed it still answers, still
+          # returns every inflection type, and says the ranking is not
+          # corpus-backed rather than implying it is.
+          r = server.paradigm("kott")
+          assert len(r["forms"]) == 28, r
+          assert r["paradigm_count"] == 2, r
+          assert r["ranked_by_corpus_frequency"] is False, r
+          assert server.paradigm("esimene")["forms"], "ordinals lost their paradigm"
+          print("paradigm works with no resources installed")
+          EOF
+
+      # The README's setup step, verbatim. No env overrides.
+      - name: Run the documented setup step
+        run: uv run --python 3.13 python scripts/fetch_resources.py
+
+      - name: The README's verify step, with no fastText override
+        run: uv run --python 3.13 python tests/test_smoke.py
+
+      - name: Resource-backed tools work with no env override
+        run: |
+          uv run --python 3.13 python - <<'EOF'
+          import server
+          assert server.synonyms("kohv")["synsets"], "synonyms empty"
+          assert server.find_related_words("kohv", 3)["matches"], "fastText empty"
+          assert server.check_compounds("Kooli maja on suur.")["issues"], "punkt_tab path broken"
+          r = server.check_term_consistency("Andmestik ja teadusandmestik.")
+          assert r["degraded"] is False, r
+          print("all resource-backed tools OK after the documented setup")
+          EOF
+
+      - name: Setup step is idempotent
+        run: uv run --python 3.13 python scripts/fetch_resources.py
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+      # Config lives in ruff.toml and encodes this repo's actual
+      # conventions, so a failure here means a real deviation rather than
+      # a disagreement about style.
+      # Pinned: an unpinned `uvx ruff` resolves to latest at run time, so a
+      # future release adding rules under our selected prefixes would turn an
+      # unchanged codebase red with no commit to blame.
+      - name: ruff
+        run: uvx ruff@0.14.2 check . --output-format=github
 
   docker:
     runs-on: ubuntu-latest
@@ -147,6 +269,21 @@ jobs:
           echo "--- tools/call find_related_words (fastText, must not error)"
           call_tool find_related_words '{"word":"kohv"}' \
             | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',{}); assert not r.get('isError'), 'find_related_words errored: '+str(r); print('find_related_words OK')"
+
+          # issue #37: check_compounds needs NLTK punkt_tab, which uv.lock
+          # cannot install. The image worked by accident; assert it works by
+          # construction so a base-image change cannot silently break every
+          # one-click user.
+          echo "--- tools/call check_compounds (punkt_tab, must not error)"
+          call_tool check_compounds '{"text":"Kooli maja on suur."}' \
+            | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',{}); assert not r.get('isError'), 'check_compounds errored: '+str(r); print('check_compounds OK')"
+
+          # issue #38: the image must run this tool at FULL strength. A
+          # degraded:true here means WordNet went missing from the image and
+          # callers would be getting confident-but-partial answers.
+          echo "--- tools/call check_term_consistency (must NOT be degraded)"
+          call_tool check_term_consistency '{"text":"Andmestik ja teadusandmestik."}' \
+            | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',{}); assert not r.get('isError'), 'check_term_consistency errored: '+str(r); o=json.loads(r['content'][0]['text']); assert o['rules_run']['shared-wordnet-synset'] is True, 'WordNet rule did not run in the image: '+str(o['rules_run']); assert o.get('degraded') is False, 'image is serving degraded results: '+str(o); print('check_term_consistency OK, not degraded')"
 
           docker logs mcp | tail -20
           docker rm -f mcp

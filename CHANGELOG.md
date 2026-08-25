@@ -7,6 +7,415 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.6] — 2026-08-23
+
+Everything here came out of auditing the 13 `inflection_et` gold rows that
+contradict EKI. Those 13 are the dataset's, and they are reported upstream.
+The four defects below are ours, they were sitting behind the same
+benchmark, and none of them had a test.
+
+### Fixed
+
+- **`paradigm` reported that ordinals, comparatives and superlatives do not
+  inflect.** The nominal check listed `S`/`A`/`P`/`N` only, so `esimene`,
+  `teine`, `kolmas`, `parem`, `suurem`, `parim` and every other `O`, `C` or
+  `U` word came back as *"Sõnaliik 'O' ei käändu ega pöördu, paradigmat
+  pole."* with an empty `forms`. That is 1.5% of the 20k most frequent
+  Estonian word forms, and Vabamorf synthesises all three classes correctly
+  under their own POS code. The tool simply never asked.
+
+  This is the failure mode the server exists to prevent: an agent told a
+  word has no paradigm does not stop, it guesses.
+
+- **`paradigm` denied a paradigm to inflecting words with an adverb
+  reading.** `kaunis` on its own is disambiguated `D` (`kaunis hea` =
+  "quite good"), so `kaunis : kauni : kaunist`, an entirely ordinary
+  adjective, was reported as having no paradigm at all. When the
+  disambiguated reading does not inflect, the tool now looks for an
+  inflecting reading **of the word's own lemma** and uses it, disclosing
+  the other reading in `reading_estonian`.
+
+  The guard is deliberately narrow. `veel` also carries a noun reading, but
+  its lemma is `vesi`: answering a question about "still" with the paradigm
+  of "water" would be worse than the bug. So the reading must be the word's
+  own base form and must be an adjective, comparative, superlative or
+  ordinal. Noun readings are not promoted, because a function word's
+  surface routinely collides with a rare noun (`koos` to `koosi`, `miks` to
+  `miksi`).
+
+- **`paradigm` merged two different words into one table.** `kott` inflects
+  as either `koti` (bag) or `kota`, two words that share a nominative. The
+  output was a single table with `sg g: ["kota", "koti"]` and
+  `sg p: ["kotta", "kotti"]`, nothing saying those belong to different
+  words, and Vabamorf's lexicon order putting the rarer one first. An agent
+  taking the first candidate got `kota`.
+
+  Each inflection type is now generated separately under its own Vabamorf
+  `hint`, so a table can no longer take its genitive from one word and its
+  partitive from the other. `paradigm_key` names the type by its singular
+  genitive, `paradigm_count` says how many exist, the rest are in
+  `other_paradigms`, and `ambiguity_estonian` explains it in Estonian.
+
+  Ranking uses corpus attestation from the fastText vocabulary that
+  `find_related_words` already loads: `koti` is in it, `kota` is not. This
+  is a local read of an already-present file, no network, and it is
+  consulted **only** when a lemma has more than one inflection type (about
+  2.5% of words) or when a reading is a promotion candidate (about 0.25%).
+  It is never touched for an ordinary word, so a cold burst of `paradigm`
+  calls cannot multiply the load. With the model absent, the order is
+  Vabamorf's, `ranked_by_corpus_frequency` is `false`, the Estonian text
+  says so, and no inflection type is lost.
+
+  An input form that belongs to BOTH types (`kotti` is the singular
+  partitive of `koti` and the plural partitive of `kota`) identifies
+  nothing, and is left to the ranking rather than silently selecting
+  whichever table came first.
+
+- **`paradigm` threw away the caller's own evidence.** `paradigm("koti")`
+  returned exactly what `paradigm("kott")` returned, although the input
+  said which of the two words was meant. An inflected input now selects its
+  inflection type directly, which beats corpus frequency because it is
+  exact. The tool `note` used to advise the opposite ("pass the bare lemma
+  ... for the cleanest result"); it now says what is true.
+
+- **Verbs are no longer split into inflection types they do not have.**
+  A verb with two da-infinitives (`öelda`/`ütelda`, `mõelda`/`mõtelda`) has
+  **rööpvormid**, free variants of one lexeme, not two muuttüüpi. Both
+  variants stay, inside the one table.
+
+- **Smaller, same area.** Duplicate lexicon entries no longer surface as
+  `["halli", "halli"]`. A word whose forms never change (`väärt`, `eri`) is
+  labelled `invariant` rather than quietly returning 28 identical strings.
+  `paradigm_count` is now on every return path, including the two
+  short-circuits, so a caller reading it does not `KeyError` on a particle.
+
+### Added
+
+- **Every part-of-speech code the tool prints now carries its Estonian
+  name** (`partofspeech_estonian`, and inline in the Estonian prose):
+  `S nimisõna`, `A omadussõna`, `C omadussõna keskvõrdes`,
+  `U omadussõna ülivõrdes`, `O järgarvsõna`, `V tegusõna`, `D määrsõna`
+  and the rest. `word_class` likewise gained `word_class_estonian`
+  (`käändsõna` / `tegusõna`). A bare tagset letter dropped into an
+  Estonian sentence is not an answer.
+
+### Changed
+
+- **`inflection_et` benchmark: 96.5% to 99.1% first-candidate**, with
+  any-candidate unchanged at 99.1%. First-candidate now equals
+  any-candidate, and **every one of the 13 residual misses is a gold row
+  that contradicts EKI**, so the EKI-adjudicated score is 100% / 100%.
+  Without the fastText model the raw first-candidate figure is 96.6% and
+  any-candidate is still 99.1%, so nothing regresses when it is absent.
+
+- **`scripts/eval_inflection.py` now imports the server's synthesis path**
+  instead of re-implementing it, so the published number measures the
+  product. Only the phrase splitting and rejoining is harness code, and the
+  docstring says so. It reports the raw score and an EKI-adjudicated score
+  side by side.
+
+### Documentation
+
+Found by auditing every place that describes this product, prompted by the
+benchmark number changing. Three of these were already wrong before this
+release:
+
+- **`README.md` and `SECURITY.md` both still claimed `proxy_headers=True`.**
+  0.5.4 turned it **off**, as the fix for the rate-limit evasion: with it on,
+  uvicorn rewrites the peer address from the caller-controlled leftmost
+  `X-Forwarded-For` entry. That release corrected SECURITY.md's rate-limit
+  claim and missed this one, so the security posture was documented as the
+  opposite of what ships. Both now describe the actual behaviour, including
+  `ESTNLTK_MCP_TRUSTED_PROXY_HOPS`.
+- **The public-mode rate limit was documented as 120/min** in `README.md` and
+  `smithery.yaml`. It is 300/min (`DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE`).
+  The 120/min figure quoted for bearer mode is correct and unchanged.
+- **The `paradigm` row in the README's tool table** did not mention ordinals,
+  comparatives and superlatives, or the inflection-type split.
+- **The MCP server instructions** (what a client model reads before choosing
+  a tool) now say to read `ambiguity_estonian` and to pass an inflected form
+  when `paradigm_count > 1`. A capability no client is told about is not one.
+
+### Notes
+
+- **The 13 disputed gold rows** are recorded in
+  `data/inflection_et_eki_disputes.json` with the EKI form and the rule
+  cited: 12 decline a `-tud` participle that is invariant as a pre-modifier
+  (`läbimõeldu plaani` for `läbimõeldud plaani`), 1 leaves a `-v`
+  participle undeclined where it must agree (`rahuldav tulemuse` for
+  `rahuldava tulemuse`). The dataset looks generated word by word with a
+  synthesizer, which is exactly the operation that cannot know either rule.
+
+  The adjudication self-invalidates: each dispute is re-checked against the
+  live dataset before it counts, and is reported as stale and awarded
+  nothing once the data changes upstream.
+  `uv run python scripts/eval_inflection.py --report-disputes` prints them
+  as a markdown table for reporting upstream.
+
+- `tests/test_paradigm.py` is new: 523 checks over all four defects, both
+  EKI rules, the 13 disputed rows, the degraded no-model path, the guards
+  that keep the reading rescue from being worse than the bug, and the
+  property that each inflection type's table is exactly what strict hinted
+  synthesis produces, so no relaxation can creep back in.
+
+## [0.5.5] — 2026-08-23
+
+### Fixed
+
+- **`analyze_morphology` reported `-mata` attributes as declinable**
+  ([#42](https://github.com/silly-geese/estonian-mcp/issues/42), reported
+  by @tomkabel with the normative citations). The `-mata` form is the
+  tud-participle's negative counterpart and EKI states it "jääb alati
+  käändumatuks": `täitmata lepingute reserv`, not *täitmatute. The ending
+  test listed only `-tud`/`-dud`/`-nud`, so every `-mata` attribute came
+  back `indeclinable: false`, nudging a consumer toward the non-standard
+  declined form. This bites hardest in the legal and administrative
+  register the editorial tools target, where `-mata` is everywhere.
+
+- **`-tu` caritive adjectives were frozen when they should agree.** Not
+  reported, but the reporter's own EKI citation points at it: `-tu`
+  caritives DO agree, and their nominative plural also ends in `-tud`
+  (`õnnetu` → `õnnetud`, `lugematu` → `lugematud`). An ending test cannot
+  tell those from participles, so it marked them invariant, which would
+  produce *`õnnetud laste` where the correct form is `õnnetute laste`.
+
+  Rather than add `-mata` to the ending list and leave that in place, the
+  check now consults Vabamorf, which separates *most* of them: a frozen
+  attributive has an adjective reading carrying no case/number form, a
+  declining one only ever carries `sg n` / `pl n`. Not all — see Known
+  limits below. The ending list stays as a fallback,
+  because Vabamorf sometimes misanalyses these as nouns (`hajutatud` →
+  `S/pl n/hajutatu`) and the ending is correct there.
+
+  `analyze_morphology` passes the analyses it already has, so the hot path
+  costs nothing extra; other callers get a cached lookup.
+
+- **A second `-mata` trap, caught while self-reviewing this fix.** A noun
+  whose stem ends in `-ma` forms its abessive in `-mata`: `teema` →
+  `teemata`, `kliima` → `kliimata`, `draama` → `draamata`. Those are
+  inflected nouns, not the `mata`-form, so simply adding `mata` to the
+  ending list froze them. The check now declines anything with an
+  abessive reading before the ending fallback runs. The issue author
+  predicted this class ("a handful of non-participle words end in
+  `-mata`") and they were right.
+
+- **Ordinary plural nouns were being frozen too, and that was the worst of
+  the three.** Any Estonian noun whose nominative plural ends `-tud`,
+  `-dud` or `-nud` hit the ending test: `raamatud`, `linnud`, `laenud`,
+  `kohtud`, `toidud`, `säästud`. An agent following the documented
+  contract would write *`paksude raamatud` for `paksude raamatute`. This
+  predates #42, but it sits in the same code path and the fix is the same
+  shape: the lemma separates them, because Vabamorf's misanalysed
+  participles lemmatise to a deverbal stem (`hajutatud` → `hajutatu`)
+  while an ordinary plural does not (`raamatud` → `raamat`). The ending
+  fallback now requires a deverbal lemma.
+
+- **The verdict no longer depends on Vabamorf's analysis ordering.** A
+  participle like `tuntud` comes back as `A/''`, `V/tud`, `A/pl n` and
+  `A/sg n`; reading only the first analysis meant a reordering upstream
+  could silently flip it. All adjective readings are considered, and one
+  with no case/number form is enough to freeze the word. The probe is also
+  looked up from the lowercased word, so capitalisation cannot change the
+  answer (`Täitmata` analysed as `H/sg n` where `täitmata` is `V/mata`).
+  Without this, `lugupeetud` — the standard salutation in Estonian
+  official correspondence — reported as declinable.
+
+### Known limits
+
+Stated here because the morphology cannot resolve them, and the tests
+assert them so the documentation and the behaviour stay in step:
+
+- A caritive whose lemma ends `-tu` and which Vabamorf tags only as a noun
+  (`korratud` → `korratu`, `maitsetud`) is still frozen. That lemma is
+  indistinguishable from a deverbal `hajutatu`.
+- Where the caritive plural and the participle are the same string
+  (`nõutud`, `kaalutud`, `kohatud`), the participle reading wins.
+  Separating them needs semantics, not morphology.
+
+### Notes
+
+- The `inflection_et` benchmark is **unchanged at 96.5% first-candidate /
+  99.1% any-candidate**, and that is not a coincidence worth trusting: its
+  200 noun phrases contain zero `-mata` attributes and no `-tu` caritive
+  plurals, so it exercises neither defect and could not have caught either.
+  `tests/test_indeclinable.py` is what guards this now.
+
+## [0.5.4] — 2026-08-23
+
+### Security
+
+- **The public per-IP rate limit could be evaded entirely by varying
+  `X-Forwarded-For`.** `_client_ip` returned `scope["client"][0]`, which
+  uvicorn (`proxy_headers=True`, `forwarded_allow_ips="*"`) had rewritten
+  from the **leftmost** XFF entry. A proxy *appends* to whatever the caller
+  sent, so that entry is entirely caller-controlled: every request with a
+  different header got its own fresh bucket, and the public deployment's
+  only DoS protection did nothing.
+
+  Reproduced against a local server in public mode at a 5/min limit — a
+  fixed spoofed value gets 429 after five requests, rotating values stay
+  200 indefinitely. `SECURITY.md` asserted the opposite and has been
+  corrected.
+
+  `_client_ip` now reads the **Nth-from-right** entry, where N is
+  `ESTNLTK_MCP_TRUSTED_PROXY_HOPS` (default 1 for Fly's single edge proxy).
+  A caller cannot append after a proxy, so this is correct whether the edge
+  appends to a client-supplied header or replaces it. uvicorn's
+  `proxy_headers` is now **off**, because the fallback needs
+  `scope["client"]` to be the real peer — with it on, even
+  `TRUSTED_PROXY_HOPS=0` stayed bypassable, which the tests caught.
+
+  Set `ESTNLTK_MCP_TRUSTED_PROXY_HOPS=0` if you run the server directly
+  exposed with no proxy in front.
+
+  Surfaced while reviewing PR #36; credit to @laazik, whose nginx config
+  prompted the question even though the bug is ours, not theirs.
+
+## [0.5.3] — 2026-08-23
+
+Fixes both issues reported by @Kivaste against 0.5.1. Neither affected the
+hosted server or the one-click image — verified by calling both tools on
+the live deployment before changing anything — so this is a source-install
+release. #37 asked whether the image was affected too; it is not, and CI
+now asserts that rather than leaving it to luck.
+
+### Fixed
+
+- **`check_term_consistency` reported a confident negative while running at
+  half strength** ([#38](https://github.com/silly-geese/estonian-mcp/issues/38)).
+  With Estonian WordNet missing it returned "Ebajärjekindlat terminikasutust
+  ei tuvastatud" — reads as a clean bill of health — while the
+  `shared-wordnet-synset` rule never ran. The only signal was a `rules_run`
+  flag you had to know to read. Now the degradation is stated in
+  `summary_estonian` itself, in Estonian, with the command that fixes it,
+  and a top-level `degraded: true` field. As the reporter put it: a crash is
+  honest, this was not.
+- **The server no longer attempts to DOWNLOAD a missing resource.** The old
+  code called `Wordnet()` and caught the fallout, so on a machine without
+  the resource EstNLTK would try to fetch it — breaching the "no outbound
+  HTTP calls" promise in PRIVACY.md — and print its confirmation prompt to
+  stdout, which under stdio transport *is* the MCP protocol channel. A new
+  `_wordnet_available()` checks the filesystem first via
+  `get_resource_paths(download_missing=False)`, so neither can happen.
+  `synonyms` now raises a clear, actionable error instead.
+
+### Added
+
+- **`scripts/fetch_resources.py`** — the missing setup step for source
+  installs ([#37](https://github.com/silly-geese/estonian-mcp/issues/37)).
+  Fetches NLTK `punkt_tab`, Estonian WordNet and the fastText model, none of
+  which can come from `uv.lock` because they are data, not Python
+  distributions. Sets `SSL_CERT_FILE` from `certifi` first — uv-provisioned
+  interpreters ship without a CA trust store, so the documented
+  `nltk.download()` route fails with `CERTIFICATE_VERIFY_FAILED`; credit to
+  the reporter for diagnosing that. fastText is checksum-verified and moved
+  into place only after verification, so an interrupted download cannot
+  masquerade as a good model. Idempotent.
+
+  It is a script, not lazy auto-download, on purpose: the network access is
+  yours at setup time, never the server's at request time.
+
+### Changed
+
+- **The server now structurally refuses resource downloads.** Adversarial
+  review caught that the first version of this fix made things *worse*, not
+  better: `get_resource_paths()` consults EstNLTK's resource index and
+  re-fetches it over HTTPS whenever the local copy is more than two hours
+  old. So a healthy, long-running server made a periodic outbound call to
+  `raw.githubusercontent.com` on the next `synonyms` or
+  `check_term_consistency` — and when that call failed it reported an
+  *installed* WordNet as missing. `_wordnet_available()` now reads the
+  resources directory directly.
+
+  A second path was open in the same way: EstNLTK's sentence tokenizer
+  catches `LookupError` for NLTK's `punkt_tab` and calls
+  `nltk.downloader.download()`. The `sentences` layer is built by
+  `tag_layer(["morph_analysis"])`, so nearly every tool could reach it.
+  `_forbid_resource_downloads()` now pins the index timeout and replaces
+  NLTK's downloader with a refusal that names the setup script.
+- **`find_related_words` and `check_compound_familiarity` now find the
+  model a source install actually has.** `_embeddings()` defaulted to the
+  container path only, while `fetch_resources.py` writes to
+  `~/.cache/estnltk-mcp/`. Following the documented setup and then running
+  the documented verify step failed, because the script cannot export a
+  variable into the server process — and a JSON-configured MCP client
+  cannot run a shell `export` at all. The lookup now tries both.
+- **Dockerfile fetches `punkt_tab` explicitly and asserts it loads.** The
+  image already worked, but by accident rather than by construction — a
+  base-image change could have removed it silently and broken
+  `check_compounds` for every one-click user.
+- **CI covers both issues.** The container test now calls `check_compounds`
+  and asserts `check_term_consistency` comes back `degraded: false`, so the
+  image can never regress into serving confident-but-partial answers. The
+  smoke matrix runs the new `tests/test_resources.py` and executes
+  `fetch_resources.py` to prove it is idempotent.
+- **README** leads the source-install path with the fetch step and explains
+  why the server never downloads anything itself.
+- **`tests/test_no_network.py` enforces the privacy promise** rather than
+  documenting it: every tool runs with sockets and DNS blocked, and the
+  blocker *records* each attempt instead of only raising — the first
+  version raised, and the code under test caught the exception by design,
+  so it passed against a live violation. Covers the stale-index case
+  specifically, which is the production steady state.
+- **A `source-install` CI job follows the README verbatim** from a clean
+  state with every resource path isolated: it asserts the tools fail
+  *actionably* before setup, runs the documented command, then proves they
+  work with no environment override. The existing `smoke` job pre-fetches
+  resources and exports `ESTNLTK_MCP_FASTTEXT_PATH`, which is precisely why
+  it stayed green while a README-following user got a broken install.
+- **`scripts/fetch_resources.py` validates by use, not by existence.** Each
+  resource is checked by actually tokenising / querying / hashing it, so a
+  truncated or partially-extracted artifact is replaced rather than
+  accepted forever. punkt_tab extracts to a staging dir with zip-slip
+  protection and is swapped in only after it tokenises, with rollback.
+
+## [0.5.2] — 2026-08-23
+
+### Added
+
+- **`mcp_methods` at `/metrics`** — POST `/mcp` traffic bucketed by JSON-RPC
+  method. This exists to answer a question the old counters could not:
+  `tool_calls_total / sessions_total` was 0.53, i.e. more than half of
+  `initialize` calls never led to a tool call, with no way to tell probes
+  from real clients bouncing. Now `initialize` vs
+  `notifications/initialized` shows how many handshakes actually completed
+  rather than being abandoned mid-probe, and `tools/list` vs `tools/call`
+  shows how many clients enumerate the tools but never call one.
+
+  Method names are bucketed against a **fixed allowlist**; anything else
+  counts as `other`. The method comes from a request body and is therefore
+  caller-controlled, so it is never stored verbatim — that keeps the
+  metrics dict bounded against a hostile client inventing method names and
+  keeps arbitrary caller strings off `/metrics`. Still PII-free: only the
+  `method` field is read, never params, arguments or clientInfo.
+
+  Deliberately NOT "sessions that made >=1 tool call". The transport runs
+  `stateless_http`, so an `initialize` cannot be tied to the calls that
+  follow it, and introducing a client identifier to make that possible
+  would be a privacy step backwards. The method mix answers the same
+  question from the other side.
+
+### Changed
+
+- `_is_initialize_request` is replaced by `_classify_mcp_method`, which
+  parses the method once and buckets it. The old helper could skip the
+  JSON parse via a substring gate; the new one parses every POST `/mcp`
+  body. The body is already fully buffered at that point and a `json.loads`
+  on even a 100k-char tool call is well under a millisecond against tool
+  executions that run 10ms-7s, so the visibility is worth the trade. Method
+  names are still matched by parsing rather than substring, so a tool call
+  whose Estonian text merely contains `initialize` is not miscounted —
+  pinned by test.
+
+### Security
+
+- **cryptography 48.0.1 → 50.0.0** (CVE-2026-69247, high): a Bleichenbacher
+  oracle in PKCS#7 EnvelopedData decryption via distinguishable errors and
+  timing. Transitive only (`mcp` → `pyjwt` → `cryptography`) and not in the
+  exploitable path — the server never touches JWT or PKCS#7; bearer auth is
+  a `secrets.compare_digest` comparison, and public mode has no auth at
+  all. Patched regardless.
+
 ## [0.5.1] — 2026-07-31
 
 ### Changed

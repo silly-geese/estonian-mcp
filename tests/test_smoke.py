@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import server  # noqa: E402
+import server
 
 failures: list[str] = []
 
@@ -472,7 +472,8 @@ check("increments by exactly 1", server._TOOL_CALLS.get("tokenize", 0) == before
       f"{before} -> {server._TOOL_CALLS.get('tokenize', 0)}")
 
 print("schema quality (Smithery score guard)")
-import asyncio as _asyncio
+import asyncio as _asyncio  # noqa: E402  (deliberate: guard runs after the tool suite)
+
 _tools = _asyncio.run(server.mcp.list_tools())
 _missing_desc = [
     f"{t.name}.{p}"

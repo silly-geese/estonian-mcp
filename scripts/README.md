@@ -133,11 +133,19 @@ uv run python scripts/eval_inflection.py
 ```
 
 Reports any-candidate and first-candidate accuracy, a per-(number, case)
-breakdown, and sample misses. Latest run: **98.1% any-candidate,
-95.6% first-candidate** over 1,400 items (4 cases × sg/pl). The
-residual misses cluster on indeclinable adjectives (e.g. `täis`,
-`tuntud`) that Vabamorf inflects but standard Estonian leaves in base
-form.
+breakdown, and sample misses. Latest run: **99.1% any-candidate,
+99.1% first-candidate** over 1,400 items (4 cases × sg/pl).
+
+All 13 residual misses are gold rows that contradict EKI: 12 decline a
+`-tud` participle that is invariant as a pre-modifier, 1 leaves a `-v`
+participle undeclined where it must agree. They are recorded with the
+rule cited in [`../data/inflection_et_eki_disputes.json`](../data/inflection_et_eki_disputes.json),
+so the script also reports an **EKI-adjudicated 100% / 100%**. Each
+dispute is re-checked against the live dataset before it counts, and is
+reported as stale (and awarded nothing) if the data changes upstream.
+
+`--report-disputes` prints the 13 as a markdown table for reporting
+upstream.
 
 ## `eval_coverage.py`
 
@@ -159,8 +167,9 @@ uv run python scripts/eval_coverage.py 500   # sample size
   via `synonyms`. Latest: **~65%** on a 500 sample.
 
 The honest takeaway: deterministic morphology (`inflection_et`,
-96.5%/99.1%) is our home turf; full-sentence correction and free-text
-definitions are only partially served by detector/lookup tools.
+99.1%/99.1% raw, 100% EKI-adjudicated) is our home turf; full-sentence
+correction and free-text definitions are only partially served by
+detector/lookup tools.
 
 ## License
 

@@ -1,0 +1,34 @@
+# Lint config for estonian-mcp.
+#
+# Encodes the conventions this codebase already follows, so `ruff check`
+# is a real gate rather than a wall of noise. Two deliberate carve-outs:
+#
+#   BLE001 (blind `except Exception`) — used throughout on purpose. A
+#   resource load, a model file, or an EstNLTK call can fail in many ways,
+#   and the correct behaviour is almost always to degrade and report rather
+#   than to propagate. Narrow excepts here would be a list of every
+#   dependency's internal exception types, which rots.
+#
+#   E402 in tests/ — every test file inserts the repo root on sys.path
+#   before `import server`, which necessarily puts an import after code.
+line-length = 100
+target-version = "py310"
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "RUF"]
+ignore = [
+    "E501",    # long lines: prose in docstrings and Estonian strings
+    # This codebase is full of Estonian prose and typographic punctuation
+    # (en dashes, curly quotes, õ/ä/ö/ü/š/ž). "Ambiguous character" is the
+    # correct character here, not a mistake.
+    "RUF001", "RUF002", "RUF003",
+]
+
+[lint.per-file-ignores]
+# Test files are scripts: sys.path setup precedes imports by necessity,
+# and module-level assertions/imports mid-file are the established style.
+# `# noqa: E402` is kept explicit at each site rather than blanket-ignored,
+# so the sys.path-before-import trick stays visible to the reader.
+"tests/*" = ["F401"]
+# One-off data-prep scripts, not part of the served surface.
+"scripts/eval_*.py" = ["E402"]

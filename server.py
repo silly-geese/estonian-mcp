@@ -63,8 +63,15 @@ MAX_DOC_CHARS = 500_000
 DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 
+# How many reverse proxies sit in front of this server. Used to pick the
+# trustworthy entry out of X-Forwarded-For for the public-mode per-IP rate
+# limiter — see _client_ip. Fly.io puts exactly one proxy in front, which
+# is the default. Set to 0 if the server is directly internet-exposed, so
+# that a caller-supplied XFF is never trusted.
+_TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
+
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.5.1"
+SERVER_VERSION = "0.5.6"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -157,7 +164,12 @@ SERVER_INSTRUCTIONS = (
     "you use real legalese instead of inventing phrasings. "
     "Use these tools as ground truth rather than guessing Estonian spelling, "
     "case forms, or inflections — language models routinely hallucinate "
-    "plausible-but-wrong Estonian morphology. Note that spell_check passing "
+    "plausible-but-wrong Estonian morphology. When you call paradigm and the "
+    "word has several inflection types (paradigm_count > 1, e.g. kott, which "
+    "inflects as either koti or kota — two different words sharing a "
+    "nominative), read ambiguity_estonian before quoting a form, and prefer "
+    "passing an INFLECTED form (koti) over the bare lemma, which selects the "
+    "type you mean. Note that spell_check passing "
     "does NOT prove a word is real Estonian: Vabamorf accepts any "
     "morphologically valid compound, including ones you just coined, so "
     "verify coined or unusual compounds with check_compound_familiarity "
@@ -216,10 +228,121 @@ def _vabamorf():
     return Vabamorf.instance()
 
 
+_RESOURCE_FETCH_HINT = (
+    "Fetch it from a checkout with: uv run python scripts/fetch_resources.py "
+    "(the server never downloads resources by itself — see PRIVACY.md)."
+)
+
+
+def _forbid_resource_downloads() -> None:
+    """Make PRIVACY.md's "no outbound HTTP calls" structural, not aspirational.
+
+    Two libraries below us will silently reach for the network mid-tool-call
+    if a resource is missing, and neither is reachable from our own call
+    sites, so guarding each tool individually cannot close them:
+
+    1. `estnltk.resource_utils.get_resources_index()` re-fetches its index
+       from RESOURCES_INDEX_URL whenever the local copy is missing OR older
+       than INDEX_TIMEOUT (2 h). On a long-lived server that is a periodic
+       outbound request, and when it fails the caller sees "resource
+       missing" rather than "lookup failed" — a false negative on top of a
+       broken promise. Setting the timeout to effectively infinite pins us
+       to the on-disk index.
+    2. `estnltk`'s sentence tokenizer catches `LookupError` for NLTK's
+       `punkt_tab` and calls `nltk.downloader.download()`. The `sentences`
+       layer is built by `tag_layer(["morph_analysis"])`, so nearly every
+       tool reaches it. Replacing the downloader with a refusal turns a
+       silent fetch into an actionable error.
+
+    Best-effort and non-fatal: if either library's internals move, we lose
+    the guard but not the server. tests/test_no_network.py is what actually
+    proves the promise holds.
+    """
+    try:
+        import estnltk.resource_utils as _ru
+        _ru.INDEX_TIMEOUT = sys.maxsize
+    except Exception:
+        pass
+
+    def _refuse(*args, **kwargs):
+        name = args[0] if args else kwargs.get("info_or_id", "a resource")
+        raise RuntimeError(
+            f"estonian-mcp does not download resources while serving "
+            f"(tried to fetch {name!r}). {_RESOURCE_FETCH_HINT}"
+        )
+
+    try:
+        import nltk
+        import nltk.downloader as _nd
+        _nd.download = _refuse
+        nltk.download = _refuse
+    except Exception:
+        pass
+
+
+_forbid_resource_downloads()
+
+
+def _wordnet_available() -> bool:
+    """True if Estonian WordNet is unpacked on disk, WITHOUT any network.
+
+    Checks the resources directory directly rather than calling
+    `get_resource_paths()`, which consults EstNLTK's resource *index* and
+    re-fetches that index over HTTPS when it is more than two hours old —
+    an outbound call from inside a tool, and a false "missing" verdict
+    whenever it fails. See _forbid_resource_downloads.
+
+    Deliberately NOT cached, unlike `_wordnet()` below. Caching the probe
+    would reintroduce the very confusion issue #38 was about: an operator
+    sees `degraded: true`, runs `scripts/fetch_resources.py` as the message
+    tells them to, calls the tool again — and a cached `False` still says
+    degraded until they restart the process. The probe is a directory
+    listing; there is nothing to buy here. `_wordnet()` stays cached
+    because it loads a heavy object, and is only reached once this is True.
+    """
+    try:
+        from estnltk.resource_utils import get_resources_dir
+        root = Path(get_resources_dir()) / "wordnet"
+        if not root.is_dir():
+            return False
+        # A version subdirectory with the sqlite files unpacked inside it.
+        return any(
+            any(child.glob("*.db")) for child in root.iterdir() if child.is_dir()
+        )
+    except Exception:
+        return False
+
+
 @lru_cache(maxsize=1)
 def _wordnet():
     from estnltk.wordnet import Wordnet
     return Wordnet()
+
+
+# Where the fastText model may live, in priority order. The container path
+# comes first for the image; the cache path is where
+# scripts/fetch_resources.py puts it on a source install. Having only the
+# container default meant a source install could follow the documented
+# setup, be told "All resources present", and still fail every fastText
+# tool — the script cannot export a variable into the server process, and
+# JSON-configured MCP clients cannot run a shell `export` at all.
+_FASTTEXT_CANDIDATES: tuple[str, ...] = (
+    "/opt/models/fasttext-et-medium",
+    str(Path.home() / ".cache" / "estnltk-mcp" / "fasttext-et-medium"),
+)
+
+
+def _fasttext_path() -> str:
+    """Resolve the model path: explicit env override, else first candidate
+    that exists. Returns the container default when none exist, so the
+    error message names a concrete path."""
+    env = os.environ.get("ESTNLTK_MCP_FASTTEXT_PATH")
+    if env:
+        return env
+    for candidate in _FASTTEXT_CANDIDATES:
+        if Path(candidate).exists():
+            return candidate
+    return _FASTTEXT_CANDIDATES[0]
 
 
 @lru_cache(maxsize=1)
@@ -227,10 +350,12 @@ def _embeddings():
     """Lazy-load the compressed fastText model used by find_related_words
     and check_compound_familiarity."""
     import compress_fasttext
-    path = os.environ.get(
-        "ESTNLTK_MCP_FASTTEXT_PATH",
-        "/opt/models/fasttext-et-medium",
-    )
+    path = _fasttext_path()
+    if not Path(path).exists():
+        raise RuntimeError(
+            f"The fastText model is not installed (looked in "
+            f"{', '.join(_FASTTEXT_CANDIDATES)}). {_RESOURCE_FETCH_HINT}"
+        )
     return compress_fasttext.models.CompressedFastTextKeyedVectors.load(path)
 
 
@@ -883,7 +1008,25 @@ def _counted(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         _TOOL_CALLS[fn.__name__] = _TOOL_CALLS.get(fn.__name__, 0) + 1
-        return fn(*args, **kwargs)
+        try:
+            return fn(*args, **kwargs)
+        except LookupError as e:
+            # NLTK raises a LookupError with a wall of text telling the
+            # caller to run nltk.download() — advice this server
+            # deliberately does not follow (see _forbid_resource_downloads).
+            # Translate it once, here, into the instruction that actually
+            # applies. Costs nothing on the success path, and catching at
+            # the tool boundary covers every tool that builds a layer
+            # rather than needing a guard at ~19 call sites.
+            missing = "an NLTK resource"
+            for name in ("punkt_tab", "punkt"):
+                if name in str(e):
+                    missing = f"NLTK {name}"
+                    break
+            raise RuntimeError(
+                f"{missing} is not installed, so {fn.__name__} cannot run. "
+                f"{_RESOURCE_FETCH_HINT}"
+            ) from e
 
     return wrapper
 
@@ -905,8 +1048,18 @@ class _ParadigmResult(TypedDict, total=False):
     input: str
     lemma: str
     partofspeech: str
+    partofspeech_estonian: str
     word_class: str
+    word_class_estonian: str
     forms: list[dict]
+    paradigm_count: int
+    paradigm_key: str
+    other_paradigms: list[dict]
+    ranked_by_corpus_frequency: bool
+    ambiguity_estonian: str
+    reading_estonian: str
+    invariant: bool
+    invariant_estonian: str
     summary_estonian: str
     note: str
 
@@ -1049,24 +1202,133 @@ _INDECLINABLE_ADJ_ET: frozenset[str] = frozenset({
 })
 
 
-def _is_indeclinable_attr(word: str) -> bool:
+# Lemma endings that mark a -tud/-dud/-nud surface form as genuinely
+# deverbal. Needed because Vabamorf misanalyses some participles as nouns
+# (hajutatud -> S/pl n, lemma `hajutatu`), and the ending alone cannot tell
+# those from an ordinary plural noun that happens to end the same way
+# (raamatud -> lemma `raamat`, linnud -> `lind`).
+_DEVERBAL_LEMMA_ENDINGS: tuple[str, ...] = ("tu", "nu", "du", "tud", "nud", "dud")
+
+
+@lru_cache(maxsize=4096)
+def _attr_analyses(word: str) -> tuple[tuple[str, str, str], ...]:
+    """Every (partofspeech, form, lemma) triple Vabamorf offers for a word
+    in isolation.
+
+    ALL analyses, not just the first: a participle like `tuntud` comes back
+    as A/'', V/tud, A/pl n and A/sg n, so picking index 0 would make the
+    verdict depend on Vabamorf's ordering. Cached, because callers hit the
+    same attributes repeatedly; only consulted when the caller has no
+    analysis of its own to pass in.
+
+    Returns () if the word cannot be analysed, which sends the caller to
+    the ending heuristic.
+    """
+    try:
+        t = _Text()(word)
+        t.tag_layer(["morph_analysis"])
+        spans = list(t.morph_analysis)
+        if not spans:
+            return ()
+        span = spans[0]
+        # strict=False on purpose: if Vabamorf ever returns mismatched list
+        # lengths, truncating beats raising inside a tool call over a
+        # morphology detail.
+        return tuple(
+            (p or "", f or "", (lm or "").lower())
+            for p, f, lm in zip(span.partofspeech, span.form, span.lemma, strict=False)
+        )
+    except Exception:
+        return ()
+
+
+def _is_indeclinable_attr(
+    word: str, analyses: tuple[tuple[str, str, str], ...] | None = None
+) -> bool:
     """True if a word does NOT inflect when used attributively (before a
     noun), so adjective-noun agreement should leave it in base form.
 
-    Two cases, both verified against TalTech's inflection_et benchmark:
+    Three invariant classes:
     - lexical indeclinables (täis, eri, väärt, ...)
-    - past participles in -tud / -dud / -nud, which are invariant in
-      attributive position (`tuntud laulja` → `tuntud laulja` in the
-      genitive, not *tuntu laulja). Detected by ending because Vabamorf
-      often misanalyses them (e.g. hajutatud → noun 'hajutatu').
+    - past participles in -tud / -dud / -nud (`tuntud laulja` stays
+      `tuntud` in the genitive, not *tuntu laulja)
+    - the -mata form, the tud-participle's negative counterpart, which EKI
+      states "jääb alati käändumatuks": `täitmata lepingute reserv`, not
+      *täitmatute. Issue #42.
 
-    NOT flagged: -v present participles (rahuldav → rahuldava), which do
+    WHY THIS IS NOT AN ENDING TEST. Three traps an ending test walks into:
+
+    1. -tu caritive adjectives DO agree, and their nominative plural also
+       ends in -tud: `õnnetu` → `õnnetud`. Freezing those yields
+       *`õnnetud laste` for `õnnetute laste`.
+    2. Ordinary plural nouns end the same way: `raamatud` (raamat),
+       `linnud` (lind), `kohtud` (kohus). Freezing those is worse still,
+       since they are common words.
+    3. A noun whose stem ends in -ma forms its abessive in -mata:
+       `teema` → `teemata`. That is an inflected noun, not the mata-form.
+
+    So the order is: an adjective reading decides it (an invariant
+    attributive has one with NO case/number form, a declining one only
+    ever carries `sg n` / `pl n`); then -mata is invariant unless it is a
+    NOUN abessive; then -tud/-dud/-nud is invariant only when some lemma
+    looks deverbal, which separates `hajutatu` from `raamat`.
+
+    KNOWN LIMITS, stated because the morphology cannot resolve them:
+
+    - A caritive whose lemma ends -tu and which Vabamorf tags ONLY as a
+      noun (`töötud` → `töötu`, `korratud`, `maitsetud`) is still frozen.
+      That lemma is shaped exactly like the deverbal `hajutatu`, and no
+      suffix test separates them. Checking whether a matching verb exists
+      is worse, not better: it breaks `lugupeetud` and `mahajäetud` while
+      falsely firing on `kasutud` and `raamatud`.
+    - Homographs where the caritive plural and the participle are the same
+      string cannot be resolved at all, and they fail in BOTH directions
+      depending on which readings Vabamorf offers: `nõutud` and `kaalutud`
+      have an A/'' reading and freeze, while a word Vabamorf knows only as
+      a caritive declines even where the participle sense was meant.
+      Disambiguating needs semantics, not morphology.
+
+    CONTEXT BEATS ISOLATION, and callers differ. `analyze_morphology`
+    supplies analyses disambiguated from the SENTENCE, which resolves most
+    of the first class correctly: `töötud inimesed` gives A/pl n and
+    declines, where the same word alone gives S/pl n and freezes. The
+    isolated lookup is a best-effort fallback for callers that have no
+    sentence, so the two can disagree on exactly those ambiguous words.
+    Prefer passing analyses when you have them.
+
+    `analyses` may be supplied by a caller that already has them, to avoid
+    a second pass; when omitted they are looked up from the LOWERCASED
+    word, so the verdict does not depend on incidental capitalisation.
+
+    NOT flagged: -v present participles (rahuldav -> rahuldava), which
     agree normally.
     """
     w = word.lower()
     if w in _INDECLINABLE_ADJ_ET:
         return True
-    return w.endswith(("tud", "dud", "nud"))
+    if analyses is None:
+        analyses = _attr_analyses(w)
+
+    adjective_readings = [f for p, f, _lm in analyses if p == "A"]
+    if adjective_readings:
+        return any(not (f or "").strip() for f in adjective_readings)
+
+    if w.endswith("mata"):
+        # Trap 3. Only a NOUN abessive is an inflected form here; the
+        # guesser also emits spurious abessive readings under other tags
+        # for real mata-forms (`võltsimata` → C/sg ab).
+        return not any(
+            p == "S" and (f or "").endswith("ab") for p, f, _lm in analyses
+        )
+
+    if w.endswith(("tud", "dud", "nud")):
+        # Trap 2. Vabamorf misanalyses some participles as nouns, so the
+        # ending still has work to do -- but only when a lemma looks
+        # deverbal. `hajutatu` yes, `raamat` no.
+        return any(
+            lm.endswith(_DEVERBAL_LEMMA_ENDINGS) for _p, _f, lm in analyses
+        )
+    return False
 
 
 @mcp.tool(annotations=ToolAnnotations(
@@ -1098,9 +1360,9 @@ def analyze_morphology(text: Annotated[str, Field(description="Estonian text to 
         same flag (quote this verbatim in Estonian replies; do NOT
         translate the English usage_note yourself)
       - indeclinable: True for words that stay in base form when used
-        attributively (lexical indeclinables like `täis`, and -tud/-nud
-        past participles like `tuntud`) — i.e. they do NOT take the
-        noun's case ending in agreement. Use this before inflecting a
+        attributively (lexical indeclinables like `täis`, -tud/-nud past
+        participles like `tuntud`, and the -mata form like `täitmata`)
+        — i.e. they do NOT take the noun's case ending in agreement. Use this before inflecting a
         noun phrase so you don't wrongly decline an invariant adjective.
 
     Input is capped at 100,000 characters.
@@ -1122,7 +1384,10 @@ def analyze_morphology(text: Annotated[str, Field(description="Estonian text to 
         analyses_count = len(lemmas)
         is_ambiguous = analyses_count > 1
         code, et = _usage_note(_first(lemmas), _first(pos))
-        indeclinable = _is_indeclinable_attr(word)
+        indeclinable = _is_indeclinable_attr(
+            word,
+            tuple((p or "", f or "", (lm or "").lower())
+                  for p, f, lm in zip(pos, forms, lemmas, strict=False)))
         if all_analyses:
             analyses = [
                 {
@@ -1164,12 +1429,227 @@ def analyze_morphology(text: Annotated[str, Field(description="Estonian text to 
     return out
 
 
+# Vabamorf part-of-speech codes whose words inflect as nominals. O, C and
+# U were missing, so paradigm() answered "this word class does not inflect,
+# there is no paradigm" for every ordinal (esimene, kolmas), every
+# comparative (parem, suurem) and every superlative (parim, suurim) in
+# Estonian, 1.5% of the 20k most frequent word forms. Vabamorf synthesises
+# all three correctly under their own POS code; the tool just never asked.
+_NOMINAL_POS: frozenset[str] = frozenset({"S", "A", "P", "N", "O", "C", "U"})
+
+# POS codes we will promote a non-inflecting reading TO. Deliberately
+# excludes S: a function word's surface routinely collides with some rare
+# noun lemma (koos -> 'koosi', miks -> 'miksi', siin -> 'siini'), and
+# promoting those would answer a paradigm question with a word nobody
+# meant. Adjective / comparative / superlative / ordinal readings of the
+# same lemma are safe: at worst they are invariant (mööda, alasti), which
+# is a true statement about the word rather than an invented paradigm.
+_PROMOTABLE_POS: frozenset[str] = frozenset({"A", "C", "U", "O"})
+
+# The form that identifies WHICH paradigm a word belongs to. Estonian
+# grammar reads the muuttüüp off the singular genitive, and Vabamorf's
+# synthesizer accepts exactly that as its `hint`.
+#
+# Nominals only. Verbs are deliberately NOT split this way: a verb with two
+# da-infinitives (öelda / ütelda, mõelda / mõtelda) has rööpvormid, free
+# variants of one lexeme, not two muuttüüpi. Splitting them produced two
+# byte-identical tables and an Estonian sentence claiming a distinction
+# that does not exist.
+_NOMINAL_KEY_FORM = "sg g"
+
+# Estonian names for the Vabamorf POS codes this module puts in front of a
+# reader. A bare tagset letter in an Estonian sentence is not an answer.
+_POS_LABELS_ET: dict[str, str] = {
+    "S": "nimisõna",
+    "A": "omadussõna",
+    "C": "omadussõna keskvõrdes",
+    "U": "omadussõna ülivõrdes",
+    "P": "asesõna",
+    "N": "põhiarvsõna",
+    "O": "järgarvsõna",
+    "V": "tegusõna",
+    "D": "määrsõna",
+    "K": "kaassõna",
+    "J": "sidesõna",
+    "I": "hüüdsõna",
+    "Y": "lühend",
+    "G": "genitiivatribuut",
+    "Z": "kirjavahemärk",
+}
+
+_WORD_CLASS_ET: dict[str, str] = {"nominal": "käändsõna", "verb": "tegusõna"}
+
+
+def _pos_et(pos: str) -> str:
+    """'D (määrsõna)' when the code is known, otherwise just the code."""
+    label = _POS_LABELS_ET.get(pos or "")
+    return f"{pos} ({label})" if label else f"{pos}"
+
+
+def _synthesize(lemma: str, form: str, pos: str = "", hint: str = "") -> list[str]:
+    """Vabamorf synthesis for one form: deduplicated, order preserved.
+
+    The constraints are honoured STRICTLY. An empty result means "this
+    lexeme has no such form", and that is a true and useful answer:
+    `iga` (pronoun) has no plural, `kogu` (invariant adjective) has only
+    a nominative, `ei` has no verb forms at all.
+
+    Relaxing the POS when a form comes up empty looks helpful and is not.
+    It hands back another lexeme's forms, so the table's singular would be
+    the pronoun `iga` and its plural the noun `iga` "age" (`pl n: ead`).
+    That is the same splice this module separates paradigms to avoid, and
+    for a server whose job is to stop LLMs inventing Estonian morphology it
+    is the worst possible output. A caller that knows the POS is a
+    misanalysis should pass a corrected one, not be silently overruled.
+
+    DEDUPLICATION is the one thing added. Vabamorf lists one candidate per
+    matching lexicon entry, so homonyms with the same surface come back
+    twice (`hall` sg g -> halli, halli). Callers saw a two-element list and
+    had to guess why.
+    """
+    try:
+        got = _vabamorf().synthesize(lemma, form, pos, hint) or []
+    except Exception:
+        return []
+    return list(dict.fromkeys(got))
+
+
+def _corpus_ranks() -> dict | None:
+    """fastText vocabulary as {surface: frequency rank}, or None when the
+    model is not installed.
+
+    The vocabulary is ordered by corpus frequency, which is the only
+    evidence available offline for which of two morphologically valid
+    paradigms Estonian actually uses. Read-only, local file, no network:
+    the same model `find_related_words` already loads.
+    """
+    try:
+        return _embeddings().key_to_index
+    except Exception:
+        return None
+
+
+def _rank_paradigm_keys(keys: list[str]) -> tuple[list[str], bool]:
+    """Order homonymous paradigms by corpus attestation, best first.
+
+    Vabamorf's candidate order is lexicon order, not a preference ranking:
+    for `kott` it offers `kota` before `koti`, and a caller taking the first
+    candidate gets a paradigm no Estonian speaker meant. Corpus frequency
+    settles it: `koti` is in the vocabulary, `kota` is not.
+
+    Returns (ordered keys, whether corpus evidence was actually used). With
+    no model installed the order is Vabamorf's, unchanged, and the caller
+    is told so rather than being handed a silent guess.
+    """
+    # The length check comes FIRST. _corpus_ranks() deserialises a 34 MB
+    # model, and there is nothing to rank below two candidates, so putting
+    # it second would load it on every paradigm call for every ordinary
+    # word, and load it once per concurrent caller during a cold burst.
+    if len(keys) < 2:
+        return (keys, False)
+    ranks = _corpus_ranks()
+    if not ranks:
+        return (keys, False)
+    unattested = len(ranks) + 1
+    order = sorted(
+        range(len(keys)),
+        key=lambda i: (ranks.get(keys[i].lower(), unattested), i),
+    )
+    ordered = [keys[i] for i in order]
+    used = any(k.lower() in ranks for k in keys)
+    return (ordered, used)
+
+
+def _paradigm_hints(lemma: str, pos: str, key_form: str) -> tuple[list[str], bool]:
+    """The distinct paradigms this lemma has, best first, as Vabamorf hints.
+
+    Returns `([""], False)` for the ordinary case of a single paradigm. An
+    empty hint means "no constraint", so nothing changes for the ~97% of
+    words that are unambiguous. Otherwise one hint per paradigm, ranked, and
+    a flag saying whether corpus evidence decided the order.
+
+    Shared with scripts/eval_inflection.py so the published benchmark
+    number measures this code and not a re-implementation of it.
+    """
+    keys = _synthesize(lemma, key_form, pos)
+    ranked, used = _rank_paradigm_keys(keys)
+    if len(ranked) < 2:
+        return ([""], False)
+    return (ranked, used)
+
+
+def _inflecting_reading(word: str, analyses: list[dict]) -> dict | None:
+    """An inflecting reading of the word's OWN lemma, or None.
+
+    `kaunis` is analysed as a D (adverb, `kaunis hea` = "quite good") when
+    it stands alone, so paradigm() used to reply that it has no paradigm at
+    all, while `kaunis : kauni : kaunist` is one of the most ordinary
+    adjectives in the language, and Vabamorf generates it happily.
+
+    Two guards, because the naive version is worse than the bug.
+
+    OWN LEMMA. `veel` also carries a noun reading, but its lemma is `vesi`:
+    rescuing that would answer a question about "still" with the paradigm
+    of "water". So the reading must be the word's own base form, and must
+    be one of _PROMOTABLE_POS.
+
+    CORPUS ATTESTATION. That is still not enough. `kohe` ("immediately",
+    one of the commonest adverbs) carries an adjective reading of its own
+    lemma, `kohe : koheda`, which is a real word almost nobody means. The
+    promoted reading must therefore be one Estonian actually writes: its
+    singular genitive has to appear in the corpus vocabulary. `kauni` does
+    (rank 10765), `koheda` does not.
+
+    With no corpus model installed there is no evidence either way, so
+    nothing is promoted and the answer is what it was before this check
+    existed. Being unhelpful is recoverable; promoting the wrong word is
+    not.
+    """
+    w = word.lower()
+    for a in analyses:
+        if a.get("partofspeech") not in _PROMOTABLE_POS:
+            continue
+        if (a.get("lemma") or "").lower() != w:
+            continue
+        if (a.get("form") or "") not in ("", "sg n"):
+            continue
+        # Only now is the model worth loading: this branch is reached by
+        # roughly 0.25% of words, and never by ja / ning / väga / et.
+        ranks = _corpus_ranks()
+        if not ranks:
+            return None
+        keys = _synthesize(a["lemma"], _NOMINAL_KEY_FORM, a["partofspeech"])
+        if any(k.lower() in ranks for k in keys):
+            return a
+    return None
+
+
+def _build_forms(lemma: str, pos: str, form_list, labels: dict, hint: str) -> list[dict]:
+    """One paradigm table, generated under a single paradigm hint."""
+    forms: list[dict] = []
+    for f in form_list:
+        generated = _synthesize(lemma, f, pos, hint)
+        if not generated:
+            continue
+        forms.append({
+            "form": f,
+            "form_estonian": labels.get(f, f),
+            "surface": generated[0] if len(generated) == 1 else generated,
+        })
+    return forms
+
+
 def _paradigm(word: str) -> dict:
     """Generate a full inflection paradigm for a word.
 
     Resolves the input through analyze() to find its lemma + POS, then
     calls Vabamorf.synthesize() for each form in the appropriate paradigm
     table.
+
+    A lemma can belong to more than one paradigm (`kott` inflects as either
+    `koti` or `kota`). Those are generated separately and ranked, instead of
+    being merged into a single table where `sg g` and `sg p` could come from
+    different words.
     """
     _check_text(word, limit=MAX_WORD_CHARS, name="word")
     if any(ch.isspace() for ch in word):
@@ -1184,14 +1664,36 @@ def _paradigm(word: str) -> dict:
             "lemma": None,
             "partofspeech": None,
             "forms": [],
+            "paradigm_count": 0,
             "summary_estonian": f"Sõnale '{word}' paradigmat ei leitud.",
             "note": "Vabamorf couldn't analyse this word.",
         }
     primary = analyses[0]["analysis"][0]
     lemma = primary["lemma"]
     pos = primary["partofspeech"]
+    reading_et = ""
 
-    if pos in {"S", "A", "P", "N"}:
+    if pos not in _NOMINAL_POS and pos != "V":
+        # The isolated-word reading does not inflect. Before claiming the
+        # word has no paradigm, check whether the word's own lemma has an
+        # inflecting reading (the `kaunis` case).
+        try:
+            allr = vm.analyze([word], disambiguate=False)[0].get("analysis") or []
+        except Exception:
+            allr = []
+        alt = _inflecting_reading(word, allr)
+        if alt is not None:
+            reading_et = (
+                f"Üksiku sõnana loeb Vabamorf selle sõnaliigiks {_pos_et(pos)}, "
+                f"mille vormid ei muutu. Sõnal on ka "
+                f"{_POS_LABELS_ET.get(alt['partofspeech'], alt['partofspeech'])} "
+                f"({alt['partofspeech']}) tähendus, mis käändub, ja selle paradigma "
+                f"on väljal 'forms'."
+            )
+            lemma = alt["lemma"]
+            pos = alt["partofspeech"]
+
+    if pos in _NOMINAL_POS:
         form_list = _NOMINAL_FORMS
         labels = _CASE_LABELS_ET
         class_name = "nominal"
@@ -1204,9 +1706,11 @@ def _paradigm(word: str) -> dict:
             "input": word,
             "lemma": lemma,
             "partofspeech": pos,
+            "partofspeech_estonian": _POS_LABELS_ET.get(pos, pos),
             "forms": [],
+            "paradigm_count": 0,
             "summary_estonian": (
-                f"Sõnaliik '{pos}' ei käändu ega pöördu — paradigmat pole."
+                f"Sõnaliik {_pos_et(pos)} ei käändu ega pöördu, paradigmat pole."
             ),
             "note": (
                 "This part of speech does not inflect (e.g. adverbs, "
@@ -1214,38 +1718,104 @@ def _paradigm(word: str) -> dict:
             ),
         }
 
-    forms: list[dict] = []
-    for f in form_list:
-        try:
-            generated = vm.synthesize(lemma, f, pos)
-        except Exception:
-            generated = []
-        if not generated:
-            continue
-        forms.append({
-            "form": f,
-            "form_estonian": labels.get(f, f),
-            "surface": generated[0] if len(generated) == 1 else generated,
-        })
+    # Which inflection types does this lemma have? Estonian reads the
+    # muuttüüp off the singular genitive; Vabamorf takes exactly that back
+    # as a `hint`. Verbs are not split (see _NOMINAL_KEY_FORM).
+    if class_name == "verb":
+        ranked, ranked_by_corpus = ([""], False)
+    else:
+        ranked, ranked_by_corpus = _paradigm_hints(lemma, pos, _NOMINAL_KEY_FORM)
+    chosen_by_input = False
 
-    return {
+    if len(ranked) < 2:
+        # One paradigm (the overwhelmingly common case): no hint needed, so
+        # nothing about the existing output changes.
+        tables = [("", _build_forms(lemma, pos, form_list, labels, ""))]
+    else:
+        tables = [(k, _build_forms(lemma, pos, form_list, labels, k)) for k in ranked]
+        # An inflected input already says which type the caller means:
+        # `paradigm("koti")` must not lead with the `kota` table. This is
+        # exact evidence, so it outranks corpus frequency.
+        #
+        # Only when it IS exact, though. Types share surfaces: `kotti` is
+        # the singular partitive of `koti` AND the plural partitive of
+        # `kota`, so it identifies nothing. Taking the first table that
+        # contains it would have answered `paradigm("kotti")` with `kota`
+        # whenever corpus ranking was unavailable, while claiming the input
+        # had decided. A form in more than one table is left to the ranking.
+        w = word.lower()
+        if w != lemma.lower():
+            matched = [
+                i for i, (_key, forms) in enumerate(tables)
+                if w in {
+                    s.lower()
+                    for entry in forms
+                    for s in ([entry["surface"]] if isinstance(entry["surface"], str)
+                              else entry["surface"])
+                }
+            ]
+            if len(matched) == 1:
+                tables.insert(0, tables.pop(matched[0]))
+                chosen_by_input = True
+
+    key, forms = tables[0]
+    others = [{"paradigm_key": k, "forms": f} for k, f in tables[1:]]
+
+    result = {
         "input": word,
         "lemma": lemma,
         "partofspeech": pos,
+        "partofspeech_estonian": _POS_LABELS_ET.get(pos, pos),
         "word_class": class_name,
+        "word_class_estonian": _WORD_CLASS_ET[class_name],
         "forms": forms,
+        "paradigm_count": len(tables),
         "summary_estonian": (
-            f"Sõna '{lemma}' ({pos}) paradigma: {len(forms)} vormi."
+            f"Sõna '{lemma}' ({_pos_et(pos)}) paradigma: {len(forms)} vormi."
         ),
         "note": (
             "Generated via Vabamorf.synthesize. Some forms may be marked, "
             "rare, or stylistically odd — Vabamorf produces what's "
             "morphologically possible, not what a native speaker would "
-            "necessarily use. For ambiguous lemmas pass the bare lemma "
-            "(e.g. 'kasutama') rather than an inflected form for the "
-            "cleanest result."
+            "necessarily use. Passing an INFLECTED form (e.g. 'koti') is "
+            "better than the bare lemma when a word has several paradigms: "
+            "it tells the server which one you mean."
         ),
     }
+    if key:
+        result["paradigm_key"] = key
+    if reading_et:
+        result["reading_estonian"] = reading_et
+    if others:
+        result["other_paradigms"] = others
+        result["ranked_by_corpus_frequency"] = ranked_by_corpus and not chosen_by_input
+        all_keys = ", ".join(k for k, _ in tables)
+        if chosen_by_input:
+            why = f"Esimesena on tüüp, kuhu sinu antud vorm '{word}' kuulub."
+        elif ranked_by_corpus:
+            why = "Esimesena on korpuses sagedasem tüüp."
+        else:
+            why = "Järjestus on Vabamorfi oma, sagedusandmeid ei olnud."
+        # "käändevorm", not "käändeline vorm": the latter is the term for a
+        # verb's nominal forms (infinitives, participles), so it would ask
+        # the caller for a participle.
+        hint_et = (
+            "" if chosen_by_input
+            else " Kui tead, millist sõna silmas pead, anna sisendiks käändevorm."
+        )
+        result["ambiguity_estonian"] = (
+            f"Sõnal '{lemma}' on Vabamorfi sõnastikus {len(tables)} eri muuttüüpi "
+            f"({all_keys}). {why} Ülejäänud tüübid on väljal 'other_paradigms'.{hint_et}"
+        )
+    surfaces = {
+        s for entry in forms
+        for s in ([entry["surface"]] if isinstance(entry["surface"], str)
+                  else entry["surface"])
+    }
+    if forms and surfaces == {lemma}:
+        result["invariant"] = True
+        result["invariant_estonian"] = f"Sõna '{lemma}' ei muutu, kõik vormid on ühesugused."
+    return result
 
 
 @mcp.tool(annotations=ToolAnnotations(
@@ -1258,16 +1828,26 @@ def _paradigm(word: str) -> dict:
 def paradigm(word: Annotated[str, Field(description="A single Estonian word (lemma or inflected form) to generate the full paradigm for.")]) -> _ParadigmResult:
     """Generate the full inflection paradigm for an Estonian word.
 
-    For nominals (nouns, adjectives, pronouns, numerals): produces all 14
-    cases × 2 numbers = up to 28 forms. For verbs: produces infinitives,
-    present/past/conditional indicative, imperative, and participles
-    (~30 forms). Other parts of speech (adverbs, conjunctions,
-    particles) don't inflect — `forms` is empty.
+    For nominals (nouns, adjectives, pronouns, cardinals, ordinals,
+    comparatives, superlatives): produces all 14 cases × 2 numbers = up to
+    28 forms. For verbs: produces infinitives, present/past/conditional
+    indicative, imperative, and participles (~30 forms). Other parts of
+    speech (adverbs, conjunctions, particles) don't inflect, so `forms` is
+    empty.
 
     Each form entry has the Vabamorf form code (e.g. `sg p`, `ksin`),
     its Estonian label (e.g. `ainsuse osastav`, `tingiv 1.p ainsus`),
     and the surface form Vabamorf generated. Use `form_estonian` verbatim
     in Estonian replies — don't translate the English `form` code.
+
+    AMBIGUOUS LEMMAS. Some lemmas belong to more than one inflection type
+    (`kott` inflects as either `koti` or `kota`, two different words that
+    share a nominative). `forms` is then one internally consistent
+    paradigm, `paradigm_key` names it by its singular genitive,
+    `paradigm_count` says how many exist, and the rest are in
+    `other_paradigms`. Read `ambiguity_estonian` before quoting a form.
+    **Pass an inflected form (`koti`) rather than the bare lemma when you
+    know which word you mean**: that selects the paradigm exactly.
 
     Phase-1 scope: covers the most commonly-needed forms per word class,
     not every theoretical form Vabamorf can produce. Single-word input,
@@ -1483,6 +2063,16 @@ def synonyms(word: Annotated[str, Field(description="A single Estonian word to l
     _check_text(word, limit=MAX_WORD_CHARS, name="word")
     if any(ch.isspace() for ch in word):
         raise ValueError("synonyms expects a single word, no whitespace")
+    # Fail with an actionable message rather than letting EstNLTK try to
+    # download the resource (outbound HTTP, which PRIVACY.md rules out) and
+    # print its prompt to stdout (the MCP protocol channel under stdio).
+    if not _wordnet_available():
+        raise RuntimeError(
+            "Estonian WordNet is not installed, so synonyms cannot run. "
+            "Fetch it with: uv run python scripts/fetch_resources.py "
+            "(the server never downloads resources by itself — see "
+            "PRIVACY.md)."
+        )
     wn = _wordnet()
     synsets = wn[word] or []
     out: list[dict] = []
@@ -1519,7 +2109,7 @@ def _classify_register(text: str) -> dict:
         if _first(list(span.partofspeech)) == "S":
             noun_count += 1
         # Test against both surface form and best lemma; lower-cased.
-        lemma = (list(span.lemma)[0] if span.lemma else "").lower()
+        lemma = (_first(list(span.lemma)) or "").lower()
         surface = word.lower()
         for candidate in {surface, lemma}:
             if not candidate:
@@ -1682,7 +2272,7 @@ def _check_capitalization(text: str) -> dict:
         if word.isupper() and len(word) > 1:
             continue
 
-        lemma_lower = (list(span.lemma)[0] if span.lemma else "").lower()
+        lemma_lower = (_first(list(span.lemma)) or "").lower()
         if not lemma_lower:
             continue
 
@@ -1727,7 +2317,7 @@ def _check_capitalization(text: str) -> dict:
             next_lemma = ""
             if i + 1 < len(spans):
                 next_lemma = (
-                    list(spans[i + 1].lemma)[0] if spans[i + 1].lemma else ""
+                    _first(list(spans[i + 1].lemma)) or ""
                 ).lower()
             if next_lemma in _CULTURE_NOUNS_ET:
                 rule = "language-adjective"
@@ -1948,7 +2538,7 @@ def _check_hyphenation(word: str) -> dict:
         }
     breaks: list[int] = []
     offset = 0
-    for i, s in enumerate(syls[:-1]):
+    for _i, s in enumerate(syls[:-1]):
         offset += len(s["syllable"])
         # poolitamine rule: don't leave <2 characters at either edge of
         # the broken word.
@@ -3687,34 +4277,30 @@ def _check_term_consistency(text: str) -> dict:
 
     # --- Rule B: shared WordNet synset.
     #
-    # WordNet ships pre-downloaded in the server image, so this is a local
-    # lookup with no network access. If the resource is somehow absent,
-    # EstNLTK tries to fetch it and prompts for confirmation — which would
-    # breach the no-outbound-network posture, and, worse, writes that
-    # prompt to STDOUT, which in stdio transport IS the MCP protocol
-    # channel. Redirecting stdout to stderr for the duration keeps the
-    # protocol stream clean whatever EstNLTK decides to print;
-    # BaseException covers the EOFError / SystemExit the prompt raises
-    # when stdin is closed. Rule B then degrades to off and `rules_run`
-    # says so rather than silently returning fewer groups.
-    import contextlib
-
+    # Check the resource is on disk FIRST (_wordnet_available is a pure
+    # filesystem lookup). The old code called Wordnet() and caught the
+    # fallout, which meant that on a machine without the resource EstNLTK
+    # would attempt a download — breaching the no-outbound-HTTP promise in
+    # PRIVACY.md — and print its prompt to stdout, which under stdio
+    # transport is the MCP protocol channel. Checking first means the
+    # running server never attempts either, and Rule B just reports itself
+    # as not run.
     ranked = [w for w, _ in counts.most_common(_TERM_CONSISTENCY_WORDNET_CAP)]
     synsets_by_lemma: dict[str, set[str]] = {}
-    wordnet_ok = True
-    try:
-        with contextlib.redirect_stdout(sys.stderr):
+    wordnet_ok = _wordnet_available()
+    if wordnet_ok:
+        try:
             wn = _wordnet()
-    except BaseException:
-        wn = None
-        wordnet_ok = False
-    if wn is not None:
-        for lemma in ranked:
-            try:
-                synsets_by_lemma[lemma] = {s.name for s in (wn[lemma] or [])}
-            except BaseException:
-                synsets_by_lemma[lemma] = set()
-                wordnet_ok = False
+        except Exception:
+            wn = None
+            wordnet_ok = False
+        if wn is not None:
+            for lemma in ranked:
+                try:
+                    synsets_by_lemma[lemma] = {s.name for s in (wn[lemma] or [])}
+                except Exception:
+                    synsets_by_lemma[lemma] = set()
+                    wordnet_ok = False
 
     seen_pairs: set[tuple[str, str]] = set()
     for i, a in enumerate(ranked):
@@ -3756,12 +4342,27 @@ def _check_term_consistency(text: str) -> dict:
             "shared-compound-head": True,
             "shared-wordnet-synset": wordnet_ok,
         },
+        # Top-level so a caller cannot miss it. A partial run that reports
+        # "nothing found" reads as a clean bill of health, which is exactly
+        # how a half-strength checker misleads someone — so say it here AND
+        # in summary_estonian, not only in rules_run.
+        "degraded": not wordnet_ok,
         "summary_estonian": (
-            f"Leiti {len(groups)} rühma, kus üht asja võidakse nimetada "
-            f"mitmel viisil. Vali igas rühmas üks termin ja kasuta seda "
-            f"läbivalt."
-            if groups else
-            "Ebajärjekindlat terminikasutust ei tuvastatud."
+            (
+                f"Leiti {len(groups)} rühma, kus üht asja võidakse nimetada "
+                f"mitmel viisil. Vali igas rühmas üks termin ja kasuta seda "
+                f"läbivalt."
+                if groups else
+                "Ebajärjekindlat terminikasutust ei tuvastatud."
+            )
+            + (
+                "" if wordnet_ok else
+                " TÄHELEPANU: tulemus on osaline. Eesti WordNet ei ole "
+                "paigaldatud, mistõttu jäi tähendusrühmade reegel "
+                "käivitamata ja osa kattuvaid termineid võib jääda "
+                "leidmata. Paigalda ressurss käsuga "
+                "`uv run python scripts/fetch_resources.py`."
+            )
         ),
         "note": (
             "Heuristic terminology-consistency check: 'one referent, one "
@@ -3771,7 +4372,10 @@ def _check_term_consistency(text: str) -> dict:
             "compounds sharing a head is deliberately NOT enough, since "
             "those are usually distinct things. Rule "
             "`shared-wordnet-synset` fires when two lemmas sit in the same "
-            "Estonian WordNet synset. The tool does NOT decide which "
+            "Estonian WordNet synset — and does not run at all when that "
+            "resource is missing, in which case `degraded` is true and an "
+            "empty `groups` list means only that the compound-head rule "
+            "found nothing. The tool does NOT decide which "
             "variant is correct — that needs domain context it cannot see; "
             "it reports counts so you can pick the dominant term, and some "
             "groups are legitimately distinct concepts. KNOWN GAP: "
@@ -3794,6 +4398,7 @@ class _TermConsistencyResult(TypedDict, total=False):
     groups: list[dict]
     terms_analysed: int
     rules_run: dict
+    degraded: bool
     summary_estonian: str
     note: str
 
@@ -3823,6 +4428,13 @@ def check_term_consistency(text: Annotated[str, Field(description="Estonian docu
     one, so you can standardise on the most-used term. The tool does not
     decide which variant is right — some groups are genuinely distinct
     concepts, so read them before rewriting.
+
+    CHECK `degraded` BEFORE TRUSTING AN EMPTY RESULT. When Estonian WordNet
+    is not installed, the `shared-wordnet-synset` rule cannot run; the tool
+    then returns `degraded: true`, says so in `summary_estonian`, and marks
+    the rule false in `rules_run`. "No groups found" from a degraded run
+    means "the compound-head rule found nothing", NOT "the terminology is
+    consistent".
 
     Known gap: synonyms sharing neither a head nor a synset (korpus /
     andmestik) are not caught. Input capped at 100,000 characters.
@@ -3882,6 +4494,16 @@ _STATS: dict[str, Any] = {
     # reconnects counts again, and automated probes count too. No identity,
     # no IP, no body is stored — only the fact that an initialize occurred.
     "sessions": 0,
+    # JSON-RPC method mix on POST /mcp, bucketed to a FIXED allowlist (see
+    # _MCP_METHODS). Stateless HTTP means an `initialize` cannot be tied to
+    # the tool calls that follow it, so "sessions that made >=1 tool call"
+    # is not computable without inventing a client identifier — which would
+    # be a privacy step backwards. This breakdown answers the same question
+    # from the other side: `initialize` vs `notifications/initialized` shows
+    # how many handshakes were actually completed rather than abandoned by a
+    # probe, and `tools/list` vs `tools/call` shows how many clients
+    # enumerate the tools but never use one.
+    "mcp_methods": {},
 }
 
 # Ring buffer of recent 5xx errors so they're inspectable at /metrics
@@ -3912,6 +4534,10 @@ def _load_persistent_stats() -> None:
         _STATS["by_status"] = {str(k): int(v) for k, v in (data.get("by_status") or {}).items()}
         _STATS["by_path"] = {str(k): int(v) for k, v in (data.get("by_path") or {}).items()}
         _STATS["sessions"] = int(data.get("sessions", 0))
+        _STATS["mcp_methods"] = {
+            str(k): int(v) for k, v in (data.get("mcp_methods") or {}).items()
+            if str(k) in _MCP_METHODS or str(k) == "other"
+        }
         _TOOL_CALLS.clear()
         _TOOL_CALLS.update({str(k): int(v) for k, v in (data.get("tool_calls") or {}).items()})
         _recent_errors.clear()
@@ -3938,6 +4564,7 @@ def _save_persistent_stats() -> None:
             "by_status": _STATS["by_status"],
             "by_path": _STATS["by_path"],
             "sessions": _STATS["sessions"],
+            "mcp_methods": _STATS["mcp_methods"],
             "tool_calls": _TOOL_CALLS,
             "recent_errors": list(_recent_errors),
             "saved_at_unix": int(time.time()),
@@ -3947,24 +4574,52 @@ def _save_persistent_stats() -> None:
         log.warning("metrics persistence: failed to save %s: %s", _METRICS_PATH, e)
 
 
-def _is_initialize_request(body: bytes) -> bool:
-    """True if an MCP request body is a JSON-RPC `initialize` call.
+# Fixed allowlist of JSON-RPC methods we bucket into `mcp_methods`.
+# The method name comes from a request body, i.e. it is caller-controlled,
+# so it is NEVER stored verbatim — anything outside this set is counted as
+# "other". That keeps the metrics dict bounded (no unbounded key growth
+# from a hostile client) and keeps arbitrary caller strings off /metrics.
+_MCP_METHODS: frozenset[str] = frozenset({
+    "initialize",
+    "notifications/initialized",
+    "tools/list",
+    "tools/call",
+    "prompts/list",
+    "resources/list",
+    "resources/templates/list",
+    "ping",
+})
 
-    Used to count client connections (sessions) at /metrics. We parse only
-    to read the `method` field — never the params/clientInfo — and store
-    nothing from the body. The cheap substring gate skips the JSON parse
-    for the overwhelming majority of requests (tool calls), and parsing
-    the method (rather than substring-matching) means a tool call whose
-    text argument merely contains the word "initialize" is NOT counted."""
-    if b"initialize" not in body:
-        return False
+
+def _classify_mcp_method(body: bytes) -> str | None:
+    """Bucket an MCP request body by its JSON-RPC method name.
+
+    Returns an allowlisted method name, "other" for anything unrecognised,
+    or None if the body is not parseable JSON-RPC. Only the `method` field
+    is read — never params, arguments, or clientInfo — and nothing from the
+    body is stored.
+
+    Cost note: this parses every POST /mcp body, where the old
+    initialize-only check could skip the parse via a substring gate. The
+    body is already fully buffered by _drain_body at this point, and a
+    json.loads on even a 100k-char tool call is well under a millisecond
+    against tool executions that run 10ms-7s, so the trade is worth the
+    visibility. Method names are matched by parsing rather than substring
+    so a tool call whose Estonian text merely contains "tools/call" is not
+    miscounted.
+    """
     try:
         msg = json.loads(body)
     except (ValueError, UnicodeDecodeError):
-        return False
-    if isinstance(msg, list):  # JSON-RPC batch
-        return any(isinstance(m, dict) and m.get("method") == "initialize" for m in msg)
-    return isinstance(msg, dict) and msg.get("method") == "initialize"
+        return None
+    if isinstance(msg, list):  # JSON-RPC batch — classify by its first method
+        msg = next((m for m in msg if isinstance(m, dict) and m.get("method")), None)
+    if not isinstance(msg, dict):
+        return None
+    method = msg.get("method")
+    if not isinstance(method, str):
+        return None
+    return method if method in _MCP_METHODS else "other"
 
 
 async def _drain_body(receive):
@@ -4194,8 +4849,43 @@ def _accept_header(scope: dict) -> str:
 
 
 def _client_ip(scope: dict) -> str:
-    """Best-effort originator IP. uvicorn(proxy_headers=True) populates
-    scope["client"] from X-Forwarded-For when running behind Fly/Smithery."""
+    """Originator IP for the public-mode per-IP rate limiter.
+
+    Reads X-Forwarded-For from the RIGHT, not the left. uvicorn runs with
+    `forwarded_allow_ips="*"` and rewrites `scope["client"]` from the
+    LEFTMOST XFF entry — which is fully caller-controlled, because a proxy
+    appends to whatever the client sent. Bucketing on that let any caller
+    mint a fresh rate-limit bucket per request simply by varying the
+    header, defeating the limiter entirely. Reproduced against a local
+    server in public mode at a 5/min limit: a fixed spoofed value gets 429
+    after five requests, while rotating the value stays 200 indefinitely.
+
+    The Nth-from-right entry is the one written by the Nth proxy in front
+    of us, and a caller cannot append after a proxy — so it is correct
+    whether the edge APPENDS to a client-supplied header or REPLACES it.
+    `_TRUSTED_PROXY_HOPS` is how many proxies we sit behind (Fly = 1).
+    Set it to 0 when the server is directly exposed, which makes XFF
+    untrusted entirely and buckets on the real peer.
+
+    Falls back to the peer address whenever XFF has fewer entries than
+    there are trusted hops, i.e. when the header is absent or too short to
+    have come through the expected chain.
+    """
+    hops = _TRUSTED_PROXY_HOPS
+    if hops > 0:
+        for raw_key, raw_val in (scope.get("headers") or []):
+            try:
+                if raw_key.decode("latin-1").lower() != "x-forwarded-for":
+                    continue
+                parts = [p.strip() for p in raw_val.decode("latin-1").split(",") if p.strip()]
+            except Exception:
+                continue
+            if len(parts) >= hops:
+                return parts[-hops]
+            break
+    # `scope["client"]` is uvicorn's parse of XFF and therefore spoofable;
+    # it is only reached when the header is missing or malformed, in which
+    # case it degrades to the true peer.
     client = scope.get("client") or ("unknown", 0)
     return client[0] if isinstance(client, (tuple, list)) and client else "unknown"
 
@@ -4303,6 +4993,7 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                     "tool_calls_total": sum(_TOOL_CALLS.values()),
                     "tool_calls": dict(_TOOL_CALLS),
                     "sessions_total": _STATS["sessions"],
+                    "mcp_methods": dict(_STATS["mcp_methods"]),
                     "recent_errors": list(_recent_errors),
                     "uptime_seconds": int(time.time() - _STATS_START_TS),
                     "started_at_unix": int(_STATS_START_TS),
@@ -4317,6 +5008,19 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                         "too. No identity, IP, or request body is ever stored "
                         "— only the fact of an initialize. Daily connections "
                         "= the day-over-day delta in the metrics snapshot. "
+                        "mcp_methods buckets POST /mcp by JSON-RPC method "
+                        "against a FIXED allowlist (anything else counts as "
+                        "'other', so a caller-supplied method name can never "
+                        "become a metrics key). Read it to tell probes from "
+                        "real clients: initialize vs notifications/initialized "
+                        "shows how many handshakes completed rather than being "
+                        "abandoned, and tools/list vs tools/call shows how many "
+                        "clients enumerate the tools but never call one. NOTE "
+                        "this is NOT 'sessions that made >=1 tool call': the "
+                        "transport is stateless_http, so an initialize cannot "
+                        "be tied to the calls that follow it, and adding a "
+                        "client identifier to make that possible would be a "
+                        "privacy step backwards. "
                         "Counters persist to "
                         "/data/metrics.json every 30 s when a Fly volume is "
                         "mounted, surviving restarts; without a volume "
@@ -4405,18 +5109,25 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                 await _send_status(send, 429, {"error": "rate_limited"})
                 return
 
-            # Count MCP `initialize` calls as a privacy-safe session proxy.
-            # Only an authorized, non-rate-limited POST /mcp can carry one;
-            # for those we buffer the small JSON-RPC body to peek at the
-            # method, then replay it to the inner app byte-for-byte. Nothing
-            # from the body is stored — only _STATS["sessions"] is bumped on
-            # the fact of an initialize. All other traffic (GET SSE streams,
-            # other paths) passes straight through with the original receive.
+            # Bucket MCP traffic by JSON-RPC method. Only an authorized,
+            # non-rate-limited POST /mcp gets here; for those we buffer the
+            # JSON-RPC body to peek at the `method`, then replay it to the
+            # inner app byte-for-byte. Nothing from the body is stored — we
+            # bump _STATS["sessions"] on the fact of an initialize, and
+            # bucket the method into a FIXED allowlist so a caller-supplied
+            # string can never become a metrics key. All other traffic (GET
+            # SSE streams, other paths) passes straight through with the
+            # original receive.
             receive_for_inner = receive
             if scope.get("method") == "POST" and path in ("/mcp", "/mcp/"):
                 consumed, body = await _drain_body(receive)
-                if _is_initialize_request(body):
-                    _STATS["sessions"] += 1
+                method = _classify_mcp_method(body)
+                if method is not None:
+                    _STATS["mcp_methods"][method] = (
+                        _STATS["mcp_methods"].get(method, 0) + 1
+                    )
+                    if method == "initialize":
+                        _STATS["sessions"] += 1
                 receive_for_inner = _replay_receive(consumed, receive)
 
             await inner(scope, receive_for_inner, send)
@@ -4456,8 +5167,9 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
 
 
 def _run_http(host: str, port: int, token: str | None, rate_limit: int, public_mode: bool) -> None:
-    import uvicorn  # local import; only needed in HTTP mode
     import atexit
+
+    import uvicorn  # local import; only needed in HTTP mode
 
     # Restore metrics from disk if a Fly volume (or local override) has them.
     _load_persistent_stats()
@@ -4475,8 +5187,14 @@ def _run_http(host: str, port: int, token: str | None, rate_limit: int, public_m
         port=port,
         log_level="info",
         access_log=False,  # keep tokens out of logs
-        proxy_headers=True,
-        forwarded_allow_ips="*",  # behind Fly/Smithery edge
+        # proxy_headers is OFF on purpose. With it on (and
+        # forwarded_allow_ips="*") uvicorn rewrites scope["client"] from the
+        # LEFTMOST X-Forwarded-For entry, which is fully caller-controlled —
+        # that is what let a caller defeat the per-IP rate limiter by
+        # varying the header. We interpret XFF ourselves in _client_ip,
+        # counting from the right, and we need scope["client"] to stay the
+        # true peer so it is a trustworthy fallback.
+        proxy_headers=False,
     )
 
 
