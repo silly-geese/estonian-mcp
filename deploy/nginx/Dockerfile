@@ -38,7 +38,7 @@ COPY njs/ /etc/nginx/njs/
 # --chmod here rather than a bind mount, whose permission bits do not
 # survive a Windows host reliably.
 #
-# 19- runs before the 20-envsubst step and exports a variable it needs;
-# 40- runs after it, once the config is rendered.
-COPY --chmod=755 https-port-suffix.envsh /docker-entrypoint.d/19-https-port-suffix.envsh
+# 19- runs before the 20-envsubst step and exports the variables it
+# renders; 40- runs after it, once the config is rendered.
+COPY --chmod=755 render-vars.envsh       /docker-entrypoint.d/19-render-vars.envsh
 COPY --chmod=755 reload-loop.sh          /docker-entrypoint.d/40-reload-loop.sh

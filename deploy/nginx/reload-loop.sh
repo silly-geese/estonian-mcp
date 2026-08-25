@@ -28,4 +28,5 @@ set -eu
 
 # `return` succeeds only when sourced. When executed it fails harmlessly
 # and the exit runs instead.
+# shellcheck disable=SC2317  # the exit is reached when this file is executed
 return 0 2>/dev/null || exit 0

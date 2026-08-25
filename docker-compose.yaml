@@ -9,10 +9,21 @@
 
 name: estonian-mcp
 
+# Container logs are capped in one place. Without this, Docker's default
+# json-file driver grows without limit, which turns any log line into a
+# slow disk-fill. 10 MB x 3 files per container is enough to debug a
+# recent incident and nothing like enough to fill a small VPS.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   app:
     build: .
     restart: unless-stopped
+    logging: *logging
     environment:
       ESTNLTK_MCP_TRANSPORT: http
       # nginx does the real, per-client bearer auth. This token guards
@@ -31,8 +42,9 @@ services:
       ESTNLTK_MCP_RATE_LIMIT_PER_MINUTE: "100000"
       HOST: "0.0.0.0"
       PORT: "8081"
-    # expose, not ports: reachable only from the `edge` network, never
-    # published to the host.
+    # expose, not ports: not published to the host. On Linux the bridge
+    # network is still routable from the host itself, which is why the
+    # internal token above is not optional.
     expose: ["8081"]
     volumes:
       - metrics:/data
@@ -42,6 +54,13 @@ services:
     build:
       context: ./deploy/nginx
     restart: unless-stopped
+    logging: *logging
+    # Start order only, deliberately not `condition: service_healthy`.
+    # nginx has to come up even when the app is down: it serves the ACME
+    # challenge on port 80, and a stack that will not start without a
+    # healthy app would stop renewing its certificate the first time the
+    # app failed. The template resolves the upstream per request for the
+    # same reason.
     depends_on: [app]
     # Host-side ports only; nginx still listens on 80 and 443 inside the
     # container. Override for local testing, where 80 and 443 are
@@ -54,20 +73,19 @@ services:
     environment:
       DOMAIN: ${DOMAIN:?set DOMAIN in .env}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}
-      # Read by 19-https-port-suffix.envsh, which turns it into the
+      # Read by 19-render-vars.envsh, which turns it into the
       # HTTPS_PORT_SUFFIX that the redirect in the template uses. Must
       # match the host-side port above or the redirect points nowhere.
       HTTPS_PORT: ${HTTPS_PORT:-443}
-      # OAuth facade. Access tokens are NOT here: they live in
-      # secrets/oauth_tokens.map, one for each client, so adding a
-      # client only needs a reload. The authorization code is not
-      # verified by anything and carries no security, hence the
-      # harmless default.
-      OAUTH_CODE: ${OAUTH_CODE:-authorized}
+      # Off by default: PRIVACY.md promises no request logging, and this
+      # stack keeps that promise until its operator decides otherwise.
+      # 19-render-vars.envsh normalises the value to 0 or 1, so a typo
+      # here cannot produce a config nginx refuses to load.
+      ACCESS_LOG: ${ACCESS_LOG:-0}
       # The official image's envsubst step would otherwise blank every
       # nginx runtime variable ($host, $remote_addr, $mcp_client, ...)
       # in the template. This filter restricts substitution to ours.
-      NGINX_ENVSUBST_FILTER: "^(DOMAIN|INTERNAL_TOKEN|HTTPS_PORT_SUFFIX|OAUTH_CODE)$$"
+      NGINX_ENVSUBST_FILTER: "^(DOMAIN|INTERNAL_TOKEN|HTTPS_PORT_SUFFIX|ACCESS_LOG)$$"
     volumes:
       - ./deploy/nginx/templates:/etc/nginx/templates:ro
       # Directory, not the tokens.map file itself. A single-file bind
@@ -87,9 +105,14 @@ services:
   # deploy/nginx/reload-loop.sh) - certbot cannot signal across the
   # container boundary without the Docker socket, which is not worth
   # handing out for this.
+  #
+  # Pinned, like every other image here. This is the one container with
+  # write access to the TLS private key, so `latest` is the last place
+  # an unreviewed image should arrive. Dependabot offers the bumps.
   certbot:
-    image: certbot/certbot:latest
+    image: certbot/certbot:v5.7.0
     restart: unless-stopped
+    logging: *logging
     volumes:
       - ./deploy/letsencrypt/conf:/etc/letsencrypt
       - ./deploy/letsencrypt/www:/var/www/certbot

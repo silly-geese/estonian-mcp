@@ -24,9 +24,13 @@ client --- 443 ---> nginx ---> app
 certbot --------------+
 ```
 
-The `app` container connects only to the `edge` network. Only nginx
-connects to that network. You cannot connect to the `app` container
-from the host.
+The `app` container connects only to the `edge` network. It is not
+published to the host.
+
+> **NOTE: "Not published" is not the same as "not reachable". On Linux
+> the bridge network of the container is routable from the host itself.
+> The `app` container thus keeps its own bearer authentication. The
+> `INTERNAL_TOKEN` value protects that connection.**
 
 ## 2 Why nginx does the authentication
 
@@ -248,12 +252,19 @@ again. This does not need a restart, and it does not change the app.
 ### 6.4 Token security
 
 The `tokens.map` file contains the tokens in plain text. Git does not
-store this file.
+store this file. The scripts make the file with mode 0600 and the
+directory with mode 0700, thus other accounts on the host cannot read
+the tokens. nginx reads its configuration as root and is not affected.
 
 nginx compares the tokens with a hash function. This is not a
 constant-time comparison. But each token has 40 random characters, and
 thus a remote timing attack is not possible in practice. Keep the file
 secret.
+
+nginx makes the comparison in lower case. The match is thus
+case-insensitive. A token of 40 random alphanumeric characters keeps
+approximately 207 bits after this. Do not make a token by hand that
+uses capital letters for its strength.
 
 ## 7 OAuth for the Claude connector
 
@@ -276,7 +287,8 @@ This is the sequence from a real connection attempt:
 | 2 | `GET /.well-known/oauth-protected-resource/mcp` | The resource document |
 | 3 | `GET /.well-known/oauth-protected-resource` | The same document |
 | 4 | `GET /.well-known/oauth-authorization-server` | The endpoint list |
-| 5 | `POST /oauth/token` with the client secret | The access token |
+| 5 | `GET /oauth/authorize` in a browser | A redirect with a single-use code |
+| 6 | `POST /oauth/token` with the client secret | The access token |
 
 The client also tries `POST /register` for Dynamic Client Registration.
 The server answers 404. This is correct. A registration endpoint must
@@ -316,6 +328,13 @@ credentials, compares the digest of the secret, and gives back the
 access token of that client. It accepts a header too, thus `curl` and
 other clients continue to operate.
 
+The same file makes the authorization codes. Each code is a random
+value from nginx. nginx keeps the code in a shared memory zone with the
+client id, the callback address and the PKCE challenge of that request.
+The code is valid one time and for 10 minutes. A restart of the
+container removes the codes. The client then does the authorization
+again.
+
 ### 7.4 To set up OAuth
 
 1. Make the client:
@@ -339,11 +358,23 @@ reload. See section 6.3.
 
 ### 7.5 Limits of the facade
 
-The client secret is the only protection. Keep this in mind:
+The facade does these checks:
 
-- The authorization code is a constant. It is not single-use, and it
-  does not expire.
-- nginx accepts PKCE data but does not examine it.
+| Check | Behaviour |
+| --- | --- |
+| Client secret | Compared against a SHA-256 digest. This is the main protection. |
+| Authorization code | Random, valid one time, and valid for 10 minutes. |
+| Client of the code | The code is only valid for the client that asked for it. |
+| Callback address | Must be in the allowlist, and must not change between the two steps. |
+| PKCE | If the client sends a `code_challenge`, the token request must show the correct `code_verifier`. Only the S256 method is accepted. |
+
+Keep these limits in mind:
+
+- There is no login. `/oauth/authorize` does not identify a person. It
+  shows only that a browser made a request to this server.
+- PKCE is verified but not demanded. A client that sends no challenge
+  gets a code that needs no verifier. The client secret is still
+  necessary.
 - All the persons who use one connector get the same access token. The
   facade identifies the connector, not the person.
 
@@ -391,8 +422,14 @@ The limits are in
 | --- | --- | --- |
 | Requests for each client | 120 in one minute | `limit_req_zone ... zone=per_client` |
 | Requests for each IP address | 300 in one minute | `limit_req_zone ... zone=per_ip` |
+| Connections for each IP address | 32 | `limit_conn conn_ip` |
 | Open streams for each client | 8 | `limit_conn conn_client` |
 | Maximum size of a request | 4 MB | `client_max_body_size` |
+
+The connection limit uses the IP address, not the client name. An
+unauthenticated request has no client name, and nginx does not count a
+limit that has an empty key. A connection flood is unauthenticated.
+Thus the IP address is the only key that controls it.
 
 ### 9.1 To apply a change
 
@@ -404,7 +441,58 @@ docker compose up -d --force-recreate nginx
 > configuration file from the template when it starts. A reload does
 > not make the file again.**
 
-## 10 Notes
+## 10 Logs
+
+### 10.1 Request logging
+
+nginx writes no access log by default. The `PRIVACY.md` file of this
+project makes that promise for the hosted service, and this stack keeps
+the same behaviour.
+
+To turn the log on:
+
+1. Set `ACCESS_LOG=1` in `.env`.
+2. Make the container again:
+
+   ```sh
+   docker compose up -d --force-recreate nginx
+   ```
+
+The log then has one line for each request:
+
+```
+"POST /mcp" 200 client=my-laptop auth=bearer diag="-"
+```
+
+| Field | Content |
+| --- | --- |
+| Method and path | The path only. The query string is not included. |
+| Status | The HTTP status. |
+| `client` | The client name from `tokens.map`. Empty if the request had no valid token. |
+| `auth` | The type of the `Authorization` header: `none`, `basic`, `bearer` or `other`. |
+| `diag` | The reason an OAuth request failed. `-` for all other requests. |
+
+The log does not contain the `Authorization` header, the query string,
+the request body or the IP address.
+
+> **CAUTION: The `?config=` query string of a Smithery client contains a
+> token. This is why no log here contains a query string.**
+
+### 10.2 Error logging
+
+The error log is set to the `crit` level. nginx puts the full request
+line, with the query string, in each error message. A lower level thus
+writes the tokens of the clients into the log of the operator.
+
+The `crit` level keeps the messages that show a fault of the server:
+start failures, certificate faults and worker faults. It removes the
+messages for each request.
+
+To see more during an examination, change `error_log /dev/stderr crit;`
+to `error_log /dev/stderr error;` in the template and make the container
+again. Change it back after the examination.
+
+## 11 Notes
 
 - The `/health` and `/metrics` paths stay open to all clients. This is
   the same behaviour as the `server.py` file. To close `/metrics`, add
@@ -418,7 +506,14 @@ docker compose up -d --force-recreate nginx
   through `/.well-known/mcp/server-card.json` continues to operate.
 - nginx sends the client name to the app in the `X-MCP-Client` header.
   The app does not read this header at this time. The header lets the
-  app identify a client without a token.
+  app identify a client without a token. On all other paths nginx
+  removes this header, thus a client cannot supply its own name.
+- nginx sends the address of the client in the `X-Forwarded-For` header,
+  and it writes the header. It does not add to a header from the client.
+  The app reads the entry that is Nth from the right, and
+  `ESTNLTK_MCP_TRUSTED_PROXY_HOPS` gives N. The default is 1, which is
+  correct for this stack: nginx is the only proxy. Change it only if you
+  put a CDN or a second proxy in front of nginx.
 - nginx finds the address of the app for each request. It does not find
   the address one time when it starts. Thus nginx starts even if the
   app container is down. This is important, because certbot cannot
@@ -441,29 +536,44 @@ docker compose up -d --force-recreate nginx
   these files to nginx. Do this only if these requests become a large
   part of the traffic.
 
-## 11 Troubleshooting
+## 12 Troubleshooting
 
-### 11.1 The connector gets status 401 at /oauth/token
+### 12.1 The connector gets an error at /oauth/token or /oauth/authorize
 
-The token handler writes the reason to the error log. Read it first:
+The handler puts the reason in the `diag` field of the access log. The
+access log is off by default, thus:
 
-```sh
-docker compose logs nginx | grep 'oauth:'
-```
+1. Set `ACCESS_LOG=1` in `.env`.
+2. Make the container again:
 
-| Message | Cause | Correction |
+   ```sh
+   docker compose up -d --force-recreate nginx
+   ```
+
+3. Make the connection again, then read the log:
+
+   ```sh
+   docker compose logs nginx | grep 'oauth\|/mcp'
+   ```
+
+4. Set `ACCESS_LOG=0` again when you are finished.
+
+| `diag` message | Cause | Correction |
 | --- | --- | --- |
 | `token request carried no client credentials` | The **Advanced settings** fields are empty. | Put the client id and the client secret in the connector. |
-| `unknown client "X"` | No client with that id. | Make it with `new-oauth-client.sh X`, then reload. |
-| `wrong secret for client "X"` | The secret does not agree. | Make the client again, then put the new secret in the connector. |
-| `no access token is mapped for client "X"` | The files do not agree with each other. | Make the client again. This rewrites all three files. |
+| `unknown client: X` | No client with that id. | Make it with `new-oauth-client.sh X`, then reload. |
+| `wrong secret for client: X` | The secret does not agree. | Make the client again, then put the new secret in the connector. |
+| `no access token is mapped for client: X` | The files do not agree with each other. | Make the client again. This rewrites all three files. |
+| `redirect_uri is not in the allowlist: X` | The connector uses a different callback. | Add the address to the `$oauth_redirect_allowed` map in the template, then make the container again. |
+| `authorization code is unknown, used or expired` | The code was used one time already, or more than 10 minutes passed. | Do the authorization again in the connector. |
+| `code_verifier does not match the code_challenge` | The client sent an incorrect PKCE verifier. | Do the authorization again. If it continues, report it. |
 
-> **NOTE: Do not use the `auth=` field in the access log to find this
-> fault. Claude sends the secret in the request body, so `auth=none` is
-> correct for a good request. The field shows the type of the
-> `Authorization` header only, which is useful for `/mcp`.**
+> **NOTE: Do not use the `auth=` field to find this fault. Claude sends
+> the secret in the request body, so `auth=none` is correct for a good
+> request. The field shows the type of the `Authorization` header only,
+> which is useful for `/mcp`.**
 
-### 11.2 All clients get status 401
+### 12.2 All clients get status 401
 
 nginx starts even if it finds no token file. In this condition, nginx
 refuses all clients. This is intentional. If nginx stops, the ACME
@@ -475,13 +585,13 @@ certificate.
    `.map`. nginx reads only these files.
 3. Reload nginx.
 
-## 12 Reference
+## 13 Reference
 
 - Server code and the internal authentication: [`server.py`](../server.py)
 - Compose configuration: [`docker-compose.yaml`](../docker-compose.yaml)
 - nginx configuration: [`mcp.conf.template`](nginx/templates/mcp.conf.template)
 - Token endpoint handler: [`njs/oauth.js`](nginx/njs/oauth.js)
-- Port suffix for the redirect: [`https-port-suffix.envsh`](nginx/https-port-suffix.envsh)
+- Values rendered into the template: [`render-vars.envsh`](nginx/render-vars.envsh)
 
 Scripts:
 

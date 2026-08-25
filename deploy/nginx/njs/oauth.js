@@ -1,5 +1,5 @@
 /*
- * OAuth token endpoint for the estonian-mcp facade.
+ * OAuth endpoints for the estonian-mcp facade.
  *
  * This exists because nginx core cannot read a request body, and
  * Claude's connector sends its client secret as a form field
@@ -7,31 +7,85 @@
  * never sees that secret, so it can never authenticate that client.
  *
  * Everything else about the facade stays in nginx config. This file
- * does exactly four things:
+ * does five things:
  *
- *   1. pull client_id and client_secret out of the request, from either
- *      the body (client_secret_post) or a Basic header
+ *   1. mint a single-use authorization code at /oauth/authorize and
+ *      remember the PKCE challenge, the client id and the callback that
+ *      came with it, in the shared dictionary declared by
+ *      js_shared_dict_zone;
+ *   2. pull client_id and client_secret out of the token request, from
+ *      either the body (client_secret_post) or a Basic header
  *      (client_secret_basic), so both kinds of client work;
- *   2. compare the presented secret against a SHA-256 digest held in
+ *   3. compare the presented secret against a SHA-256 digest held in
  *      secrets/oauth_secrets.map;
- *   3. look up that client's access token in secrets/oauth_tokens.map;
- *   4. answer with a token response.
+ *   4. redeem the code: once, before it expires, for the client it was
+ *      issued to, against the PKCE verifier if one was promised;
+ *   5. look up that client's access token in secrets/oauth_tokens.map
+ *      and answer with a token response.
  *
- * Both lookups are ordinary nginx `map` blocks keyed on $oauth_client_id,
- * which this script sets. So credentials still live in the same map
- * files as everything else, and adding a client is still a reload.
+ * The two map lookups are ordinary nginx `map` blocks keyed on
+ * $oauth_client_id, which this script sets. So credentials still live in
+ * the same map files as everything else, and adding a client is still a
+ * reload.
  *
- * Nothing here verifies the authorization code or PKCE. The client
- * secret is the whole of the security. See section 7.4 of the README.
+ * What this facade is NOT: it has no users and no sessions. Nobody logs
+ * in at /oauth/authorize, so the code proves only that a browser reached
+ * this server. The client secret is what authenticates. See section 7.5
+ * of deploy/README.md.
  */
 
 var crypto = require('crypto');
 
 var TOKEN_LIFETIME_SECONDS = 31536000; // a year; there is no refresh endpoint
 
+// Must match the timeout= on js_shared_dict_zone in the template. It is
+// repeated here only to be reported in error_description.
+var CODE_TTL_SECONDS = 600;
+
+/*
+ * Everything written to a log goes through here first.
+ *
+ * nginx does not escape what it writes to a log, and every value below
+ * arrives percent-decoded from an attacker. Without this, a client id of
+ * "x\n2026-01-01 00:00:00 [error] ..." forges a log line, and an
+ * unbounded redirect_uri fills a disk one request at a time.
+ */
+function safe(value) {
+    var s = String(value === undefined || value === null ? '' : value);
+    var out = '';
+    for (var i = 0; i < s.length && out.length < 100; i++) {
+        var c = s.charCodeAt(i);
+        // Printable ASCII only, minus the quote and backslash that would
+        // let a value break out of the field it is logged in.
+        if (c >= 0x20 && c < 0x7f && c !== 0x22 && c !== 0x5c) {
+            out += s[i];
+        } else {
+            out += '.';
+        }
+    }
+    if (s.length > out.length) {
+        out += '...';
+    }
+    return out;
+}
+
+/*
+ * One reason, one place. $oauth_diag is a js_var that the access log
+ * reads, which is where OAuth failures are visible: the error log is
+ * held at `crit` because nginx stamps every line there with the full
+ * request line, query string included.
+ */
+function diag(r, message) {
+    var text = safe(message);
+    r.variables.oauth_diag = text;
+    // Also to the error log, for an operator who has deliberately turned
+    // the level back up. Sanitised either way.
+    r.error('oauth: ' + text);
+}
+
 /*
  * The authorization endpoint. A browser lands here, and it redirects to
- * the client's callback carrying a fixed code.
+ * the client's callback carrying a fresh single-use code.
  *
  * This is a content-phase handler rather than an nginx `return` on
  * purpose. `return` is answered in the rewrite phase, which precedes
@@ -48,18 +102,64 @@ function authorize(r) {
     r.variables.oauth_redirect_uri = redirectUri;
 
     if (r.variables.oauth_redirect_allowed !== '1') {
-        r.error('oauth: redirect_uri is not in the allowlist: "' + redirectUri + '"');
+        diag(r, 'redirect_uri is not in the allowlist: ' + redirectUri);
+        badRequest(r, 'invalid_request', 'redirect_uri is not in the allowlist');
+        return;
+    }
+
+    // An unknown client gets no code at all. The code is worthless
+    // without the secret, but minting one for an id that does not exist
+    // only ever hides a typo in the connector's settings.
+    var clientId = r.args.client_id || '';
+    if (!clientId) {
+        diag(r, 'authorize request carried no client_id');
+        badRequest(r, 'invalid_request', 'client_id is required');
+        return;
+    }
+    r.variables.oauth_client_id = clientId;
+    if (!r.variables.oauth_client_secret) {
+        diag(r, 'authorize request for unknown client: ' + clientId);
+        badRequest(r, 'invalid_client', 'unknown client_id');
+        return;
+    }
+
+    var challenge = r.args.code_challenge || '';
+    var method = (r.args.code_challenge_method || 'plain').toUpperCase();
+    if (challenge && method !== 'S256') {
+        // Only S256 is advertised, and `plain` is no binding at all: the
+        // verifier equals the challenge, so anyone holding the code holds
+        // the verifier too.
+        diag(r, 'unsupported code_challenge_method: ' + method);
+        badRequest(r, 'invalid_request', 'only the S256 code_challenge_method is supported');
+        return;
+    }
+
+    // $request_id is 16 bytes from nginx's random source, hex encoded.
+    // It is unique per request and unguessable, which is the whole
+    // requirement for an authorization code.
+    var code = r.variables.request_id;
+    var stored = JSON.stringify({
+        i: clientId,
+        u: redirectUri,
+        c: challenge
+    });
+
+    try {
+        ngx.shared.oauth_codes.set(code, stored);
+    } catch (e) {
+        diag(r, 'could not store the authorization code: ' + e.message);
         r.headersOut['Content-Type'] = 'application/json';
-        r.return(400, JSON.stringify({
-            error: 'invalid_request',
-            error_description: 'redirect_uri is not in the allowlist'
+        r.headersOut['Cache-Control'] = 'no-store';
+        r.return(500, JSON.stringify({
+            error: 'server_error',
+            error_description: 'the authorization code could not be stored'
         }));
         return;
     }
 
     var target = redirectUri
         + (redirectUri.indexOf('?') < 0 ? '?' : '&')
-        + 'code=' + encodeURIComponent(r.variables.oauth_code || '');
+        + 'code=' + encodeURIComponent(code);
 
     var state = r.args.state;
     if (state !== undefined && state !== '') {
@@ -72,25 +172,19 @@ function authorize(r) {
 }
 
 function token(r) {
-    // Preflight never carries credentials, so answer it before anything
-    // else looks for them.
-    if (r.method === 'OPTIONS') {
-        r.headersOut['Access-Control-Allow-Origin'] = '*';
-        r.headersOut['Access-Control-Allow-Headers'] = 'authorization,content-type';
-        r.headersOut['Access-Control-Allow-Methods'] = 'POST,OPTIONS';
-        r.return(204);
-        return;
-    }
-
     if (r.method !== 'POST') {
+        // No CORS preflight branch: the token endpoint sends no
+        // Access-Control-Allow-Origin, so a browser has no reason to
+        // preflight it and no way to use the answer.
         fail(r, 405, 'invalid_request', 'the token endpoint accepts POST', false);
         return;
     }
 
-    var presented = credentials(r);
+    var form = parseForm(r.requestText || '');
+    var presented = credentials(r, form);
 
     if (!presented.id) {
-        r.error('oauth: token request carried no client credentials');
+        diag(r, 'token request carried no client credentials');
         fail(r, 401, 'invalid_client', 'no client credentials were supplied',
              presented.fromHeader);
         return;
@@ -103,7 +197,7 @@ function token(r) {
 
     var expectedDigest = r.variables.oauth_client_secret || '';
     if (!expectedDigest) {
-        r.error('oauth: unknown client "' + presented.id + '"');
+        diag(r, 'unknown client: ' + presented.id);
         fail(r, 401, 'invalid_client', 'client authentication failed',
              presented.fromHeader);
         return;
@@ -111,9 +205,24 @@ function token(r) {
 
     var presentedDigest = sha256Hex(presented.secret);
     if (!constantTimeEquals(expectedDigest, presentedDigest)) {
-        r.error('oauth: wrong secret for client "' + presented.id + '"');
+        diag(r, 'wrong secret for client: ' + presented.id);
         fail(r, 401, 'invalid_client', 'client authentication failed',
              presented.fromHeader);
+        return;
+    }
+
+    // The client is authenticated from here on, which is why the code is
+    // only redeemed now: redeeming it first would let an anonymous caller
+    // burn another client's code by guessing at it.
+    var grant = form['grant_type'] || 'client_credentials';
+    if (grant === 'authorization_code') {
+        if (!redeem(r, presented.id, form)) {
+            return;
+        }
+    } else if (grant !== 'client_credentials') {
+        diag(r, 'unsupported grant_type: ' + grant);
+        badRequest(r, 'unsupported_grant_type',
+                   'supported grant types are authorization_code and client_credentials');
         return;
     }
 
@@ -122,18 +231,17 @@ function token(r) {
         // Authenticated, but nothing to hand back. Fail loudly here
         // rather than issuing an empty token that would fail later at
         // /mcp with a 401 pointing nowhere near the cause.
-        r.error('oauth: no access token is mapped for client "' + presented.id + '"');
+        diag(r, 'no access token is mapped for client: ' + presented.id);
         fail(r, 500, 'server_error', 'no access token is mapped for this client', false);
         return;
     }
 
-    r.log('oauth: issued a token to client "' + presented.id + '"');
+    r.variables.oauth_diag = 'issued/' + safe(presented.id);
 
     r.headersOut['Content-Type'] = 'application/json';
     // RFC 6749 requires no-store on token responses.
     r.headersOut['Cache-Control'] = 'no-store';
     r.headersOut['Pragma'] = 'no-cache';
-    r.headersOut['Access-Control-Allow-Origin'] = '*';
     r.return(200, JSON.stringify({
         access_token: accessToken,
         token_type: 'Bearer',
@@ -143,11 +251,90 @@ function token(r) {
 }
 
 /*
+ * Redeems an authorization code. Returns true when the caller may
+ * continue; on false it has already answered the request.
+ *
+ * Reading and deleting are two calls rather than one pop(), because
+ * pop() answers undefined on a zone that has a timeout in njs 1.0.0
+ * even when get() finds the entry - which would refuse every code.
+ * Single use is still atomic: delete() reports whether THIS request was
+ * the one that removed the key, so of two simultaneous redemptions
+ * exactly one continues, in whichever worker process it lands.
+ */
+function redeem(r, clientId, form) {
+    var code = form['code'] || '';
+    if (!code) {
+        diag(r, 'authorization_code grant without a code');
+        badRequest(r, 'invalid_request', 'code is required for the authorization_code grant');
+        return false;
+    }
+
+    var raw;
+    var claimed = false;
+    try {
+        raw = ngx.shared.oauth_codes.get(code);
+        if (raw !== undefined) {
+            claimed = ngx.shared.oauth_codes.delete(code);
+        }
+    } catch (e) {
+        raw = undefined;
+    }
+    if (raw === undefined || !claimed) {
+        // Unknown, already redeemed, or older than CODE_TTL_SECONDS. The
+        // three are deliberately one answer: distinguishing them tells an
+        // attacker which codes once existed.
+        diag(r, 'authorization code is unknown, used or expired');
+        badRequest(r, 'invalid_grant',
+                   'the authorization code is unknown, already used, or older than '
+                   + CODE_TTL_SECONDS + ' seconds');
+        return false;
+    }
+
+    var entry;
+    try {
+        entry = JSON.parse(raw);
+    } catch (e) {
+        entry = {};
+    }
+
+    if (entry.i && entry.i !== clientId) {
+        diag(r, 'authorization code belongs to another client: ' + clientId);
+        badRequest(r, 'invalid_grant', 'the authorization code was issued to another client');
+        return false;
+    }
+
+    // RFC 6749 section 4.1.3: when the authorization request carried a
+    // redirect_uri, the token request must present the same one.
+    var presentedRedirect = form['redirect_uri'] || '';
+    if (entry.u && presentedRedirect && entry.u !== presentedRedirect) {
+        diag(r, 'redirect_uri does not match the authorization request');
+        badRequest(r, 'invalid_grant', 'redirect_uri does not match the authorization request');
+        return false;
+    }
+
+    if (entry.c) {
+        var verifier = form['code_verifier'] || '';
+        if (!verifier) {
+            diag(r, 'code_verifier missing for a code bound to a challenge');
+            badRequest(r, 'invalid_grant', 'code_verifier is required for this code');
+            return false;
+        }
+        if (!constantTimeEquals(entry.c, sha256Base64Url(verifier))) {
+            diag(r, 'code_verifier does not match the code_challenge');
+            badRequest(r, 'invalid_grant', 'code_verifier does not match the code_challenge');
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/*
  * RFC 6749 defines two ways for a client to authenticate here. Claude
  * uses the second one regardless of what the server advertises in
  * token_endpoint_auth_methods_supported, so both are accepted.
  */
-function credentials(r) {
+function credentials(r, form) {
     var auth = r.headersIn['Authorization'] || '';
 
     if (auth.slice(0, 6).toLowerCase() === 'basic ') {
@@ -171,7 +358,6 @@ function credentials(r) {
     // client_secret_post. r.requestText is populated because js_content
     // reads the body first; the location caps and buffers it so it stays
     // in memory rather than spilling to a temp file.
-    var form = parseForm(r.requestText || '');
     return {
         id: form['client_id'] || '',
         secret: form['client_secret'] || '',
@@ -205,9 +391,21 @@ function sha256Hex(s) {
 }
 
 /*
- * Compares two hex digests without an early return on the first
- * differing byte. The length check can leak the length, which for a
- * fixed-width digest is not a secret.
+ * PKCE S256: base64url(SHA-256(verifier)), unpadded, per RFC 7636
+ * appendix A. The conversion is done by hand rather than with a
+ * 'base64url' digest encoding, which older njs builds do not have.
+ */
+function sha256Base64Url(s) {
+    return crypto.createHash('sha256').update(s).digest('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+}
+
+/*
+ * Compares two strings without an early return on the first differing
+ * byte. The length check can leak the length, which for a fixed-width
+ * digest is not a secret.
  */
 function constantTimeEquals(a, b) {
     if (a.length !== b.length) {
@@ -218,6 +416,10 @@ function constantTimeEquals(a, b) {
         diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
     }
     return diff === 0;
+}
+
+function badRequest(r, code, description) {
+    fail(r, 400, code, description, false);
 }
 
 function fail(r, status, code, description, challenge) {

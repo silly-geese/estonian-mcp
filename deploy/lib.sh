@@ -1,14 +1,24 @@
+# shellcheck shell=sh
 # Shared helpers for the deploy scripts. Sourced, not executed.
 #
 # Every script that mints or removes a credential goes through here, so
-# the token format and the map file syntax are defined in one place.
+# the token format, the map file syntax and the file permissions are
+# defined in one place.
+
+# Credentials are written by these functions. A default umask of 022
+# would leave every client's token world-readable, which on a shared
+# host hands them to every local account. 077 makes new files 0600 and
+# new directories 0700. nginx parses its config as root, so 0600 loads
+# and reloads normally.
+umask 077
 
 SECRETS_DIR=deploy/nginx/secrets
 TOKENS_MAP="$SECRETS_DIR/tokens.map"
 OAUTH_TOKENS_MAP="$SECRETS_DIR/oauth_tokens.map"
 OAUTH_SECRETS_MAP="$SECRETS_DIR/oauth_secrets.map"
 
-# 40 alphanumeric characters, comfortably over 200 bits.
+# 40 alphanumeric characters, comfortably over 200 bits even after nginx
+# folds the case away in its map lookup.
 #
 # The base64 padding and the "+" and "/" characters are stripped rather
 # than kept. That matters for the OAuth client secret specifically:
@@ -37,6 +47,33 @@ ensure_secrets_dir() {
     # Must exist before compose starts. Docker creates a missing bind
     # mount source itself, and then owns it as root.
     mkdir -p "$SECRETS_DIR"
+    # Explicit rather than relying on the umask: the directory may
+    # predate this version of the script, or have been created by Docker.
+    chmod 700 "$SECRETS_DIR"
+}
+
+# Reads one key out of .env without executing it.
+#
+# `. ./.env` used to do this, which runs the file as shell. Compose's
+# parser and POSIX sh disagree about quoting, backticks and $(...), so
+# the two would read different values out of the same line - and the
+# shell would additionally EXECUTE whatever a substitution contained.
+# This reads the same three shapes Compose does: a double-quoted value,
+# a single-quoted value, or a bare value up to an inline comment.
+env_value() {
+    [ -f .env ] || return 0
+    awk -v key="$1" '
+        $0 ~ "^[ \t]*" key "[ \t]*=" {
+            sub(/^[ \t]*[^=]*=[ \t]*/, "")
+            c = substr($0, 1, 1)
+            if (c == "\"") { sub(/^"/, ""); sub(/".*$/, "") }
+            else if (c == "\047") { sub(/^\047/, ""); sub(/\047.*$/, "") }
+            else { sub(/[ \t]+#.*$/, ""); sub(/[ \t]+$/, "") }
+            value = $0
+            found = 1
+        }
+        END { if (found) print value }
+    ' .env
 }
 
 # True if the client has a credential in ANY of the three files. It has
@@ -66,6 +103,7 @@ _strip() {
     # as fatal, hence the guard.
     grep -vE "$2" "$1" > "$1.tmp" || true
     mv "$1.tmp" "$1"
+    chmod 600 "$1"
 }
 
 # Append "<token>" <client>; to tokens.map, which is what /mcp checks.
@@ -74,6 +112,7 @@ add_bearer_token() {
         echo "# Bearer credential -> client id. See tokens.map.example." > "$TOKENS_MAP"
     fi
     printf '"%s"   %s;\n' "$1" "$2" >> "$TOKENS_MAP"
+    chmod 600 "$TOKENS_MAP"
 }
 
 # Append <client> -> token to the OAuth lookup, which is what the token
@@ -83,6 +122,7 @@ add_oauth_token() {
         echo "# OAuth client id -> the access token issued to it." > "$OAUTH_TOKENS_MAP"
     fi
     printf '"%s"   "%s";\n' "$1" "$2" >> "$OAUTH_TOKENS_MAP"
+    chmod 600 "$OAUTH_TOKENS_MAP"
 }
 
 # Store the SHA-256 of the client secret, never the secret. njs hashes
@@ -97,4 +137,5 @@ add_oauth_secret() {
         echo "# OAuth client id -> SHA-256 of its client secret." > "$OAUTH_SECRETS_MAP"
     fi
     printf '"%s"   "%s";\n' "$1" "$_digest" >> "$OAUTH_SECRETS_MAP"
+    chmod 600 "$OAUTH_SECRETS_MAP"
 }

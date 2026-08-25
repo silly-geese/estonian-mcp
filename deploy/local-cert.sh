@@ -22,7 +22,12 @@ if [ ! -f .env ]; then
 fi
 
 # shellcheck disable=SC1091
-. ./.env
+. ./deploy/lib.sh
+
+# Read, do not execute: see env_value in deploy/lib.sh.
+DOMAIN="$(env_value DOMAIN)"
+INTERNAL_TOKEN="$(env_value INTERNAL_TOKEN)"
+HTTPS_PORT="$(env_value HTTPS_PORT)"
 
 : "${DOMAIN:?set DOMAIN in .env}"
 : "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
@@ -36,13 +41,11 @@ fi
 mkdir -p "./deploy/letsencrypt/conf/live/$DOMAIN" ./deploy/letsencrypt/www
 
 echo "==> Making a self-signed certificate for $DOMAIN (valid 365 days)"
-# Generated inside the container so the result does not depend on an
-# openssl being present on the host, and so Git Bash on Windows cannot
-# rewrite the paths.
-MSYS_NO_PATHCONV=1 docker run --rm \
-    -v "$PWD/deploy/letsencrypt/conf:/etc/letsencrypt" \
-    --entrypoint openssl \
-    certbot/certbot \
+# Generated inside the certbot container so the result does not depend
+# on an openssl being present on the host, and so the image stays
+# pinned in one place. MSYS_NO_PATHCONV keeps Git Bash on Windows from
+# rewriting the container paths and the -subj argument.
+MSYS_NO_PATHCONV=1 docker compose run --rm --entrypoint openssl certbot \
     req -x509 -nodes -newkey rsa:2048 -days 365 \
         -keyout "/etc/letsencrypt/live/$DOMAIN/privkey.pem" \
         -out    "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" \
