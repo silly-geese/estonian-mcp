@@ -119,6 +119,48 @@ defence-in-depth.
   request is independent — no per-client session state to grow
   unbounded.
 
+### Self-hosting behind nginx (`deploy/`)
+
+The repository ships a Docker Compose stack that puts nginx in front of
+the app. It is optional, it is not what the hosted service runs, and it
+is **operator-owned**: it is roughly a thousand lines of nginx
+configuration, njs and shell, with its own documentation in
+`deploy/README.md`. Read that before you trust it, the same way you
+would read `server.py`.
+
+What it adds over exposing the app directly:
+
+- **TLS at the edge**, Let's Encrypt certificates, TLS 1.2 and 1.3 with
+  ephemeral (ECDHE) suites only, so a later disclosure of the private
+  key does not decrypt yesterday's traffic. HSTS, no session tickets.
+- **A token per client** instead of the app's single token. Each client
+  gets its own name, its own rate-limit bucket, and revocation that is a
+  deleted line plus a reload. The client's own credential never reaches
+  the Python process: nginx swaps in an internal token for the last hop.
+- **Limits that also cover refused traffic.** The 401, the 405 and the
+  404 are all issued after the rate limiter has been charged, so a flood
+  of bad tokens or path scans is metered rather than free. Connections
+  are capped per IP, because unauthenticated traffic has no client id to
+  cap on.
+- **An OAuth facade** for connectors that cannot send a static
+  `Authorization` header. The client secret is what authenticates;
+  authorization codes are random, single-use, expire in ten minutes, are
+  bound to the client and callback that requested them, and are verified
+  against a PKCE S256 challenge when the client sends one. The
+  `client_credentials` grant skips the code flow altogether, which is
+  what curl and conforming clients use. There is no user login, so a
+  code identifies a connector, never a person, and the access token it
+  returns does not expire on its own: revocation is the only expiry.
+- **No request logging by default**, and the error log is held at `crit`
+  because nginx stamps error lines with the full request line — which on
+  the Smithery `?config=` path wraps a bearer token. Responses with a 5xx
+  status are logged either way, in the same format that carries no query
+  string and no credential, so a failing stack is not also a silent one.
+
+What it does not do: it does not protect the tool calls themselves, and
+it does not give the server user identity. `tests/test_deploy.py` and
+`tests/deploy_e2e.sh` hold these properties in CI.
+
 ### Threats we do NOT defend against
 
 - **Compromised host machine.** If your machine is compromised the
@@ -164,8 +206,9 @@ defence-in-depth.
 
 ## Auditing
 
-The full server is one file (`server.py`, ~370 lines). Read it
-end-to-end before deploying. Each `@mcp.tool()` decorator marks a tool
+The full server is one file (`server.py`). Read it end-to-end before
+deploying; the tools are most of it and the HTTP wrapper is the last few
+hundred lines. Each `@mcp.tool()` decorator marks a tool
 the LLM can call; the function body is what runs. The HTTP wrapper
-(`_build_http_app`, `_extract_token`, `_RateLimiter`) is below the
-tools and is the entire auth surface.
+(`_build_http_app`, `_extract_token`, `_client_ip`, `_RateLimiter`) is
+below the tools and is the entire auth surface.

@@ -7,6 +7,112 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.7] — 2026-08-25
+
+### Added
+
+- **A self-host stack: `deploy/`, the server behind nginx with TLS,
+  a token per client, and OAuth for connectors that cannot send a
+  header** ([#36](https://github.com/silly-geese/estonian-mcp/pull/36),
+  contributed by @laazik). Until now the ASGI wrapper in `server.py` was
+  the only thing between the internet and the Python process, and it
+  holds exactly one token. `docker compose up` now brings up app, nginx
+  and certbot: nginx terminates TLS, absorbs malformed requests, slow
+  clients, oversized bodies and connection floods, and holds as many
+  tokens as there are clients. Each client has its own name, its own
+  rate-limit bucket, and revocation that is one deleted line plus a
+  reload. The client's own credential stops at nginx, which swaps in an
+  internal token for the last hop, so a user token cannot end up in a
+  Python traceback or a rate-limit key.
+
+  The stack is operator-owned and it is not what the hosted service
+  runs. PRIVACY.md now says so in its own section, and SECURITY.md
+  describes what the stack does and does not defend against.
+
+  Decisions worth knowing about, because each one is a default somebody
+  will otherwise inherit without noticing:
+
+  - **No access log.** PRIVACY.md promises no request logging, and a
+    stack that self-hosts from this repository should keep that promise
+    until its operator decides otherwise. `ACCESS_LOG=1` in `.env` turns
+    on one line per request: method, path, status, client name, auth
+    scheme. Never the `Authorization` header, never the query string,
+    never a body, never an address. A 5xx is logged in that same format
+    either way, because a stack that hides its own failures cannot be
+    operated: with no access log and the error log at `crit`, a stopped
+    app container would otherwise produce silence while every request
+    failed.
+  - **The error log is held at `crit`.** nginx stamps every error-level
+    line with the full request line, and the Smithery-style
+    `?config=<base64>` query wraps a bearer token. One rate-limited
+    request from such a client would otherwise write that client's token
+    into the operator's log. OAuth failures report their reason through
+    the access log's `diag` field instead, which carries no request
+    line.
+  - **Forward secrecy.** nginx's built-in cipher default still
+    negotiates static-RSA suites on TLS 1.2, which derive the session
+    key from the certificate key. Anyone who later obtained
+    `privkey.pem` could decrypt months of captured traffic, which is the
+    practical way a "retention: 0 seconds" promise fails. The list is
+    Mozilla's intermediate profile, ephemeral suites only.
+  - **Connections are capped per IP.** They were capped per client, and
+    nginx does not account a zone whose key is empty, which it is for
+    exactly the unauthenticated traffic a connection flood is made of.
+  - **The OAuth facade verifies what it advertises.** Authorization
+    codes are 16 bytes from the system's random source, single-use,
+    expire in ten minutes, bound to the client and the callback that
+    asked for them, and checked against a PKCE S256 challenge when the
+    client sends one. The metadata advertised `S256` before anything
+    read a `code_challenge`, and a conforming client reads that metadata
+    as a promise. There is still no user login: the client secret is
+    what authenticates, `client_credentials` skips the code flow
+    entirely, and a code identifies a connector rather than a person.
+  - **Secret files are not world-readable.** The credential scripts
+    write map files at 0600 in a 0700 directory. They also read `.env`
+    rather than sourcing it, so a value in there is never executed as
+    shell.
+  - **A credential that cannot be generated is not written.** A POSIX
+    pipeline reports the status of its last command, so a missing or
+    failing `openssl` left an empty token in the map, and an empty map
+    key matches a request that carries no `Authorization` header at all:
+    unauthenticated access to `/mcp`, from a script that exited 0.
+    Generation now validates what it produced. Revocation covers every
+    file nginx reads rather than the three canonical ones, and client
+    ids that differ only in case are refused, because nginx lowercases
+    map keys and a duplicate key stops it from starting.
+  - **No image floats on `latest`.** The two Dockerfiles pin their base
+    images to a minor branch, and certbot, the one container with write
+    access to the TLS private key, is pinned to an exact version.
+    Dependabot watches both the Dockerfiles and the compose file, which
+    are two different ecosystems in its configuration, so the pins can
+    move.
+  - **Container logs are capped** at 10 MB x 3 per service, so a single
+    noisy line cannot fill the disk.
+
+  `tests/test_deploy.py` holds the invariants above without needing
+  Docker, and `tests/deploy_e2e.sh` builds the image and drives the
+  running proxy with curl: bearer auth, header rewriting, the OAuth and
+  PKCE flows including replay and wrong-verifier refusals, the
+  forward-secrecy handshake, what does and does not reach a log, and
+  that a flood of refused requests is still metered. Both run in CI.
+
+### Fixed
+
+- **Metrics were lost on a container host that mounts a named volume at
+  `/data`.** The image had no `/data`, so Docker created it as
+  `root:root` when it initialised the volume, and every flush from the
+  non-root runtime user failed with `EACCES`. The directory is now
+  created in the image and handed to `app` before the volume is
+  initialised, which is when Docker copies the ownership underneath it.
+  Fly mounts its own volume and was never affected.
+
+### Changed
+
+- PRIVACY.md and SECURITY.md no longer describe `server.py` as a
+  ~400-line file. It is one file, as promised, and the auth surface is
+  still the last few hundred lines of it, but the count stopped being
+  true about twenty tools ago.
+
 ## [0.5.6] — 2026-08-23
 
 Everything here came out of auditing the 13 `inflection_et` gold rows that

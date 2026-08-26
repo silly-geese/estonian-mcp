@@ -1,0 +1,5 @@
+# The build context is this directory, and the secrets directory next to
+# it holds every client's token in plain text. Nothing in the image needs
+# them: they are bind-mounted at runtime. Without this line, `docker
+# build ./deploy/nginx` ships them to the daemon on every build.
+secrets/

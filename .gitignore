@@ -7,3 +7,9 @@ build/
 *.egg-info/
 .DS_Store
 .context/
+
+# Deployment secrets and state. .env.example and tokens.map.example are
+# committed; the real ones never are.
+.env
+deploy/nginx/secrets/*.map
+deploy/letsencrypt/

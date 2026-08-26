@@ -5,6 +5,40 @@ Silly Geese Solutions at `https://estonian-mcp.fly.dev`. This
 document describes what data passes through the service and what we
 do (and do not do) with it.
 
+## What this policy covers
+
+Everything below describes **the hosted service**. The repository also
+ships `deploy/`, a reference stack for running estonian-mcp yourself
+behind nginx, and that stack is operator-owned: whoever runs it chooses
+its configuration and receives the requests it serves, not us.
+
+It ships with these same defaults: no access log for a request that
+succeeds, and an error log held at a level that keeps request lines out
+of it. Its operator can change them, for instance by setting
+`ACCESS_LOG=1` to record one line per request. `deploy/README.md`
+section 10 says exactly what each switch records.
+
+Three differences from the hosted service are worth naming.
+
+The stack runs certbot, which contacts Let's Encrypt twice a day to
+renew the certificate. That is the one outbound connection it makes, and
+it carries the hostname, never a request.
+
+A response with a **5xx status is logged whatever `ACCESS_LOG` says**, in
+that same format: method, path, status, client name, auth scheme. No
+query string, no body, no address. A stack that cannot report its own
+failures cannot be operated, and the alternative — turning the error log
+up — is what puts full request lines back in it.
+
+A request body larger than nginx's in-memory buffer (512 KB) transits a
+temporary file, which nginx deletes when the request ends. An ordinary
+tool call is far below that. `check_defined_terms` is the exception: it
+accepts documents up to 500,000 characters, and a whole statute in
+Estonian does exceed the buffer.
+
+If you call somebody else's deployment, their policy applies and this
+one does not.
+
 ## What data we receive
 
 When you (or your AI agent) call the server, the request contains:
@@ -90,10 +124,12 @@ trace of your usage is gone.
 ## Source code
 
 The server is open source under Apache-2.0 at
-`https://github.com/silly-geese/estonian-mcp`. Anyone can verify
-the claims above by reading `server.py` (~400 lines, one file). The
-auth-and-logging surface lives in `_build_http_app`,
-`_extract_token`, and `_RateLimiter` in the same file.
+`https://github.com/silly-geese/estonian-mcp`. Anyone can verify the
+claims above by reading `server.py`, which is one file: the tools are
+the bulk of it, and the whole auth-and-logging surface is the last few
+hundred lines — `_RateLimiter`, `_extract_token`, `_client_ip` and
+`_build_http_app`, in that order. The self-host stack in `deploy/` is
+separate, and `deploy/README.md` documents it.
 
 ## Security issues
 
@@ -107,4 +143,4 @@ This policy may be updated; substantive changes will appear in git
 history. The latest version is always at
 `https://github.com/silly-geese/estonian-mcp/blob/master/PRIVACY.md`.
 
-Last updated: 2026-08-23.
+Last updated: 2026-08-26.

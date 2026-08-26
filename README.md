@@ -394,6 +394,21 @@ docker run -p 8081:8081 \
   ghcr.io/silly-geese/estonian-mcp
 ```
 
+**Behind nginx, with TLS and a token per client** — [`deploy/`](deploy/README.md)
+is a Docker Compose stack (app + nginx + certbot) for running this on
+your own host. nginx terminates TLS with Let's Encrypt certificates,
+holds one bearer token per client with per-client rate limits and
+one-line revocation, meters the requests it refuses as well as the ones
+it serves, and answers OAuth discovery for connectors that cannot send a
+static `Authorization` header. It writes no access log unless you turn
+one on. See [`deploy/README.md`](deploy/README.md).
+
+```sh
+cp .env.example .env         # set DOMAIN, LETSENCRYPT_EMAIL, INTERNAL_TOKEN
+./deploy/new-token.sh my-laptop
+./deploy/init-letsencrypt.sh
+```
+
 **Smithery** auto-builds from `smithery.yaml` and hosts the image
 for you. Fork, [connect on Smithery](https://smithery.ai/docs/build),
 deploy. The shipped `configSchema` is empty (one-click install)

@@ -1,0 +1,13 @@
+# core.autocrlf=true on Windows checkouts would give these CRLF line
+# endings. They are copied into or bind-mounted through Linux
+# containers, where a CRLF shebang line fails with "bad interpreter" and
+# an nginx config errors on the stray carriage returns.
+*.sh            text eol=lf
+*.envsh         text eol=lf
+*.template      text eol=lf
+Dockerfile      text eol=lf
+*.map           text eol=lf
+*.js            text eol=lf
+*.map.example   text eol=lf
+docker-compose.yaml text eol=lf
+.env.example    text eol=lf

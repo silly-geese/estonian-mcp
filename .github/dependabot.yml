@@ -13,3 +13,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     labels: ["dependencies", "security"]
+
+  # Base images in the two Dockerfiles: the app's and the nginx proxy's.
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/deploy/nginx"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "security"]
+
+  # Images named in docker-compose.yaml, which the "docker" ecosystem
+  # above does not read: it parses Dockerfiles. certbot is pinned there,
+  # and it is the container that holds the TLS private key, so an
+  # unattended image is exactly what the pin exists to prevent - and a
+  # pin only helps if something offers the bumps.
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "security"]

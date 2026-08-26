@@ -18,6 +18,10 @@ NOTICE
 LICENSE
 fly.toml
 smithery.yaml
+docker-compose.yaml
+.env
+.env.example
+deploy/
 .python-version
 .gitignore
 .dockerignore

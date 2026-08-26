@@ -1,0 +1,34 @@
+#!/bin/sh
+# Turn the two .env knobs the template cannot compute into the exact
+# strings envsubst will paste into it.
+#
+# nginx has no conditional expression and envsubst only substitutes, so
+# both decisions are made here instead.
+#
+#   HTTPS_PORT=443   -> HTTPS_PORT_SUFFIX=""       https://host/path
+#   HTTPS_PORT=8443  -> HTTPS_PORT_SUFFIX=":8443"  https://host:8443/path
+#
+#   ACCESS_LOG=1|true|yes|on -> 1, anything else -> 0
+#
+# ACCESS_LOG lands inside a `map` block, so a typo would be a syntax
+# error, and nginx refusing to start also takes down the ACME challenge
+# on port 80. Normalising here means .env can hold anything and the
+# rendered config still loads.
+#
+# The official entrypoint SOURCES files named *.envsh, so an export
+# here is visible to the 20-envsubst step that runs next. The 19-
+# prefix is what puts this before that step.
+
+if [ "${HTTPS_PORT:-443}" = "443" ]; then
+    HTTPS_PORT_SUFFIX=""
+else
+    HTTPS_PORT_SUFFIX=":${HTTPS_PORT}"
+fi
+
+case "${ACCESS_LOG:-0}" in
+    1|true|TRUE|True|yes|YES|on|ON) ACCESS_LOG=1 ;;
+    *)                              ACCESS_LOG=0 ;;
+esac
+
+export HTTPS_PORT_SUFFIX
+export ACCESS_LOG
