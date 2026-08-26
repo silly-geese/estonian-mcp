@@ -488,9 +488,13 @@ server {
 
         # nginx buffers a request body larger than this to a temporary
         # file, which puts the caller's text on disk for the length of
-        # the request. The app refuses inputs over 100,000 characters,
-        # so 512k holds every request it will actually answer; anything
-        # larger is on its way to a rejection anyway.
+        # the request. 512k covers an ordinary tool call several times
+        # over, but not everything: check_defined_terms accepts
+        # documents up to 500,000 characters, and a whole statute in
+        # Estonian is larger than this. Raising the buffer trades that
+        # for per-connection memory on every large request, so it stays
+        # where the common case is safe and PRIVACY.md discloses the
+        # rest.
         client_body_buffer_size 512k;
 
         # A GET /mcp can hold an SSE stream open indefinitely; buffering

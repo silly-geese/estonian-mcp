@@ -12,19 +12,29 @@ ships `deploy/`, a reference stack for running estonian-mcp yourself
 behind nginx, and that stack is operator-owned: whoever runs it chooses
 its configuration and receives the requests it serves, not us.
 
-It ships with these same defaults: no access log, and an error log held
-at a level that keeps request lines out of it. Its operator can change
-them, for instance by setting `ACCESS_LOG=1` to record one line per
-request. `deploy/README.md` section 10 says exactly what each switch
-records.
+It ships with these same defaults: no access log for a request that
+succeeds, and an error log held at a level that keeps request lines out
+of it. Its operator can change them, for instance by setting
+`ACCESS_LOG=1` to record one line per request. `deploy/README.md`
+section 10 says exactly what each switch records.
 
-Two differences from the hosted service are worth naming. The stack runs
-certbot, which contacts Let's Encrypt twice a day to renew the
-certificate: that is the one outbound connection it makes, and it
-carries the hostname, never a request. And a request body larger than
-nginx's in-memory buffer transits a temporary file that nginx deletes
-when the request ends; the buffer is sized above the largest input the
-server will accept, so an ordinary tool call never touches disk.
+Three differences from the hosted service are worth naming.
+
+The stack runs certbot, which contacts Let's Encrypt twice a day to
+renew the certificate. That is the one outbound connection it makes, and
+it carries the hostname, never a request.
+
+A response with a **5xx status is logged whatever `ACCESS_LOG` says**, in
+that same format: method, path, status, client name, auth scheme. No
+query string, no body, no address. A stack that cannot report its own
+failures cannot be operated, and the alternative — turning the error log
+up — is what puts full request lines back in it.
+
+A request body larger than nginx's in-memory buffer (512 KB) transits a
+temporary file, which nginx deletes when the request ends. An ordinary
+tool call is far below that. `check_defined_terms` is the exception: it
+accepts documents up to 500,000 characters, and a whole statute in
+Estonian does exceed the buffer.
 
 If you call somebody else's deployment, their policy applies and this
 one does not.
