@@ -34,7 +34,7 @@
  * of deploy/README.md.
  */
 
-var crypto = require('crypto');
+var hashes = require('crypto');
 
 var TOKEN_LIFETIME_SECONDS = 31536000; // a year; there is no refresh endpoint
 
@@ -95,8 +95,26 @@ function diag(r, message) {
  * It also lets the redirect_uri allowlist hold plain URLs: njs decodes
  * the incoming value, and re-encodes state when rebuilding the callback.
  */
+/*
+ * njs hands back an ARRAY when a query parameter appears more than once,
+ * and a string otherwise. Every read below wants one value, and calling
+ * a string method on the array form throws inside the handler, which
+ * answers 500 with nginx's HTML error page and, under the shipped log
+ * settings, no explanation anywhere.
+ */
+function arg(r, name) {
+    var value = r.args[name];
+    if (value === undefined || value === null) {
+        return '';
+    }
+    if (Array.isArray(value)) {
+        return value.length ? String(value[0]) : '';
+    }
+    return String(value);
+}
+
 function authorize(r) {
-    var redirectUri = r.args.redirect_uri || '';
+    var redirectUri = arg(r, 'redirect_uri');
 
     // Assign before reading the map, which resolves lazily on first read.
     r.variables.oauth_redirect_uri = redirectUri;
@@ -110,7 +128,7 @@ function authorize(r) {
     // An unknown client gets no code at all. The code is worthless
     // without the secret, but minting one for an id that does not exist
     // only ever hides a typo in the connector's settings.
-    var clientId = r.args.client_id || '';
+    var clientId = arg(r, 'client_id');
     if (!clientId) {
         diag(r, 'authorize request carried no client_id');
         badRequest(r, 'invalid_request', 'client_id is required');
@@ -123,8 +141,8 @@ function authorize(r) {
         return;
     }
 
-    var challenge = r.args.code_challenge || '';
-    var method = (r.args.code_challenge_method || 'plain').toUpperCase();
+    var challenge = arg(r, 'code_challenge');
+    var method = (arg(r, 'code_challenge_method') || 'plain').toUpperCase();
     if (challenge && method !== 'S256') {
         // Only S256 is advertised, and `plain` is no binding at all: the
         // verifier equals the challenge, so anyone holding the code holds
@@ -133,11 +151,20 @@ function authorize(r) {
         badRequest(r, 'invalid_request', 'only the S256 code_challenge_method is supported');
         return;
     }
+    // An S256 challenge is a base64url SHA-256 digest: 43 characters, no
+    // padding. Anything else can never redeem, and storing it verbatim
+    // would let an unauthenticated caller push kilobytes into the shared
+    // zone on every request and evict codes other people are still
+    // waiting to redeem. RFC 7636 allows 43 to 128 characters, so the
+    // upper bound is its bound rather than ours.
+    if (challenge && !/^[A-Za-z0-9\-._~]{43,128}$/.test(challenge)) {
+        diag(r, 'malformed code_challenge');
+        badRequest(r, 'invalid_request',
+                   'code_challenge must be 43 to 128 unreserved characters');
+        return;
+    }
 
-    // $request_id is 16 bytes from nginx's random source, hex encoded.
-    // It is unique per request and unguessable, which is the whole
-    // requirement for an authorization code.
-    var code = r.variables.request_id;
+    var code = newCode(r);
     var stored = JSON.stringify({
         i: clientId,
         u: redirectUri,
@@ -161,8 +188,8 @@ function authorize(r) {
         + (redirectUri.indexOf('?') < 0 ? '?' : '&')
         + 'code=' + encodeURIComponent(code);
 
-    var state = r.args.state;
-    if (state !== undefined && state !== '') {
+    var state = arg(r, 'state');
+    if (state !== '') {
         target += '&state=' + encodeURIComponent(state);
     }
 
@@ -304,11 +331,15 @@ function redeem(r, clientId, form) {
     }
 
     // RFC 6749 section 4.1.3: when the authorization request carried a
-    // redirect_uri, the token request must present the same one.
+    // redirect_uri, the token request must present the same one. Every
+    // code issued here carries one, because /oauth/authorize refuses a
+    // callback that is not in the allowlist - so accepting a redemption
+    // that simply omits the field would make the binding optional at the
+    // attacker's choice, which is no binding at all.
     var presentedRedirect = form['redirect_uri'] || '';
-    if (entry.u && presentedRedirect && entry.u !== presentedRedirect) {
+    if (entry.u && entry.u !== presentedRedirect) {
         diag(r, 'redirect_uri does not match the authorization request');
-        badRequest(r, 'invalid_grant', 'redirect_uri does not match the authorization request');
+        badRequest(r, 'invalid_grant', 'redirect_uri must match the authorization request');
         return false;
     }
 
@@ -386,8 +417,33 @@ function formDecode(s) {
     }
 }
 
+/*
+ * 16 cryptographically random bytes, hex encoded.
+ *
+ * Deliberately NOT $request_id, which nginx builds from random() seeded
+ * with the worker pid and the start time. Every caller of
+ * /oauth/authorize is handed one of those values, so the stream is
+ * directly observable by anyone who asks, and that generator is
+ * reconstructible from a few dozen samples. A code is only half a
+ * credential, but it is not the half worth economising on.
+ */
+function newCode(r) {
+    try {
+        var bytes = new Uint8Array(16);
+        crypto.getRandomValues(bytes);
+        var hex = '';
+        for (var i = 0; i < bytes.length; i++) {
+            hex += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16);
+        }
+        return hex;
+    } catch (e) {
+        // An njs built without WebCrypto. Weaker, and still 16 bytes.
+        return r.variables.request_id;
+    }
+}
+
 function sha256Hex(s) {
-    return crypto.createHash('sha256').update(s).digest('hex');
+    return hashes.createHash('sha256').update(s).digest('hex');
 }
 
 /*
@@ -396,7 +452,7 @@ function sha256Hex(s) {
  * 'base64url' digest encoding, which older njs builds do not have.
  */
 function sha256Base64Url(s) {
-    return crypto.createHash('sha256').update(s).digest('base64')
+    return hashes.createHash('sha256').update(s).digest('base64')
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
         .replace(/=+$/, '');

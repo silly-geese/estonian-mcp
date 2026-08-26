@@ -79,8 +79,11 @@ def logging_is_off_by_default() -> None:
     access_logs = re.findall(r"^\s*access_log\s+(.+);", TEMPLATE, re.M)
     check("every access_log is gated", bool(access_logs) and all("if=$mcp_log" in a for a in access_logs),
           str(access_logs))
-    check("the gate defaults to the ACCESS_LOG knob",
-          re.search(r"map \$\w+ \$mcp_log \{\s*\n\s*default \$\{ACCESS_LOG\};", TEMPLATE) is not None)
+    check("the gate is driven by the ACCESS_LOG knob",
+          re.search(r'map "\$\{ACCESS_LOG\}:\$status" \$mcp_log \{', TEMPLATE) is not None)
+    check("a 5xx is logged whatever the knob says",
+          re.search(r'"~\^0:5"\s+1;', TEMPLATE) is not None,
+          "with no access log and the error log at crit, a broken upstream is silent")
     check("ACCESS_LOG ships as 0", re.search(r"^ACCESS_LOG=0$", ENV_EXAMPLE, re.M) is not None)
     check("compose defaults it to 0 as well", "ACCESS_LOG: ${ACCESS_LOG:-0}" in COMPOSE)
     check("the value is normalised before it reaches the config",
@@ -120,10 +123,25 @@ def tls_is_forward_secret() -> None:
               str([s for s in suites if not s.startswith("ECDHE")]))
         check("no DHE suite without an ssl_dhparam file",
               not any(s.startswith("DHE") for s in suites) or "ssl_dhparam" in TEMPLATE)
+    check("the HTTP redirect names the configured domain",
+          re.search(r"return 301 https://\$\{DOMAIN\}", TEMPLATE_CODE) is not None
+          and "return 301 https://$host" not in TEMPLATE_CODE,
+          "a default_server takes any Host, so $host is an open redirect")
     check("TLS 1.1 and below are refused",
           re.search(r"^\s*ssl_protocols\s+TLSv1\.2 TLSv1\.3;", TEMPLATE, re.M) is not None)
     check("session tickets are off", "ssl_session_tickets off;" in TEMPLATE)
-    check("HSTS is sent", "Strict-Transport-Security" in TEMPLATE)
+    # add_header does not merge across levels: a location that declares
+    # any header of its own loses the server-level HSTS silently.
+    server_level = 0
+    for block in server_blocks(TEMPLATE_CODE):
+        if re.search(r"^    add_header Strict-Transport-Security", block, re.M):
+            server_level += 1
+        for loc in re.finditer(r"location ([^\{]+)\{((?:[^{}]|\{[^{}]*\})*)\}", block):
+            name, body = loc.group(1).strip(), loc.group(2)
+            if "add_header" in body:
+                check(f"{name} keeps HSTS while adding headers of its own",
+                      "Strict-Transport-Security" in body)
+    check("the TLS server sets HSTS at server level", server_level >= 1)
 
 
 # ---------------------------------------------------------------------
@@ -134,7 +152,24 @@ def limits_meter_unauthenticated_traffic() -> None:
     check("connections are metered per IP",
           "limit_conn_zone $binary_remote_addr zone=conn_ip:10m;" in TEMPLATE,
           "$mcp_client is empty for exactly the flood this is meant to stop")
-    check("the per-IP connection cap is applied", re.search(r"limit_conn conn_ip\s+\d+;", TEMPLATE) is not None)
+
+    # Per server block, not "somewhere in the file". Port 80 had none of
+    # this, and it is the port certbot cannot lose: exhaust the workers
+    # there and the certificate stops renewing.
+    for block in server_blocks(TEMPLATE_CODE):
+        listen = re.search(r"listen (\d+)", block)
+        port = listen.group(1) if listen else "?"
+        check(f"port {port} caps connections per IP",
+              re.search(r"limit_conn conn_ip\s+\d+;", block) is not None)
+        check(f"port {port} cuts off a slow client",
+              "client_header_timeout" in block and "client_body_timeout" in block)
+        for loc in re.finditer(r"location ([^\{]+)\{((?:[^{}]|\{[^{}]*\})*)\}", block):
+            name, body = loc.group(1).strip(), loc.group(2)
+            # Named locations are internal targets: their parent was
+            # metered before the request reached them.
+            if name.startswith("@") or "internal;" in body:
+                continue
+            check(f"port {port} meters {name}", "limit_req" in body)
 
     # limit_conn is inherited only when a level declares none of its own,
     # so a location that names conn_client must repeat conn_ip.
@@ -208,7 +243,10 @@ def oauth_metadata_matches_behaviour() -> None:
     # which would refuse every code. get()+delete() is the working form and
     # is just as atomic for single use.
     check("the njs pop() trap is not reintroduced", ".pop(" not in OAUTH_JS)
-    check("the code is unguessable", "request_id" in OAUTH_JS)
+    check("codes come from a cryptographic source",
+          "crypto.getRandomValues" in OAUTH_JS,
+          "$request_id is random() seeded from the pid and the clock, and every "
+          "caller of /oauth/authorize is handed one of its outputs")
     check("the client is authenticated before a code is redeemed",
           OAUTH_JS.index("constantTimeEquals(expectedDigest") < OAUTH_JS.index("redeem(r, presented.id"))
     check("secrets are compared without an early exit", "function constantTimeEquals" in OAUTH_JS)
@@ -219,6 +257,30 @@ def oauth_metadata_matches_behaviour() -> None:
           not in re.search(r"location = /oauth/token \{(?:[^{}]|\{[^{}]*\})*\}", TEMPLATE).group(0),
           "any page could otherwise drive credential guessing from its visitors")
     check("the redirect target is allowlisted", "$oauth_redirect_allowed" in TEMPLATE)
+    # njs returns an ARRAY for a repeated query parameter, so a direct
+    # r.args read plus a string method is a 500 waiting for the first
+    # client that sends ?x=1&x=2.
+    direct = [line.strip() for line in OAUTH_JS.splitlines()
+              if "r.args" in line and "function arg(" not in line and "var value = r.args[name]" not in line]
+    check("query parameters are read through the array-safe helper", not direct, str(direct))
+    allowlist = re.search(r"map \$oauth_redirect_uri \$oauth_redirect_allowed \{(.*?)\}", TEMPLATE, re.S)
+    check("the allowlist exists", allowlist is not None)
+    if allowlist:
+        entries = [line.strip() for line in allowlist.group(1).splitlines()
+                   if line.strip() and not line.strip().startswith("#")
+                   and not line.strip().startswith("default")]
+        check("every allowed callback is matched case-sensitively",
+              bool(entries) and all(e.startswith('"~^') for e in entries),
+              str([e for e in entries if not e.startswith('"~^')]))
+    check("a PKCE challenge is bounded before it is stored",
+          "{43,128}" in OAUTH_JS,
+          "an unbounded challenge is stored verbatim and evicts live codes")
+    check("the callback binding is not optional at redemption",
+          "entry.u && entry.u !== presentedRedirect" in OAUTH_JS,
+          "requiring the client to supply the field is what makes it a binding")
+    check("bodies large enough to spill to disk are bounded away",
+          re.search(r"client_body_buffer_size\s+512k;", TEMPLATE) is not None,
+          "nginx writes a body bigger than this to a temporary file")
 
 
 def logged_values_are_sanitised() -> None:
@@ -249,6 +311,18 @@ def compose_is_pinned_and_bounded() -> None:
     check("no image floats on latest", all(not i.endswith(":latest") for i in images), str(images))
     check("every image carries a tag", all(":" in i for i in images), str(images))
     check("certbot is pinned", any(i.startswith("certbot/certbot:v") for i in images), str(images))
+    dependabot = (ROOT / ".github/dependabot.yml").read_text()
+    check("Dependabot watches Dockerfiles", 'package-ecosystem: "docker"' in dependabot)
+    check("and compose files, which the docker ecosystem does not read",
+          'package-ecosystem: "docker-compose"' in dependabot,
+          "the certbot pin lives in docker-compose.yaml")
+    check("the proxy build context excludes the credential maps",
+          "secrets/" in (ROOT / "deploy/nginx/.dockerignore").read_text(),
+          "docker build ./deploy/nginx would otherwise ship every client token to the daemon")
+    for dockerfile in ("Dockerfile", "deploy/nginx/Dockerfile"):
+        froms = re.findall(r"^FROM (\S+)", (ROOT / dockerfile).read_text(), re.M)
+        check(f"{dockerfile} pins its base images", bool(froms)
+              and all(":" in f and not f.endswith(":latest") for f in froms), str(froms))
     check("log files are capped", 'max-size: "10m"' in COMPOSE and 'max-file: "3"' in COMPOSE)
     body = re.search(r"^services:\n(.*?)(?=^\w)", COMPOSE_CODE, re.S | re.M)
     check("a services block exists", body is not None)
@@ -287,9 +361,11 @@ def ignores_keep_secrets_out() -> None:
     dockerignore = (ROOT / ".dockerignore").read_text()
     for pattern in ("deploy/", ".env", "docker-compose.yaml"):
         check(f"the app image excludes {pattern}", pattern in dockerignore)
+    tracked = subprocess.run(["git", "ls-files", "deploy/nginx/secrets"],
+                             cwd=ROOT, capture_output=True, text=True).stdout.split()
     check("no committed map file holds a real credential",
-          not list((ROOT / "deploy/nginx/secrets").glob("*.map")),
-          "only tokens.map.example belongs in git")
+          all(f.endswith(".example") for f in tracked), str(tracked),
+          )
 
 
 # ---------------------------------------------------------------------
@@ -297,7 +373,11 @@ def ignores_keep_secrets_out() -> None:
 # ---------------------------------------------------------------------
 def sandbox() -> tempfile.TemporaryDirectory:
     box = tempfile.TemporaryDirectory()
-    shutil.copytree(ROOT / "deploy", Path(box.name) / "deploy")
+    # Not letsencrypt/, which docker creates root-owned on Linux, and not
+    # anyone's real credential maps: a checkout that has actually been
+    # deployed from should still be able to run this suite.
+    shutil.copytree(ROOT / "deploy", Path(box.name) / "deploy",
+                    ignore=shutil.ignore_patterns("letsencrypt", "*.map"))
     return box
 
 
@@ -365,6 +445,54 @@ def credential_scripts_work() -> None:
         check("revoking an unknown client fails loudly", gone.returncode != 0, gone.stdout)
 
 
+def credentials_fail_closed() -> None:
+    print("a credential that cannot be generated is not written")
+    with sandbox() as box:
+        # openssl missing or broken. A POSIX pipeline reports the status
+        # of its last command, so this used to leave an EMPTY token in
+        # the map - and an empty map key matches a request that carries
+        # no Authorization header at all.
+        fake = Path(box) / "fakebin"
+        fake.mkdir()
+        (fake / "openssl").write_text("#!/bin/sh\nexit 1\n")
+        (fake / "openssl").chmod(0o755)
+        run = sh(f'PATH="{fake}:$PATH" ./deploy/new-token.sh broken', box)
+        check("new-token.sh fails when openssl does", run.returncode != 0, run.stdout)
+        tokens_map = Path(box) / "deploy/nginx/secrets/tokens.map"
+        body = tokens_map.read_text() if tokens_map.exists() else ""
+        check("no empty key reaches the map", '""' not in body, body)
+        check("no client line was written at all", "broken" not in body, body)
+
+    print("client ids nginx would misread are refused")
+    with sandbox() as box:
+        for reserved in ("default", "include", "hostnames", "volatile", "DEFAULT"):
+            run = sh(f"./deploy/new-token.sh {reserved}", box)
+            check(f"'{reserved}' is refused", run.returncode != 0, run.stdout)
+        first = sh("./deploy/new-oauth-client.sh Partner", box)
+        check("a mixed-case client is created once", first.returncode == 0, first.stderr)
+        # nginx lowercases map keys, so `partner` and `Partner` are one
+        # client to it: writing both gives the OAuth maps a duplicate key
+        # and the next reload fails.
+        again = sh("printf 'n\n' | ./deploy/new-oauth-client.sh partner", box)
+        check("its case variant is recognised as the same client",
+              "already exists" in again.stdout, again.stdout + again.stderr)
+
+    print("revocation covers every map nginx reads")
+    with sandbox() as box:
+        run = sh("./deploy/new-token.sh partner-acme", box)
+        check("a client exists to revoke", run.returncode == 0, run.stderr)
+        secrets = Path(box) / "deploy/nginx/secrets"
+        # The README documents splitting clients across several files,
+        # and the template includes tokens*.map, so revocation has to
+        # look at all of them.
+        (secrets / "tokens-partners.map").write_text('"someOtherToken0123456789abcdefghijklmnop"   split-client;\n')
+        found = sh("./deploy/revoke-client.sh split-client", box)
+        check("a client in a split map is found", found.returncode == 0, found.stdout + found.stderr)
+        check("and removed from it",
+              "split-client" not in (secrets / "tokens-partners.map").read_text())
+        check("the canonical map is untouched", "partner-acme" in (secrets / "tokens.map").read_text())
+
+
 def env_is_read_not_executed() -> None:
     print(".env is read, never executed")
     with sandbox() as box:
@@ -400,6 +528,11 @@ def cert_scripts_are_careful() -> None:
           "Let's Encrypt allows 5 duplicate certificates per week")
     check("the certbot image is not named a second time", "certbot/certbot" not in body,
           "pinning it in compose only works if the scripts go through compose")
+    check("an existing certbot lineage is renewed rather than deleted",
+          'if [ -f "$CONF_DIR/renewal/$DOMAIN.conf" ]' in body,
+          "deleting it first means a failed issuance leaves the host with no certificate")
+    check("a failed issuance leaves something nginx can start from",
+          "restoring a self-signed placeholder" in body)
     local = (ROOT / "deploy/local-cert.sh").read_text()
     check("local-cert.sh goes through compose too", "certbot/certbot" not in local)
     check("staging is the default", "STAGING=1" in ENV_EXAMPLE)
@@ -461,6 +594,7 @@ logged_values_are_sanitised()
 compose_is_pinned_and_bounded()
 ignores_keep_secrets_out()
 credential_scripts_work()
+credentials_fail_closed()
 env_is_read_not_executed()
 cert_scripts_are_careful()
 docs_match_the_stack()

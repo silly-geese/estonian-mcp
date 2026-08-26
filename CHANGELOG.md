@@ -37,7 +37,11 @@ versions follow [Semantic Versioning](https://semver.org/).
     until its operator decides otherwise. `ACCESS_LOG=1` in `.env` turns
     on one line per request: method, path, status, client name, auth
     scheme. Never the `Authorization` header, never the query string,
-    never a body, never an address.
+    never a body, never an address. A 5xx is logged in that same format
+    either way, because a stack that hides its own failures cannot be
+    operated: with no access log and the error log at `crit`, a stopped
+    app container would otherwise produce silence while every request
+    failed.
   - **The error log is held at `crit`.** nginx stamps every error-level
     line with the full request line, and the Smithery-style
     `?config=<base64>` query wraps a bearer token. One rate-limited
@@ -55,20 +59,33 @@ versions follow [Semantic Versioning](https://semver.org/).
     nginx does not account a zone whose key is empty, which it is for
     exactly the unauthenticated traffic a connection flood is made of.
   - **The OAuth facade verifies what it advertises.** Authorization
-    codes are random, single-use, expire in ten minutes, are bound to
-    the client and the callback that asked for them, and are checked
-    against a PKCE S256 challenge when the client sends one. The
-    metadata advertised `S256` before anything read a `code_challenge`,
-    and a conforming client reads that metadata as a promise. There is
-    still no user login: the client secret is what authenticates, and a
-    code identifies a connector rather than a person.
+    codes are 16 bytes from the system's random source, single-use,
+    expire in ten minutes, bound to the client and the callback that
+    asked for them, and checked against a PKCE S256 challenge when the
+    client sends one. The metadata advertised `S256` before anything
+    read a `code_challenge`, and a conforming client reads that metadata
+    as a promise. There is still no user login: the client secret is
+    what authenticates, `client_credentials` skips the code flow
+    entirely, and a code identifies a connector rather than a person.
   - **Secret files are not world-readable.** The credential scripts
     write map files at 0600 in a 0700 directory. They also read `.env`
     rather than sourcing it, so a value in there is never executed as
     shell.
-  - **Every image is pinned**, including certbot, which is the one
-    container with write access to the TLS private key. Dependabot now
-    watches the Docker ecosystem so the pins can move.
+  - **A credential that cannot be generated is not written.** A POSIX
+    pipeline reports the status of its last command, so a missing or
+    failing `openssl` left an empty token in the map, and an empty map
+    key matches a request that carries no `Authorization` header at all:
+    unauthenticated access to `/mcp`, from a script that exited 0.
+    Generation now validates what it produced. Revocation covers every
+    file nginx reads rather than the three canonical ones, and client
+    ids that differ only in case are refused, because nginx lowercases
+    map keys and a duplicate key stops it from starting.
+  - **No image floats on `latest`.** The two Dockerfiles pin their base
+    images to a minor branch, and certbot, the one container with write
+    access to the TLS private key, is pinned to an exact version.
+    Dependabot watches both the Dockerfiles and the compose file, which
+    are two different ecosystems in its configuration, so the pins can
+    move.
   - **Container logs are capped** at 10 MB x 3 per service, so a single
     noisy line cannot fill the disk.
 

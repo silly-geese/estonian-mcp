@@ -146,11 +146,16 @@ What it adds over exposing the app directly:
   `Authorization` header. The client secret is what authenticates;
   authorization codes are random, single-use, expire in ten minutes, are
   bound to the client and callback that requested them, and are verified
-  against a PKCE S256 challenge when the client sends one. There is no
-  user login, so a code identifies a connector, never a person.
+  against a PKCE S256 challenge when the client sends one. The
+  `client_credentials` grant skips the code flow altogether, which is
+  what curl and conforming clients use. There is no user login, so a
+  code identifies a connector, never a person, and the access token it
+  returns does not expire on its own: revocation is the only expiry.
 - **No request logging by default**, and the error log is held at `crit`
   because nginx stamps error lines with the full request line — which on
-  the Smithery `?config=` path wraps a bearer token.
+  the Smithery `?config=` path wraps a bearer token. Responses with a 5xx
+  status are logged either way, in the same format that carries no query
+  string and no credential, so a failing stack is not also a silent one.
 
 What it does not do: it does not protect the tool calls themselves, and
 it does not give the server user identity. `tests/test_deploy.py` and
@@ -205,5 +210,5 @@ The full server is one file (`server.py`). Read it end-to-end before
 deploying; the tools are most of it and the HTTP wrapper is the last few
 hundred lines. Each `@mcp.tool()` decorator marks a tool
 the LLM can call; the function body is what runs. The HTTP wrapper
-(`_build_http_app`, `_extract_token`, `_RateLimiter`) is below the
-tools and is the entire auth surface.
+(`_build_http_app`, `_extract_token`, `_client_ip`, `_RateLimiter`) is
+below the tools and is the entire auth surface.

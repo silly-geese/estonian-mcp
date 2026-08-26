@@ -24,7 +24,7 @@ require_client_id "$CLIENT"
 ensure_secrets_dir
 
 if client_exists "$CLIENT"; then
-    echo "client '$CLIENT' already has a token in $TOKENS_MAP" >&2
+    echo "client '$CLIENT' already has credentials in $SECRETS_DIR" >&2
     echo "Remove it first with:  ./deploy/revoke-client.sh $CLIENT" >&2
     exit 1
 fi

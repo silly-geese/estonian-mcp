@@ -27,19 +27,24 @@ fi
 # shellcheck disable=SC1091
 . ./deploy/lib.sh
 
-# Read, do not execute: see env_value in deploy/lib.sh.
-DOMAIN="$(env_value DOMAIN)"
-LETSENCRYPT_EMAIL="$(env_value LETSENCRYPT_EMAIL)"
-INTERNAL_TOKEN="$(env_value INTERNAL_TOKEN)"
-STAGING="$(env_value STAGING)"
+# Read, do not execute: see env_value in deploy/lib.sh. An exported
+# value wins over the file, which is how Compose resolves these too.
+DOMAIN="${DOMAIN:-$(env_value DOMAIN)}"
+LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-$(env_value LETSENCRYPT_EMAIL)}"
+INTERNAL_TOKEN="${INTERNAL_TOKEN:-$(env_value INTERNAL_TOKEN)}"
+STAGING="${STAGING:-$(env_value STAGING)}"
+
+require_literal DOMAIN "$DOMAIN"
+require_literal LETSENCRYPT_EMAIL "$LETSENCRYPT_EMAIL"
 
 : "${DOMAIN:?set DOMAIN in .env}"
 : "${LETSENCRYPT_EMAIL:?set LETSENCRYPT_EMAIL in .env}"
 : "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
 
 if [ ! -f deploy/nginx/secrets/tokens.map ]; then
-    echo "deploy/nginx/secrets/tokens.map is missing - nginx will not start without it." >&2
-    echo "Create it with:  ./deploy/new-token.sh <client-id>" >&2
+    echo "deploy/nginx/secrets/tokens.map is missing, so every client would get a 401." >&2
+    echo "nginx itself starts without it, deliberately: losing port 80 would cost you" >&2
+    echo "the certificate as well. Create the file with:  ./deploy/new-token.sh <client-id>" >&2
     exit 1
 fi
 
@@ -75,39 +80,76 @@ fi
 
 mkdir -p "$CONF_DIR" "$WWW_DIR" "$LIVE_DIR"
 
-echo "==> Planting a throwaway self-signed certificate so nginx can start"
 # Through compose rather than a bare `docker run`, so the certbot image
 # is pinned in exactly one place (docker-compose.yaml) and Dependabot
 # can see it. MSYS_NO_PATHCONV keeps Git Bash on Windows from rewriting
 # the container paths and the -subj argument.
-MSYS_NO_PATHCONV=1 docker compose run --rm --entrypoint openssl certbot \
-    req -x509 -nodes -newkey rsa:2048 -days 1 \
-        -keyout "/etc/letsencrypt/live/$DOMAIN/privkey.pem" \
-        -out    "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" \
-        -subj "/CN=localhost"
+plant_throwaway() {
+    MSYS_NO_PATHCONV=1 docker compose run --rm --entrypoint openssl certbot \
+        req -x509 -nodes -newkey rsa:2048 -days 1 \
+            -keyout "/etc/letsencrypt/live/$DOMAIN/privkey.pem" \
+            -out    "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" \
+            -subj "/CN=localhost"
+}
 
-echo "==> Starting nginx so it can serve the ACME challenge"
-docker compose up -d nginx
+# A renewal config is certbot's own record of a lineage it manages. Its
+# presence is the difference between "there is a real certificate here"
+# and "there is a self-signed placeholder from a previous run of this
+# script", and the two need opposite handling: certbot renews the first
+# in place, and refuses to adopt the second.
+if [ -f "$CONF_DIR/renewal/$DOMAIN.conf" ]; then
+    echo "==> A certbot-managed certificate already exists; renewing it in place"
+    # Deliberately no delete here. certbot writes the new certificate
+    # only after the challenge succeeds, so a failed run leaves the
+    # current one serving rather than leaving the host with none.
+    docker compose up -d nginx
+    # shellcheck disable=SC2086
+    MSYS_NO_PATHCONV=1 docker compose run --rm --entrypoint certbot certbot \
+        certonly --webroot -w /var/www/certbot \
+            -d "$DOMAIN" \
+            --email "$LETSENCRYPT_EMAIL" \
+            --agree-tos --no-eff-email \
+            --non-interactive \
+            --force-renewal \
+            $STAGING_ARG
+else
+    echo "==> Planting a throwaway self-signed certificate so nginx can start"
+    plant_throwaway
 
-echo "==> Removing the throwaway certificate"
-# certbot would otherwise see a lineage it did not create and refuse to
-# take it over. nginx has already loaded it into memory and keeps
-# serving until the reload below, so deleting the files is safe.
-MSYS_NO_PATHCONV=1 docker compose run --rm --entrypoint sh certbot -c \
-    "rm -rf /etc/letsencrypt/live/$DOMAIN \
-            /etc/letsencrypt/archive/$DOMAIN \
-            /etc/letsencrypt/renewal/$DOMAIN.conf"
+    echo "==> Starting nginx so it can serve the ACME challenge"
+    docker compose up -d nginx
 
-echo "==> Requesting the real certificate"
-# shellcheck disable=SC2086
-MSYS_NO_PATHCONV=1 docker compose run --rm --entrypoint certbot certbot \
-    certonly --webroot -w /var/www/certbot \
-        -d "$DOMAIN" \
-        --email "$LETSENCRYPT_EMAIL" \
-        --agree-tos --no-eff-email \
-        --non-interactive \
-        $FORCE_ARG \
-        $STAGING_ARG
+    echo "==> Removing the throwaway certificate"
+    # certbot would otherwise see a lineage it did not create and refuse
+    # to take it over. nginx has already loaded it into memory and keeps
+    # serving until the reload below, so removing the files is safe.
+    MSYS_NO_PATHCONV=1 docker compose run --rm --entrypoint sh certbot -c \
+        "rm -rf /etc/letsencrypt/live/$DOMAIN \
+                /etc/letsencrypt/archive/$DOMAIN \
+                /etc/letsencrypt/renewal/$DOMAIN.conf"
+
+    echo "==> Requesting the real certificate"
+    # shellcheck disable=SC2086
+    if ! MSYS_NO_PATHCONV=1 docker compose run --rm --entrypoint certbot certbot \
+        certonly --webroot -w /var/www/certbot \
+            -d "$DOMAIN" \
+            --email "$LETSENCRYPT_EMAIL" \
+            --agree-tos --no-eff-email \
+            --non-interactive \
+            $FORCE_ARG \
+            $STAGING_ARG
+    then
+        # nginx is running from files that no longer exist, so it keeps
+        # serving until something restarts it and then fails to start at
+        # all. Put a placeholder back, so the failure costs a warning
+        # rather than the whole stack.
+        echo "==> Issuance failed; restoring a self-signed placeholder so nginx can restart" >&2
+        mkdir -p "$LIVE_DIR"
+        plant_throwaway
+        echo "Fix the cause (DNS, port 80, rate limits) and run this script again." >&2
+        exit 1
+    fi
+fi
 
 echo "==> Reloading nginx onto the real certificate"
 docker compose exec nginx nginx -s reload

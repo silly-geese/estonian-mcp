@@ -132,15 +132,26 @@ Do these three commands. The table shows the correct results.
 
 ```sh
 curl https://$DOMAIN/health
-curl -i https://$DOMAIN/mcp
-curl -i -H "Authorization: Bearer $TOKEN" https://$DOMAIN/mcp
+
+curl -i -X POST https://$DOMAIN/mcp
+
+curl -i -X POST https://$DOMAIN/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
 ```
 
 | Command | Correct result |
 | --- | --- |
 | 1 | Status 200. The body shows the version. |
 | 2 | Status 401. |
-| 3 | Status 200. |
+| 3 | Status 200. The body is a JSON-RPC result. |
+
+> **NOTE: The MCP endpoint needs both headers in command 3. Without the
+> `Accept` header the server answers 406, and without the
+> `Content-Type` header it answers 400. Neither is an authentication
+> fault: a wrong token gives 401.**
 
 ### 4.4 Connection of a client
 
@@ -240,8 +251,10 @@ operate the same for both types.
 2. Reload nginx.
 
 A client can have credentials in three files. The script removes all of
-them. Do not delete the lines by hand: one file that you forget leaves
-a usable way in.
+them. It also examines each additional file that agrees with
+`tokens*.map`, `oauth_tokens*.map` or `oauth_secrets*.map`, because
+nginx reads all of these. Do not delete the lines by hand: one file that
+you forget leaves a usable way in.
 
 > **CAUTION: The old credentials continue to operate until you reload
 > nginx.**
@@ -358,6 +371,14 @@ reload. See section 6.3.
 
 ### 7.5 Limits of the facade
 
+The token endpoint accepts two grants. `authorization_code` does the
+steps in the table above. `client_credentials` skips them: a client that
+sends its id and secret gets the access token immediately, with no
+browser step and no code. A request that gives no `grant_type` is
+treated as `client_credentials`, because a connector that sends none
+still expects a token. The client secret is the protection in both
+cases.
+
 The facade does these checks:
 
 | Check | Behaviour |
@@ -372,11 +393,20 @@ Keep these limits in mind:
 
 - There is no login. `/oauth/authorize` does not identify a person. It
   shows only that a browser made a request to this server.
+- The codes are in a shared memory zone of 4 MB. If the zone becomes
+  full, nginx removes the oldest code. A caller that makes many codes
+  can thus remove codes that other clients did not use yet. Those
+  clients do the authorization again. The rate limit and the length
+  limit on the challenge control how quickly this can occur.
 - PKCE is verified but not demanded. A client that sends no challenge
   gets a code that needs no verifier. The client secret is still
   necessary.
 - All the persons who use one connector get the same access token. The
   facade identifies the connector, not the person.
+- The access token does not expire. The `expires_in` value in the token
+  response is one year, which causes a client to do the OAuth steps
+  again after that time. But the token stays in `tokens.map` and stays
+  valid until you revoke it. Revocation is the only expiry.
 
 This is sufficient for one server with one operator. It is not
 sufficient if you must know which person made a request.
@@ -423,8 +453,13 @@ The limits are in
 | Requests for each client | 120 in one minute | `limit_req_zone ... zone=per_client` |
 | Requests for each IP address | 300 in one minute | `limit_req_zone ... zone=per_ip` |
 | Connections for each IP address | 32 | `limit_conn conn_ip` |
+| Requests on port 80 for each IP address | 300 in one minute | `limit_req zone=per_ip` |
 | Open streams for each client | 8 | `limit_conn conn_client` |
 | Maximum size of a request | 4 MB | `client_max_body_size` |
+
+Port 80 has the same limits and shorter timeouts. It is not a less
+important port: certbot renews the certificate through it, thus a flood
+that occupies the workers there also stops the renewal.
 
 The connection limit uses the IP address, not the client name. An
 unauthenticated request has no client name, and nginx does not count a
@@ -470,10 +505,16 @@ The log then has one line for each request:
 | Status | The HTTP status. |
 | `client` | The client name from `tokens.map`. Empty if the request had no valid token. |
 | `auth` | The type of the `Authorization` header: `none`, `basic`, `bearer` or `other`. |
-| `diag` | The reason an OAuth request failed. `-` for all other requests. |
+| `diag` | The result of an OAuth request: the reason it failed, or `issued/<client id>` when a token was given. `-` for all other requests. |
 
 The log does not contain the `Authorization` header, the query string,
 the request body or the IP address.
+
+A response with a 5xx status is logged in this same format even when
+`ACCESS_LOG=0`. A stack that hides its own faults cannot be operated: if
+the app container stops, each request gives 502, and with no log and the
+error log at `crit` there is no message anywhere. The line has the same
+fields, thus this costs no more privacy than it must.
 
 > **CAUTION: The `?config=` query string of a Smithery client contains a
 > token. This is why no log here contains a query string.**
@@ -510,10 +551,19 @@ again. Change it back after the examination.
   removes this header, thus a client cannot supply its own name.
 - nginx sends the address of the client in the `X-Forwarded-For` header,
   and it writes the header. It does not add to a header from the client.
-  The app reads the entry that is Nth from the right, and
-  `ESTNLTK_MCP_TRUSTED_PROXY_HOPS` gives N. The default is 1, which is
-  correct for this stack: nginx is the only proxy. Change it only if you
-  put a CDN or a second proxy in front of nginx.
+  The app does not use that address in this configuration: it runs in
+  bearer mode, where the rate limit uses the token, and nginx does the
+  per-IP control. Thus `ESTNLTK_MCP_TRUSTED_PROXY_HOPS` has no function
+  here. The header is correct if you use the app in a different way
+  later.
+- A CDN or a second proxy in front of nginx needs more than a different
+  hop count. nginx writes the header from `$remote_addr`, which is then
+  the address of that proxy, thus each visitor of one CDN edge gets the
+  same rate limit group and the app never sees the caller. To correct
+  this, add the `real_ip` directives to the template with the address
+  ranges of that CDN. The template contains an example. Do not use
+  `0.0.0.0/0` there: this gives control of the rate limit key to the
+  caller.
 - nginx finds the address of the app for each request. It does not find
   the address one time when it starts. Thus nginx starts even if the
   app container is down. This is important, because certbot cannot
@@ -567,6 +617,8 @@ access log is off by default, thus:
 | `redirect_uri is not in the allowlist: X` | The connector uses a different callback. | Add the address to the `$oauth_redirect_allowed` map in the template, then make the container again. |
 | `authorization code is unknown, used or expired` | The code was used one time already, or more than 10 minutes passed. | Do the authorization again in the connector. |
 | `code_verifier does not match the code_challenge` | The client sent an incorrect PKCE verifier. | Do the authorization again. If it continues, report it. |
+| `redirect_uri must match the authorization request` | The token request gave a different callback, or gave none. | Make sure the connector uses the same callback in both steps. |
+| `malformed code_challenge` | The PKCE challenge is not 43 to 128 unreserved characters. | The client does not obey RFC 7636. Report it to the client. |
 
 > **NOTE: Do not use the `auth=` field to find this fault. Claude sends
 > the secret in the request body, so `auth=none` is correct for a good

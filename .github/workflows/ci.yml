@@ -206,8 +206,13 @@ jobs:
       - name: Deploy-stack invariants and credential scripts
         run: python3 tests/test_deploy.py
 
+      # Pinned, like ruff above and for the same reason: the runner's own
+      # shellcheck is whatever its image ships, so an unpinned one turns
+      # an unchanged tree red on somebody else's release schedule.
       - name: shellcheck
-        run: shellcheck deploy/*.sh deploy/nginx/*.sh deploy/nginx/*.envsh tests/deploy_e2e.sh
+        run: |
+          docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 \
+            deploy/*.sh deploy/nginx/*.sh deploy/nginx/*.envsh tests/deploy_e2e.sh
 
       - name: docker compose config parses
         env:

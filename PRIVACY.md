@@ -12,12 +12,22 @@ ships `deploy/`, a reference stack for running estonian-mcp yourself
 behind nginx, and that stack is operator-owned: whoever runs it chooses
 its configuration and receives the requests it serves, not us.
 
-It ships with these same defaults — no access log, no request bodies
-recorded anywhere, no outbound calls — and its operator can change them,
-for instance by setting `ACCESS_LOG=1` to record one line per request.
-`deploy/README.md` section 10 says exactly what each switch records. If
-you call somebody else's deployment, their policy applies and this one
-does not.
+It ships with these same defaults: no access log, and an error log held
+at a level that keeps request lines out of it. Its operator can change
+them, for instance by setting `ACCESS_LOG=1` to record one line per
+request. `deploy/README.md` section 10 says exactly what each switch
+records.
+
+Two differences from the hosted service are worth naming. The stack runs
+certbot, which contacts Let's Encrypt twice a day to renew the
+certificate: that is the one outbound connection it makes, and it
+carries the hostname, never a request. And a request body larger than
+nginx's in-memory buffer transits a temporary file that nginx deletes
+when the request ends; the buffer is sized above the largest input the
+server will accept, so an ordinary tool call never touches disk.
+
+If you call somebody else's deployment, their policy applies and this
+one does not.
 
 ## What data we receive
 
@@ -123,4 +133,4 @@ This policy may be updated; substantive changes will appear in git
 history. The latest version is always at
 `https://github.com/silly-geese/estonian-mcp/blob/master/PRIVACY.md`.
 
-Last updated: 2026-08-23.
+Last updated: 2026-08-26.

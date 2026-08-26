@@ -24,16 +24,19 @@ fi
 # shellcheck disable=SC1091
 . ./deploy/lib.sh
 
-# Read, do not execute: see env_value in deploy/lib.sh.
-DOMAIN="$(env_value DOMAIN)"
-INTERNAL_TOKEN="$(env_value INTERNAL_TOKEN)"
-HTTPS_PORT="$(env_value HTTPS_PORT)"
+# Read, do not execute: see env_value in deploy/lib.sh. An exported
+# value wins over the file, which is how Compose resolves these too.
+DOMAIN="${DOMAIN:-$(env_value DOMAIN)}"
+INTERNAL_TOKEN="${INTERNAL_TOKEN:-$(env_value INTERNAL_TOKEN)}"
+HTTPS_PORT="${HTTPS_PORT:-$(env_value HTTPS_PORT)}"
+
+require_literal DOMAIN "$DOMAIN"
 
 : "${DOMAIN:?set DOMAIN in .env}"
 : "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
 
 if [ ! -f deploy/nginx/secrets/tokens.map ]; then
-    echo "deploy/nginx/secrets/tokens.map is missing - nginx will not start without it." >&2
+    echo "deploy/nginx/secrets/tokens.map is missing, so every client would get a 401." >&2
     echo "Create it with:  ./deploy/new-token.sh <client-id>" >&2
     exit 1
 fi

@@ -27,7 +27,26 @@ OAUTH_SECRETS_MAP="$SECRETS_DIR/oauth_secrets.map"
 # re-encoded by the client and would no longer match the stored digest.
 # Alphanumeric survives that step unchanged.
 rand40() {
-    openssl rand -base64 48 | tr -d '=+/\n' | cut -c1-40
+    _value="$(openssl rand -base64 48 | tr -d '=+/\n' | cut -c1-40)"
+    # A POSIX pipeline reports the status of its LAST command, so a
+    # missing or failing openssl leaves `cut` returning 0 and this
+    # function returning an empty string. An empty token is not a weak
+    # credential, it is an open door: the nginx map would gain a `""`
+    # key, and $bearer_token is also empty for a request that carries no
+    # Authorization header at all.
+    case "$_value" in
+        [A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]*)
+            ;;
+        *)
+            echo "openssl produced no usable random value; refusing to write a credential" >&2
+            return 1
+            ;;
+    esac
+    if [ "${#_value}" -ne 40 ]; then
+        echo "expected a 40-character credential, got ${#_value}; refusing to write it" >&2
+        return 1
+    fi
+    printf '%s\n' "$_value"
 }
 
 require_client_id() {
@@ -41,6 +60,32 @@ require_client_id() {
             return 1
             ;;
     esac
+    # The OAuth maps use the client id as the map KEY, and these four
+    # words are map parameters rather than keys. A client called
+    # `default` would silently become the map's default value, and one
+    # called `include` would make nginx try to open a file.
+    case "$(_lower "$1")" in
+        default|include|hostnames|volatile)
+            echo "client id '$1' is an nginx map keyword; pick another" >&2
+            return 1
+            ;;
+    esac
+}
+
+_lower() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+# Every file nginx actually reads, not just the canonical three. The
+# template includes tokens*.map, oauth_secrets*.map and
+# oauth_tokens*.map, and the README tells operators they may split
+# clients across several files - so a revocation that edited only
+# tokens.map would leave a working credential behind.
+_maps() {
+    # shellcheck disable=SC2231  # $1 is a fixed prefix, never a path
+    for _f in "$SECRETS_DIR"/$1*.map; do
+        [ -f "$_f" ] && printf '%s\n' "$_f"
+    done
 }
 
 ensure_secrets_dir() {
@@ -58,13 +103,18 @@ ensure_secrets_dir() {
 # parser and POSIX sh disagree about quoting, backticks and $(...), so
 # the two would read different values out of the same line - and the
 # shell would additionally EXECUTE whatever a substitution contained.
-# This reads the same three shapes Compose does: a double-quoted value,
-# a single-quoted value, or a bare value up to an inline comment.
+# This reads the three shapes that matter here: a double-quoted value, a
+# single-quoted value, or a bare value up to an inline comment. It is
+# deliberately NOT a Compose parser: Compose also interpolates ${VAR},
+# which this returns literally. The scripts below refuse a value that
+# still contains ${, rather than requesting a certificate for the
+# literal string.
 env_value() {
     [ -f .env ] || return 0
     awk -v key="$1" '
-        $0 ~ "^[ \t]*" key "[ \t]*=" {
-            sub(/^[ \t]*[^=]*=[ \t]*/, "")
+        { sub(/\r$/, "") }                      # a .env written on Windows
+        $0 ~ "^[ \t]*(export[ \t]+)?" key "[ \t]*=" {
+            sub(/^[ \t]*(export[ \t]+)?[^=]*=[ \t]*/, "")
             c = substr($0, 1, 1)
             if (c == "\"") { sub(/^"/, ""); sub(/".*$/, "") }
             else if (c == "\047") { sub(/^\047/, ""); sub(/\047.*$/, "") }
@@ -76,33 +126,63 @@ env_value() {
     ' .env
 }
 
+# Compose interpolates ${VAR} and $(...) in .env; env_value deliberately
+# does not, because expanding it would mean reimplementing Compose. Say
+# so rather than requesting a certificate for the literal string.
+require_literal() {
+    # shellcheck disable=SC2016  # matching the literal characters is the point
+    case "$2" in
+        *'${'*|*'$('*|*'`'*)
+            echo "$1 in .env uses a substitution these scripts do not expand:" >&2
+            echo "  $1=$2" >&2
+            echo "Write the literal value, or export $1 before running this script." >&2
+            return 1
+            ;;
+    esac
+}
+
 # True if the client has a credential in ANY of the three files. It has
 # to check all of them: a client whose entry survives in only one file
 # still has a working way in, and a caller that checked only tokens.map
 # could append a second secret line for the same id. An nginx map takes
 # the first match, so a stale duplicate would silently win over the new
 # secret.
+# The matching is case-INSENSITIVE, because nginx lowercases map keys:
+# `Foo` and `foo` are one client to nginx, and writing both would give
+# the OAuth maps a duplicate key that makes the next reload fail.
 client_exists() {
-    { [ -f "$TOKENS_MAP" ]        && grep -qE "[[:space:]]$1;[[:space:]]*\$" "$TOKENS_MAP"; } ||
-    { [ -f "$OAUTH_TOKENS_MAP" ]  && grep -qE "^\"$1\"[[:space:]]"           "$OAUTH_TOKENS_MAP"; } ||
-    { [ -f "$OAUTH_SECRETS_MAP" ] && grep -qE "^\"$1\"[[:space:]]"           "$OAUTH_SECRETS_MAP"; }
+    _c="$1"
+    for _f in $(_maps tokens); do
+        grep -qiE "[[:space:]]$_c;[[:space:]]*\$" "$_f" && return 0
+    done
+    for _f in $(_maps oauth_tokens) $(_maps oauth_secrets); do
+        grep -qiE "^\"$_c\"[[:space:]]" "$_f" && return 0
+    done
+    return 1
 }
 
 # Remove every trace of a client from all three files. Safe to call for
 # a client that only ever had a plain token and no OAuth credentials.
 remove_client() {
     _c="$1"
-    _strip "$TOKENS_MAP"        "[[:space:]]$_c;[[:space:]]*\$"
-    _strip "$OAUTH_TOKENS_MAP"  "^\"$_c\"[[:space:]]"
-    _strip "$OAUTH_SECRETS_MAP" "^\"$_c\"[[:space:]]"
+    for _f in $(_maps tokens); do
+        _strip "$_f" "[[:space:]]$_c;[[:space:]]*\$"
+    done
+    for _f in $(_maps oauth_tokens) $(_maps oauth_secrets); do
+        _strip "$_f" "^\"$_c\"[[:space:]]"
+    done
 }
 
 _strip() {
     [ -f "$1" ] || return 0
+    # $$ rather than a fixed name: two operators revoking at once would
+    # otherwise write the same temp file and one would move the other's
+    # half-written copy over a live credential map.
+    _tmp="$1.$$.tmp"
     # grep -v exits 1 when everything matched, which set -e would treat
-    # as fatal, hence the guard.
-    grep -vE "$2" "$1" > "$1.tmp" || true
-    mv "$1.tmp" "$1"
+    # as fatal, hence the guard. -i because nginx matches that way.
+    grep -viE "$2" "$1" > "$_tmp" || true
+    mv "$_tmp" "$1"
     chmod 600 "$1"
 }
 

@@ -86,7 +86,11 @@ map $oauth_client_id $oauth_access_token {
 # when the zone is full rather than failing new authorizations; 1m holds
 # thousands of codes, so eviction is a backstop, not a normal event.
 # Codes are lost on restart, and the client simply authorizes again.
-js_shared_dict_zone zone=oauth_codes:1m timeout=600s evict;
+# 4m rather than 1m: an entry is a couple of hundred bytes, and eviction
+# drops the OLDEST live code, so a caller minting codes in bulk could
+# otherwise push out codes other people are still waiting to redeem. The
+# challenge is length-checked before it is stored, which bounds the rest.
+js_shared_dict_zone zone=oauth_codes:4m timeout=600s evict;
 
 # ---------------------------------------------------------------------
 # Rate limiting
@@ -95,10 +99,12 @@ js_shared_dict_zone zone=oauth_codes:1m timeout=600s evict;
 # above. per_ip is a coarse ceiling that also covers unauthenticated
 # traffic, which never gets far enough to have a client id.
 #
-# Ordering note: limit_req runs in the preaccess phase, after the
-# rewrite phase where the 401 below is returned. Rejected requests
-# therefore do not consume per_client budget, which is why the per_ip
-# zone exists to absorb credential-stuffing attempts.
+# Ordering note: an unauthenticated request never consumes per_client
+# budget, because nginx does not account a zone whose key is empty and
+# $mcp_client is empty for exactly those requests. That is why the
+# per_ip zone exists: it is what absorbs credential stuffing. The 401
+# itself comes from auth_request, in the access phase, so the request
+# HAS passed the limiters by then. See the phase note on /mcp.
 #
 # Connections are metered per IP, NOT per client. nginx does not account
 # a limit_conn zone whose key is empty, and $mcp_client is empty for
@@ -126,12 +132,15 @@ limit_conn_status 429;
 # access log's diag= field; add it here and reload.
 js_var $oauth_redirect_uri;
 
+# Regexes, not plain strings: nginx lowercases both sides of a plain map
+# comparison, and a URI path is case-sensitive. `~` is the case-sensitive
+# form, so /API/MCP/AUTH_CALLBACK is no longer an allowlisted callback.
 map $oauth_redirect_uri $oauth_redirect_allowed {
-    default                                     0;
-    "https://claude.ai/api/mcp/auth_callback"   1;
-    "https://claude.com/api/mcp/auth_callback"  1;
+    default                                             0;
+    "~^https://claude\.ai/api/mcp/auth_callback$"        1;
+    "~^https://claude\.com/api/mcp/auth_callback$"       1;
     # Local testing with a stub client.
-    "http://localhost:8080/callback"            1;
+    "~^http://localhost:8080/callback$"                  1;
 }
 
 # The SCHEME of the Authorization header, never its value. Enough to
@@ -154,12 +163,20 @@ map $http_authorization $auth_scheme {
 # container (`docker compose up -d --force-recreate nginx`) to turn it
 # on; deploy/README.md section 10.1 says what you get.
 #
-# nginx has no plain boolean, so the switch is a map with a constant
-# value. 19-render-vars.envsh normalises ACCESS_LOG to exactly 0 or 1
-# before envsubst sees it, so a typo in .env cannot produce a config
-# that fails to load.
-map $request_method $mcp_log {
-    default ${ACCESS_LOG};
+# A 5xx is logged either way. A stack that hides its own failures cannot
+# be operated: with no access log and the error log at `crit`, a broken
+# upstream or a handler exception would produce complete silence while
+# every request failed. The line is the same safe format, so this costs
+# no more privacy than it has to.
+#
+# nginx has no plain boolean, so the switch is a map over the rendered
+# ACCESS_LOG value and the response status. 19-render-vars.envsh
+# normalises ACCESS_LOG to exactly 0 or 1 before envsubst sees it, so a
+# typo in .env cannot produce a config that fails to load.
+map "${ACCESS_LOG}:$status" $mcp_log {
+    default    0;
+    "~^1:"     1;
+    "~^0:5"    1;
 }
 
 # No $http_authorization and no $query_string: the first would log the
@@ -185,18 +202,46 @@ server {
     error_log /dev/stderr crit;
     server_tokens off;
 
-    # This has to stay reachable on plain HTTP permanently, not just at
-    # issuance: certbot renews through the same webroot every 12 hours.
+    # This port is mandatory, permanently: certbot renews through it. It
+    # therefore needs the same protection as 443, or the cheapest way to
+    # take the certificate down is to exhaust the workers here. Without
+    # the timeouts, a half-sent request line holds a worker for nginx's
+    # default 60 seconds, and limit_conn cannot help because it does not
+    # count a connection until the headers are complete.
+    client_header_timeout 10s;
+    client_body_timeout   10s;
+    send_timeout          10s;
+    client_max_body_size  1k;
+    limit_conn conn_ip 32;
+
     location /.well-known/acme-challenge/ {
+        # Per IP, so a flood from one source cannot answer for Let's
+        # Encrypt, which validates from its own addresses.
+        limit_req zone=per_ip burst=60 nodelay;
         root /var/www/certbot;
         default_type "text/plain";
+    }
+
+    location / {
+        limit_req zone=per_ip burst=60 nodelay;
+        # try_files runs in the TRY_FILES phase, after the preaccess
+        # phase where limit_req lives, so the redirect below is charged
+        # to the limit. A `return` here would be answered during rewrite
+        # and every redirect would be free, which is the phase-order trap
+        # described on /mcp.
+        try_files /nonexistent @redirect_to_https;
     }
 
     # ${HTTPS_PORT_SUFFIX} is "" for the default 443 and ":8443" for a
     # custom HTTPS_PORT. Without it, a stack published on non-default
     # ports would redirect to a port nothing is listening on.
-    location / {
-        return 301 https://$host${HTTPS_PORT_SUFFIX}$request_uri;
+    #
+    # ${DOMAIN} rather than $host: this is a default_server, so $host is
+    # whatever the caller put in the Host header, and echoing it into a
+    # Location makes an open redirect that carries the original query
+    # string with it. The certificate only covers ${DOMAIN} anyway.
+    location @redirect_to_https {
+        return 301 https://${DOMAIN}${HTTPS_PORT_SUFFIX}$request_uri;
     }
 }
 
@@ -268,6 +313,16 @@ server {
     # parses into nothing useful.
     error_page 413 = @too_large;
     error_page 429 = @too_many;
+    # nginx's own 5xx pages are HTML, and an njs exception produces one.
+    # Upstream-generated statuses are untouched: proxy_intercept_errors
+    # is off, so what the app answers is what the client receives.
+    #
+    # No error_page for 400. A malformed request line is rejected before
+    # nginx has picked a server block, so the internal redirect has no
+    # context to run in and the answer becomes a 500 instead of the
+    # built-in 400. Those keep the built-in page.
+    error_page 500         = @server_error;
+    error_page 502 503 504 = @upstream_unavailable;
 
     # Docker's embedded DNS, with the upstream held in a variable so the
     # name is resolved per request instead of at config load. Without
@@ -279,6 +334,18 @@ server {
     resolver 127.0.0.11 valid=10s ipv6=off;
     set $upstream_app "app:8081";
 
+    # This block assumes nginx IS the edge. Behind a CDN or another
+    # proxy, $remote_addr is that proxy, so every visitor shares one
+    # rate-limit bucket and the app never sees the caller - and raising
+    # ESTNLTK_MCP_TRUSTED_PROXY_HOPS cannot recover it, because the line
+    # below replaces the incoming chain rather than appending to it.
+    # Recovering the real address needs real_ip with the CDN's own
+    # ranges named; trusting the header from anywhere would hand the
+    # limiter's key back to the caller:
+    #
+    #   set_real_ip_from 203.0.113.0/24;   # the CDN's ranges, never 0.0.0.0/0
+    #   real_ip_header   X-Forwarded-For;
+    #   real_ip_recursive on;
     proxy_http_version 1.1;
     proxy_set_header Host              $host;
     proxy_set_header X-Real-IP         $remote_addr;
@@ -298,6 +365,15 @@ server {
     # X-MCP-Client would otherwise be forwarded verbatim, which is a
     # spoofed identity waiting for the first consumer of that header.
     proxy_set_header X-MCP-Client "";
+    # Same treatment for the other headers that describe the hop. The app
+    # ignores them today, and a header a client can set is a header some
+    # future consumer will trust.
+    proxy_set_header Forwarded        "";
+    proxy_set_header X-Forwarded-Host "";
+    # PRIVACY.md says the service sets no cookies and reads none. Passing
+    # one through would make that a promise about the app rather than
+    # about the deployment.
+    proxy_set_header Cookie           "";
 
     # -----------------------------------------------------------------
     # Access-phase helpers for /mcp
@@ -342,6 +418,14 @@ server {
 
     location @too_many {
         return 429 '{"error":"rate_limited"}';
+    }
+
+    location @server_error {
+        return 500 '{"error":"server_error"}';
+    }
+
+    location @upstream_unavailable {
+        return 502 '{"error":"upstream_unavailable"}';
     }
 
     # -----------------------------------------------------------------
@@ -397,8 +481,17 @@ server {
         proxy_set_header X-Forwarded-For   $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header Authorization     "Bearer ${INTERNAL_TOKEN}";
-        # Lets the app attribute traffic without handling secrets.
+        # Available to the app for attribution without handling secrets.
+        # server.py does not read it today; it is here so that it can,
+        # without a token ever reaching Python.
         proxy_set_header X-MCP-Client      $mcp_client;
+
+        # nginx buffers a request body larger than this to a temporary
+        # file, which puts the caller's text on disk for the length of
+        # the request. The app refuses inputs over 100,000 characters,
+        # so 512k holds every request it will actually answer; anything
+        # larger is on its way to a rejection anyway.
+        client_body_buffer_size 512k;
 
         # A GET /mcp can hold an SSE stream open indefinitely; buffering
         # it would defeat the point.
@@ -440,6 +533,10 @@ server {
         limit_req zone=per_ip burst=20 nodelay;
         add_header Access-Control-Allow-Origin "*" always;
         add_header Cache-Control "public, max-age=3600" always;
+        # add_header does not merge across levels, and naming any header
+        # here would otherwise drop the server-level HSTS from a document
+        # that is often a client's first request.
+        add_header Strict-Transport-Security "max-age=31536000" always;
         return 200 '{"resource":"https://${DOMAIN}${HTTPS_PORT_SUFFIX}/mcp","authorization_servers":["https://${DOMAIN}${HTTPS_PORT_SUFFIX}"],"bearer_methods_supported":["header"],"scopes_supported":["mcp"]}';
     }
 
@@ -447,6 +544,10 @@ server {
         limit_req zone=per_ip burst=20 nodelay;
         add_header Access-Control-Allow-Origin "*" always;
         add_header Cache-Control "public, max-age=3600" always;
+        # add_header does not merge across levels, and naming any header
+        # here would otherwise drop the server-level HSTS from a document
+        # that is often a client's first request.
+        add_header Strict-Transport-Security "max-age=31536000" always;
         # No registration_endpoint: see above.
         #
         # client_secret_post is listed first because that is what Claude's
@@ -479,6 +580,12 @@ server {
     # building the callback URL, which nginx config cannot do.
     location = /oauth/authorize {
         limit_req zone=per_ip burst=20 nodelay;
+        # A browser lands here, so GET and HEAD are the whole surface.
+        # limit_except rather than an `if`, for the phase reason above.
+        limit_except GET HEAD {
+            deny all;
+        }
+        error_page 403 = @mcp_method_not_allowed;
         js_content oauth.authorize;
     }
 
