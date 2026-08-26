@@ -8,9 +8,18 @@
 #
 # Everything else (the config template, the token map, the certificates)
 # is bind-mounted at runtime so it can change without a rebuild.
-# Stable branch, minor pinned so Dependabot can offer the patch bumps.
-# Keep it on a supported branch: out-of-support branches stop getting
-# security fixes and the image starts accumulating CVEs.
+# nginx's STABLE branch. Even minors are stable and odd minors are
+# mainline, and the tags are literally the same images: 1.30-alpine and
+# stable-alpine share a digest, as do 1.31-alpine and mainline-alpine.
+# This container terminates TLS and holds every client's token, so it
+# tracks stable.
+#
+# The tag floats at patch level, so patch fixes arrive on a rebuild with
+# nobody doing anything. What Dependabot can offer here is the next
+# MINOR: take it when it is even (1.32), decline it when it is odd
+# (1.31). Do not sit on an out-of-support branch either, because those
+# stop getting security fixes and the image starts accumulating CVEs.
+# tests/test_deploy.py holds the even-minor half of that rule.
 FROM nginx:1.30-alpine
 
 RUN rm -f /etc/nginx/conf.d/default.conf

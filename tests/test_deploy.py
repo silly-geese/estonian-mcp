@@ -323,6 +323,16 @@ def compose_is_pinned_and_bounded() -> None:
         froms = re.findall(r"^FROM (\S+)", (ROOT / dockerfile).read_text(), re.M)
         check(f"{dockerfile} pins its base images", bool(froms)
               and all(":" in f and not f.endswith(":latest") for f in froms), str(froms))
+    # nginx ships stable on even minors and mainline on odd ones, and the
+    # tags are the same images: 1.31-alpine IS mainline-alpine. The proxy
+    # holds the TLS key and every client token, so an accepted minor bump
+    # onto an odd branch would be a posture change nobody asked for.
+    nginx_from = re.search(r"^FROM nginx:(\d+)\.(\d+)-alpine",
+                           (ROOT / "deploy/nginx/Dockerfile").read_text(), re.M)
+    check("the proxy names an nginx minor", nginx_from is not None)
+    if nginx_from:
+        check("and it is a stable branch, not mainline", int(nginx_from.group(2)) % 2 == 0,
+              f"1.{nginx_from.group(2)} is odd, so it is mainline")
     check("log files are capped", 'max-size: "10m"' in COMPOSE and 'max-file: "3"' in COMPOSE)
     body = re.search(r"^services:\n(.*?)(?=^\w)", COMPOSE_CODE, re.S | re.M)
     check("a services block exists", body is not None)
