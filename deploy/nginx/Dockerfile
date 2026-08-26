@@ -11,7 +11,7 @@
 # Stable branch, minor pinned so Dependabot can offer the patch bumps.
 # Keep it on a supported branch: out-of-support branches stop getting
 # security fixes and the image starts accumulating CVEs.
-FROM nginx:1.30-alpine
+FROM nginx:1.31-alpine
 
 RUN rm -f /etc/nginx/conf.d/default.conf
 
