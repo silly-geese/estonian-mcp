@@ -3,7 +3,7 @@
 > Claude is quite bad at Estonian, so this MCP is here to fix that. Give it a shot.
 
 [![CI](https://github.com/silly-geese/estonian-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/silly-geese/estonian-mcp/actions/workflows/ci.yml)
-[![smithery badge](https://smithery.ai/badge/silly-geese/estonian-mcp)](https://smithery.ai/servers/silly-geese/estonian-mcp)
+[![Smithery](https://img.shields.io/badge/Smithery-one--click%20install-000000.svg)](https://smithery.ai/servers/silly-geese/estonian-mcp)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue.svg)](pyproject.toml)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7c3aed.svg)](https://modelcontextprotocol.io)
