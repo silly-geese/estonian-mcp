@@ -362,6 +362,42 @@ def compose_is_pinned_and_bounded() -> None:
               f"stale: {sorted(allowed - placeholders)}")
 
 
+def base_image_matches_declared_support() -> None:
+    print("the app image runs a Python this project claims to support")
+    spec = re.search(r'requires-python\s*=\s*"([^"]+)"', (ROOT / "pyproject.toml").read_text())
+    tag = re.search(r"^FROM python:(\d+)\.(\d+)-slim", (ROOT / "Dockerfile").read_text(), re.M)
+    check("pyproject declares a Python range", spec is not None)
+    check("the Dockerfile names a Python version", tag is not None)
+    if not (spec and tag):
+        return
+
+    image = (int(tag.group(1)), int(tag.group(2)))
+    ops = {
+        ">=": lambda a, b: a >= b,
+        "<=": lambda a, b: a <= b,
+        "==": lambda a, b: a == b,
+        "!=": lambda a, b: a != b,
+        ">": lambda a, b: a > b,
+        "<": lambda a, b: a < b,
+    }
+    unmet = []
+    for clause in spec.group(1).split(","):
+        m = re.match(r"\s*(>=|<=|==|!=|>|<)\s*(\d+)\.(\d+)", clause)
+        check(f"the clause {clause.strip()} is one this test understands", m is not None)
+        if m and not ops[m.group(1)](image, (int(m.group(2)), int(m.group(3)))):
+            unmet.append(clause.strip())
+
+    # Bumping the image alone does not move the support window, and the
+    # failure is silent until runtime: uv honours requires-python, so
+    # inside a python:3.14-slim image with a <3.14 cap it builds /opt/venv
+    # with a DIFFERENT interpreter it downloads, the runtime stage then
+    # runs the image's own python against that venv, and the container
+    # exits before it listens. Widen requires-python first, or leave the
+    # image where it is.
+    check(f"python:{image[0]}.{image[1]}-slim satisfies requires-python",
+          not unmet, f"unmet: {unmet} in {spec.group(1)}")
+
+
 def ignores_keep_secrets_out() -> None:
     print("secrets stay out of git and out of the image")
     gitignore = (ROOT / ".gitignore").read_text()
@@ -602,6 +638,7 @@ upstream_headers_are_ours()
 oauth_metadata_matches_behaviour()
 logged_values_are_sanitised()
 compose_is_pinned_and_bounded()
+base_image_matches_declared_support()
 ignores_keep_secrets_out()
 credential_scripts_work()
 credentials_fail_closed()
