@@ -110,7 +110,7 @@ services:
   # write access to the TLS private key, so `latest` is the last place
   # an unreviewed image should arrive. Dependabot offers the bumps.
   certbot:
-    image: certbot/certbot:v5.7.0
+    image: certbot/certbot:v5.8.0
     restart: unless-stopped
     logging: *logging
     volumes:
