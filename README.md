@@ -147,6 +147,37 @@ or lemmatize Estonian text and it'll reach for them.
 Want a fully local, zero-network setup instead? See the stdio path
 in [Self-host (advanced)](#self-host-advanced).
 
+### In Codex (CLI)
+
+One command, the same hosted server over streamable HTTP:
+
+```sh
+codex mcp add estonian --url https://estonian-mcp.fly.dev/mcp
+```
+
+`codex mcp list` should then show it as `enabled`. Auth reads as
+"Unsupported", which is correct here: the server is public and wants no
+token. Ask Codex to proofread or lemmatize Estonian and it calls the
+tools directly.
+
+### In ChatGPT
+
+ChatGPT reaches MCP servers through a custom connector, which lives
+behind developer mode. Turn that on in ChatGPT's settings, add a
+connector pointing at `https://estonian-mcp.fly.dev/mcp` with no
+authentication, then switch it on inside the chat that should use it. A
+saved connector is not active until it is selected in the conversation.
+
+OpenAI has moved that toggle between Settings sections more than once,
+so follow their current
+[developer mode article](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)
+for the exact path rather than a menu name written down here.
+
+One limit worth knowing: ChatGPT's *deep research* connectors expect a
+server to expose `search` and `fetch` tools. This server exposes 26
+Estonian NLP tools and neither of those, so it belongs in the ordinary
+connector slot, not the deep research one.
+
 ### Don't see your client here?
 
 Any tool that supports MCP over HTTPS can connect, just point it at
@@ -257,12 +288,15 @@ response on that, no more hallucinated lemmas or invented case forms.
 | **Claude Desktop** | ✅ One click (newer) | ✅ stdio via JSON |
 | **claude.ai web** | ✅ One click (directory) | n/a |
 | **Claude Code** (CLI) | ✅ `claude mcp add --transport http` | ✅ `claude mcp add ...` (stdio) |
+| **Codex** (CLI) | ✅ `codex mcp add --url` | ✅ `codex mcp add -- <command>` (stdio) |
+| **ChatGPT** | ✅ Custom connector (developer mode) | n/a |
 | **Cursor** | ✅ Paste URL | ✅ stdio via JSON |
 | **VS Code MCP / Continue / Zed** | n/a | ✅ stdio via JSON |
 
 For Claude apps the no-install path is one click from the Connectors
-Directory (search "estonian"). Other MCP clients paste
-`https://estonian-mcp.fly.dev/mcp` in their Connectors UI. The
+Directory (search "estonian"). Codex takes the URL as a command, ChatGPT
+takes it as a custom connector once developer mode is on, and other MCP
+clients paste `https://estonian-mcp.fly.dev/mcp` in their Connectors UI. The
 local-install path clones the repo and points the client at
 `python server.py`.
 
