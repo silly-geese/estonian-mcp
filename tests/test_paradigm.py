@@ -308,10 +308,10 @@ def synthesis_invariants() -> None:
           isinstance(server._synthesize("qwertyxyz", "sg g", "S"), list))
 
     print("no form is silently dropped from a table")
-    # 30 for the verb: `tava` synthesised nothing for any verb and was
-    # replaced by `tavat`, which does (kasutatavat), and the duplicated
-    # `ksid` slot is now listed once like the `sid` it mirrors.
-    cases = [("kott", 28), ("maitse", 28), ("esimene", 28), ("kasutama", 30)]
+    # 39 for the verb: 0.6.0 added the umbisikuline finite forms, the
+    # des- and maks-vorm and the 2nd person singular imperative, all of
+    # which Vabamorf generates and none of which the table carried.
+    cases = [("kott", 28), ("maitse", 28), ("esimene", 28), ("kasutama", 39)]
     if HAVE_CORPUS:
         cases.append(("kaunis", 28))   # reaches 28 only once promoted
     for word, n in cases:
@@ -432,6 +432,241 @@ def a_rare_reading_is_not_promoted() -> None:
               f"got {len(r.get('forms', []))} forms")
     finally:
         server._corpus_ranks = original
+
+
+def the_verb_table_covers_what_people_write() -> None:
+    """The table listed `vat`, which does not occur in the corpus
+    vocabulary at all, and `tavat`, which is rank 24,225, and omitted
+    `takse`, which is rank 232.
+
+    Estonian officialese is written largely in the umbisikuline
+    tegumood, and the table carried that voice's participles and its
+    quotative but none of its indicative or conditional forms: no
+    kasutatakse, no kasutati, no kasutataks. An agent asking for a verb's
+    paradigm could not find the form the text in front of it was using.
+    """
+    print("the verb table carries the umbisikuline finite forms")
+    r = server._paradigm("kasutama")
+    got = {e["form"]: (e["surface"], e["form_estonian"]) for e in r["forms"]}
+    for code, surface in (("takse", "kasutatakse"), ("ti", "kasutati"),
+                          ("taks", "kasutataks"), ("ta", "kasutata"),
+                          ("tagu", "kasutatagu")):
+        check(f"{code} -> {surface}", got.get(code, ("",))[0] == surface, str(got.get(code)))
+        check(f"{code} is labelled umbisikuline",
+              "umbisikuline" in (got.get(code, ("", ""))[1] or ""), str(got.get(code)))
+
+    print("and the forms an ordinary writer reaches for")
+    for code, surface in (("des", "kasutades"), ("maks", "kasutamaks"), ("o", "kasuta"),
+                          ("nuks", "kasutanuks")):
+        check(f"{code} -> {surface}", got.get(code, ("",))[0] == surface, str(got.get(code)))
+
+    print("participle labels name the voice, and name it the same way twice")
+    for code in ("v", "nud", "tav", "tud"):
+        check(f"{code}: {_EXPECTED_VERB_LABELS[code]}",
+              got.get(code, ("", ""))[1] == _EXPECTED_VERB_LABELS[code], str(got.get(code)))
+    labels = " ".join(server._VERB_LABELS_ET.values())
+    check("the coined 'tegumoeline' is gone", "tegumoeline" not in labels,
+          "the file uses 'umbisikuline tegumood' everywhere else")
+
+    print("and every slot the paradigm hands back is pinned to its exact name")
+    # Pinned by surface alone, a slot could be relabelled to nonsense and
+    # the whole suite stayed green.
+    for code, expected in _EXPECTED_VERB_LABELS.items():
+        check(f"{code}: {expected}", got.get(code, ("", ""))[1] == expected, str(got.get(code)))
+    check("the table lists exactly the pinned slots",
+          set(server._VERB_LABELS_ET) == set(_EXPECTED_VERB_LABELS),
+          str(set(server._VERB_LABELS_ET) ^ set(_EXPECTED_VERB_LABELS)))
+
+    print("a code covering two slots names both, rather than picking one")
+    # `kasuta` is the imperative AND the form after `ei`; `kasutagu` is
+    # 3rd person of either number; `kasutaks` serves every person without
+    # an ending. Naming only the first reading tells an agent that
+    # "ei tea" is a command and that "nad tulgu" is singular.
+    for code in ("o", "gu", "ks"):
+        check(f"{code} names both readings", " / " in _EXPECTED_VERB_LABELS[code],
+              _EXPECTED_VERB_LABELS[code])
+
+    print("every verb form still synthesises, so nothing was added on faith")
+    for form in server._VERB_FORMS:
+        ok = any(server._synthesize(w, form, "V") for w in ("kasutama", "olema", "tegema"))
+        check(f"{form!r} synthesises", ok, "added to the table but generates nothing")
+
+
+# The 14 cases in each number, plus the short illative, which has no
+# number prefix. `paradigm` labels these and `analyze_morphology` reads
+# the same table, so a wrong one is wrong in both.
+_EXPECTED_CASE_LABELS = {
+    "sg n": "ainsuse nimetav", "sg g": "ainsuse omastav",
+    "sg p": "ainsuse osastav", "sg ill": "ainsuse sisseütlev",
+    "adt": "ainsuse lühike sisseütlev", "sg in": "ainsuse seesütlev",
+    "sg el": "ainsuse seestütlev", "sg all": "ainsuse alaleütlev",
+    "sg ad": "ainsuse alalütlev", "sg abl": "ainsuse alaltütlev",
+    "sg tr": "ainsuse saav", "sg ter": "ainsuse rajav",
+    "sg es": "ainsuse olev", "sg ab": "ainsuse ilmaütlev",
+    "sg kom": "ainsuse kaasaütlev",
+    "pl n": "mitmuse nimetav", "pl g": "mitmuse omastav",
+    "pl p": "mitmuse osastav", "pl ill": "mitmuse sisseütlev",
+    "pl in": "mitmuse seesütlev", "pl el": "mitmuse seestütlev",
+    "pl all": "mitmuse alaleütlev", "pl ad": "mitmuse alalütlev",
+    "pl abl": "mitmuse alaltütlev", "pl tr": "mitmuse saav",
+    "pl ter": "mitmuse rajav", "pl es": "mitmuse olev",
+    "pl ab": "mitmuse ilmaütlev", "pl kom": "mitmuse kaasaütlev",
+}
+
+
+# Every label the two tools can hand back, stated here independently of
+# the tables that produce them, so relabelling one entry fails the suite.
+_EXPECTED_VERB_LABELS = {
+    "ma": "ma-tegevusnimi", "da": "da-tegevusnimi", "des": "des-vorm",
+    "maks": "maks-vorm", "vat": "vat-vorm", "tavat": "tavat-vorm",
+    "mas": "mas-vorm", "mast": "mast-vorm", "mata": "mata-vorm",
+    "n": "olevik 1.p ainsus", "d": "olevik 2.p ainsus", "b": "olevik 3.p ainsus",
+    "me": "olevik 1.p mitmus", "te": "olevik 2.p mitmus", "vad": "olevik 3.p mitmus",
+    "sin": "lihtminevik 1.p ainsus", "sid": "lihtminevik 2.p ainsus / 3.p mitmus",
+    "s": "lihtminevik 3.p ainsus", "sime": "lihtminevik 1.p mitmus",
+    "site": "lihtminevik 2.p mitmus",
+    "ksin": "tingiv 1.p ainsus", "ksid": "tingiv 2.p ainsus / 3.p mitmus",
+    "ks": "tingiv 3.p ainsus / pöördelõputa vorm", "ksime": "tingiv 1.p mitmus",
+    "ksite": "tingiv 2.p mitmus",
+    "nud": "isikuline mineviku kesksõna", "tud": "umbisikuline mineviku kesksõna",
+    "v": "isikuline oleviku kesksõna", "tav": "umbisikuline oleviku kesksõna",
+    "o": "käskiv 2.p ainsus / isikuline eitav vorm",
+    "gu": "käskiv 3.p ainsus / mitmus",
+    "gem": "käskiv 1.p mitmus", "ge": "käskiv 2.p mitmus",
+    "takse": "umbisikuline olevik", "ti": "umbisikuline lihtminevik",
+    "taks": "umbisikuline tingiv", "ta": "umbisikuline eitav vorm",
+    "tagu": "umbisikuline käskiv", "nuks": "tingiv minevik",
+}
+
+# Codes no paradigm slot lists, so only analysis ever returns them.
+_EXPECTED_ANALYSIS_LABELS = {
+    "nuksin": "tingiv minevik 1.p ainsus",
+    "nuksid": "tingiv minevik 2.p ainsus / 3.p mitmus",
+    "nuksime": "tingiv minevik 1.p mitmus",
+    "nuksite": "tingiv minevik 2.p mitmus",
+    "nuvat": "nuvat-vorm", "tuvat": "tuvat-vorm",
+    "tuks": "umbisikuline tingiv minevik",
+    "tama": "umbisikuline ma-tegevusnimi",
+}
+
+# One word each. `neg o` is all three, which is why the lemma decides.
+_EXPECTED_NEG_LABELS = {
+    ("ära", "o"): "eitav käskiv 2.p ainsus",
+    ("ära", "ge"): "eitav käskiv 2.p mitmus",
+    ("ära", "gem"): "eitav käskiv 1.p mitmus",
+    ("ära", "me"): "eitav käskiv 1.p mitmus",
+    ("ära", "gu"): "eitav käskiv",
+    ("olema", "o"): "eitav olevik",
+    ("olema", "da"): "umbisikuline eitav vorm",
+    ("olema", "nud"): "eitav lihtminevik",
+    ("olema", "tud"): "umbisikuline eitav lihtminevik",
+    ("olema", "ks"): "eitav tingiv",
+    ("olema", "nuks"): "eitav tingiv minevik",
+    ("olema", "vat"): "eitav vat-vorm",
+    ("minema", "o"): "isikuline eitav vorm",
+}
+
+
+def analysis_form_codes_carry_their_estonian_name() -> None:
+    """`analyze_morphology` returned raw codes: a caller was told a word
+    is `adt` or `takse` and left to guess, in a server whose rule is that
+    every English label carries a correct Estonian rendering."""
+    print("analyze_morphology glosses its form codes")
+    for text, word, code, label in (
+        ("Läksin majja.", "majja", "adt", "ainsuse lühike sisseütlev"),
+        ("Seda kasutatakse tihti.", "kasutatakse", "takse", "umbisikuline olevik"),
+        ("Ma ei tea.", "ei", "neg", "eitussõna"),
+    ):
+        rec = next(w for w in server.analyze_morphology(text) if w["word"] == word)
+        check(f"{word}: {code} -> {label}",
+              rec["form"] == code and rec["form_estonian"] == label, str(rec.get("form_estonian")))
+
+    print("a neg code is read against its lemma, not by prefixing 'eitav'")
+    # `neg o` is `ära`, and also `pole`, and also `lähe`. Prefixing
+    # "eitav" to the ordinary label for the suffix called `pole` a
+    # command, `polnud` a participle and `ärme` an indicative. Each of
+    # these is a whole word an agent meets in ordinary Estonian, so each
+    # goes through the tool both ways round.
+    for text, word, lemma, code in (
+        ("Ära unusta!", "Ära", "ära", "neg o"),
+        ("Ärge unustage!", "Ärge", "ära", "neg ge"),
+        ("Ärme mine sinna.", "Ärme", "ära", "neg me"),
+        ("Ärgu oldagu pahased.", "Ärgu", "ära", "neg gu"),
+        ("Ma pole kodus.", "pole", "olema", "neg o"),
+        ("Ma polnud kodus.", "polnud", "olema", "neg nud"),
+        ("Ma poleks tulnud.", "poleks", "olema", "neg ks"),
+        ("Seda polda tehtud.", "polda", "olema", "neg da"),
+        ("Seda poldud tehtud.", "poldud", "olema", "neg tud"),
+        ("Ta polevat kodus.", "polevat", "olema", "neg vat"),
+        ("Ma ei lähe koju.", "lähe", "minema", "neg o"),
+    ):
+        expected = _EXPECTED_NEG_LABELS[(lemma, code[4:])]
+        rec = next(w for w in server.analyze_morphology(text) if w["word"] == word)
+        check(f"{word}: {code} ({lemma}) -> {expected}",
+              rec["form"] == code and rec["lemma"] == lemma
+              and rec["form_estonian"] == expected,
+              f"{rec['lemma']!r} {rec['form']!r} -> {rec['form_estonian']!r}")
+        alt = next(a for w in server.analyze_morphology(text, all_analyses=True)
+                   if w["word"] == word for a in w["analyses"] if a["form"] == code)
+        check(f"{word}: same under all_analyses", alt["form_estonian"] == expected,
+              str(alt["form_estonian"]))
+
+    print("the case table is pinned the same way")
+    nominal = {e["form"]: e["form_estonian"] for e in server._paradigm("maja")["forms"]}
+    for code, expected in _EXPECTED_CASE_LABELS.items():
+        check(f"{code}: {expected}", nominal.get(code) == expected, str(nominal.get(code)))
+    check("the case table lists exactly the pinned cases",
+          server._CASE_LABELS_ET == _EXPECTED_CASE_LABELS,
+          str(set(server._CASE_LABELS_ET) ^ set(_EXPECTED_CASE_LABELS)))
+
+    print("and the tables say exactly what they are pinned to say")
+    check("the neg table holds exactly the pinned entries",
+          {(fam, c): lab for fam, d in server._NEG_LABELS_ET.items()
+           for c, lab in d.items()} == _EXPECTED_NEG_LABELS,
+          str(server._NEG_LABELS_ET))
+    check("the analysis-only table holds exactly the pinned entries",
+          server._ANALYSIS_FORM_LABELS_ET == _EXPECTED_ANALYSIS_LABELS,
+          str(server._ANALYSIS_FORM_LABELS_ET))
+
+    print("and a code with no label says so rather than echoing itself")
+    check("unknown codes give None", server._form_et("zzz") is None, str(server._form_et("zzz")))
+    check("an empty code gives None", server._form_et("") is None)
+    # Composition invented "eitav ainsuse nimetav" for this. A lookup cannot.
+    check("a fabricated neg code is not named", server._form_et("neg sg n") is None,
+          str(server._form_et("neg sg n")))
+    check("a neg code without its lemma is not guessed at",
+          server._form_et("neg o") is None, str(server._form_et("neg o")))
+
+    print("every form code Vabamorf declares has a name")
+    # EstNLTK ships Vabamorf's own inventory. Reading it here means a
+    # code we have never seen still fails the test rather than reaching a
+    # caller unnamed.
+    from estnltk.taggers.standard.morph_analysis.morf_common import (
+        VABAMORF_NOUN_FORMS,
+        VABAMORF_VERB_FORMS,
+    )
+    plain = [c for c in VABAMORF_VERB_FORMS if not c.startswith("neg")]
+    unnamed = [c for c in plain if server._form_et(c) is None]
+    check(f"all {len(plain)} plain verb codes are named", not unnamed, str(unnamed))
+    negs = [c for c in VABAMORF_VERB_FORMS if c.startswith("neg ")] + ["neg da"]
+    unnamed = [c for c in negs
+               if not any(server._form_et(c, lm)
+                          for lm in ("ära", "olema", "minema"))]
+    check(f"all {len(negs)} neg codes are named for their lemma", not unnamed, str(unnamed))
+    cases = [c for c in VABAMORF_NOUN_FORMS if c not in ("sg", "pl")]
+    unnamed = [c if c == "adt" else f"{n} {c}"
+               for n in ("sg", "pl") for c in cases
+               if server._form_et(c if c == "adt" else f"{n} {c}") is None]
+    check(f"all {len(cases) * 2 - 1} nominal codes are named", not unnamed, str(unnamed))
+
+    print("coverage over ordinary prose")
+    text = ("Käesoleva lepingu alusel sätestatakse poolte kohustused. Andmeid töödeldakse "
+            "ja säilitatakse seaduses ettenähtud korras. Ma ei tea, kas seda kasutati "
+            "varem. Kasutades neid vahendeid, tuleb olla ettevaatlik. Ära unusta lepingut "
+            "allkirjastada! Seda ei kasutatud ja poleks pidanudki kasutama.")
+    words = [w for w in server.analyze_morphology(text) if w["form"]]
+    missing = [(w["word"], w["form"]) for w in words if w["form_estonian"] is None]
+    check(f"every form code in {len(words)} words is named", not missing, str(missing))
 
 
 def eki_corrections_apply_only_where_they_still_fit() -> None:
@@ -864,6 +1099,8 @@ verb_free_variants_are_not_two_inflection_types()
 a_shared_form_does_not_select_a_type()
 a_rare_reading_is_not_promoted()
 variants_are_ordered_by_the_paradigm_stem()
+the_verb_table_covers_what_people_write()
+analysis_form_codes_carry_their_estonian_name()
 eki_corrections_apply_only_where_they_still_fit()
 unambiguous_words_never_touch_the_model()
 every_return_path_carries_paradigm_count()

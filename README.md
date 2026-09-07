@@ -81,8 +81,8 @@ of images is not one, however natural it sounds in ML jargon).
 | Tool | What it does |
 | --- | --- |
 | `tokenize(text)` | Split text into sentences and words |
-| `analyze_morphology(text)` | Lemma, POS, form, root, ending, clitic, compound parts, ambiguity count, and usage flags (archaic / foreign / interjection / abbreviation / proper-noun) per word |
-| `paradigm(word)` | Full Vabamorf-generated inflection paradigm, 14 cases × 2 numbers for nominals (including ordinals, comparatives and superlatives), plus the short illative where a word has one (`majja` beside `majasse`), ~31 verb forms, with Estonian labels per form. A lemma with several inflection types (`kott` → `koti` or `kota`, two different words) returns one consistent table per type, corpus-ranked, rather than a merged one; pass an inflected form (`koti`) to select the type you mean |
+| `analyze_morphology(text)` | Lemma, POS, form and its Estonian name, root, ending, clitic, compound parts, ambiguity count, and usage flags (archaic / foreign / interjection / abbreviation / proper-noun) per word |
+| `paradigm(word)` | Full Vabamorf-generated inflection paradigm, 14 cases × 2 numbers for nominals (including ordinals, comparatives and superlatives), plus the short illative where a word has one (`majja` beside `majasse`), ~39 verb forms including the umbisikuline tegumood (`kasutatakse`, `kasutati`), with Estonian labels per form. A lemma with several inflection types (`kott` → `koti` or `kota`, two different words) returns one consistent table per type, corpus-ranked, rather than a merged one; pass an inflected form (`koti`) to select the type you mean |
 | `lemmatize(text)` | Just the dictionary form per word |
 | `pos_tag(text)` | Just the part-of-speech tag per word |
 | `spell_check(text)` | Spelling check + correction suggestions |
