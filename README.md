@@ -48,6 +48,20 @@ of images is not one, however natural it sounds in ML jargon).
 > (We're a tool server, not a rankable LLM, so this scores our tools
 > against published gold data.)
 
+> **Second benchmark, wider and from real text:** `inflection_et` covers
+> four cases, so ten were never measured. Against Pert Lomp's
+> [käänamiskorpus](https://github.com/pertlomp/qwen38-et) (11,011
+> single-word rows over **all fourteen cases**, drawn from Riigikogu
+> stenographs and ERR news and frequency-weighted, CC-BY-SA-4.0), the
+> engine scores **99.3% first-candidate / 99.9% any-candidate**.
+> The gap between those two is the interesting part: Estonian forms most
+> plural oblique cases two ways, and leading with the wrong one cost 11
+> points until 0.5.10 ordered a slot's variants by the paradigm's own
+> genitive stem (`raamatutele` before the literary `raamatuile`).
+> Reproduce:
+> `uv run python scripts/eval_kaanamiskorpus.py`. The data is downloaded
+> at run time, never vendored here, and the server never touches it.
+
 **Three ways to use it:**
 
 1. 👉 **One-click from Anthropic's Connectors Directory**, the easiest
