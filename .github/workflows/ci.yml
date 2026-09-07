@@ -106,6 +106,14 @@ jobs:
       - name: Run paradigm tests (inflection_et audit)
         run: uv run --python ${{ matrix.python-version }} python tests/test_paradigm.py
 
+      # Drives every tool through the MCP layer and validates the structured
+      # payload against the schema the tool advertises. `paradigm` answered
+      # isError to every client for two weeks with every other suite green,
+      # because they all call the python functions directly and the failure
+      # lived in between.
+      - name: Run output-schema tests (every tool, through the MCP layer)
+        run: uv run --python ${{ matrix.python-version }} python tests/test_output_schemas.py
+
   # Proves the DOCUMENTED source-install path works, from a clean state.
   # The existing `smoke` job pre-fetches resources through bespoke steps and
   # exports ESTNLTK_MCP_FASTTEXT_PATH, which masks exactly the class of bug

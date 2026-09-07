@@ -71,7 +71,7 @@ DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.5.8"
+SERVER_VERSION = "0.5.9"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -1058,21 +1058,28 @@ class _TokenizeResult(TypedDict, total=False):
 
 
 class _ParadigmResult(TypedDict, total=False):
+    # EVERY conditional field is nullable, and that is not cosmetic.
+    # `total=False` says a key may be absent, but the MCP layer builds its
+    # structured payload from this schema and fills each declared-but-
+    # absent key with None before validating. A field typed `str` then
+    # fails validation as "None is not of type 'string'", and the tool
+    # answers isError for every word rather than returning a paradigm.
+    # Only the fields this tool sets on every path stay non-nullable.
     input: str
-    lemma: str
-    partofspeech: str
-    partofspeech_estonian: str
-    word_class: str
-    word_class_estonian: str
+    lemma: str | None
+    partofspeech: str | None
+    partofspeech_estonian: str | None
+    word_class: str | None
+    word_class_estonian: str | None
     forms: list[dict]
     paradigm_count: int
-    paradigm_key: str
-    other_paradigms: list[dict]
-    ranked_by_corpus_frequency: bool
-    ambiguity_estonian: str
-    reading_estonian: str
-    invariant: bool
-    invariant_estonian: str
+    paradigm_key: str | None
+    other_paradigms: list[dict] | None
+    ranked_by_corpus_frequency: bool | None
+    ambiguity_estonian: str | None
+    reading_estonian: str | None
+    invariant: bool | None
+    invariant_estonian: str | None
     summary_estonian: str
     note: str
 

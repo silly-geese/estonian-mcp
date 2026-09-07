@@ -7,6 +7,40 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.9] — 2026-09-07
+
+### Fixed
+
+- **`paradigm` answered an error to every MCP client, and had since
+  0.5.6.** Not a Python-level failure: `server.paradigm("maja")` returned
+  a correct paradigm the whole time, every suite was green, and the tool
+  still came back as
+  `Output validation error: None is not of type 'string'` over the
+  protocol. The MCP layer builds its structured payload from the tool's
+  output schema and fills every DECLARED BUT ABSENT key with `None`
+  before validating, so each conditional field of `_ParadigmResult`
+  (`paradigm_key`, `other_paradigms`, `ranked_by_corpus_frequency`,
+  `ambiguity_estonian`, `reading_estonian`, `invariant`,
+  `invariant_estonian`, and `word_class*` for words that do not inflect)
+  became a `None` where the schema demanded a string. `total=False` says
+  a key MAY be absent; it does not make the value nullable.
+
+  Those fields are nullable now. `paradigm` is the third most-called tool
+  on the hosted instance, and it was the only tool affected: the others
+  populate every field they declare.
+
+### Added
+
+- **`tests/test_output_schemas.py`: every tool, through the layer that
+  validates.** The gap that let this ship for two weeks is that every
+  existing test calls the Python functions directly, and `mcp.call_tool`
+  does not validate either. This reads each tool's advertised output
+  schema, runs the tool, and checks the structured payload against it,
+  including six `paradigm` word shapes because the omitted-key set
+  differs per word. It fails on the pre-fix code with five violations,
+  and it runs in CI on both Python versions.
+
+
 ## [0.5.8] — 2026-09-07
 
 Both of these came out of a reader checking our
