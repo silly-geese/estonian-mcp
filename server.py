@@ -578,7 +578,10 @@ _VERB_FORMS: tuple[str, ...] = (
     # past indicative
     "sin", "sid", "s", "sime", "site",
     # conditional
-    "ksin", "ksid", "ks", "ksime", "ksite", "ksid",
+    # `ksid` covers the 2nd person singular and the 3rd person plural,
+    # one surface with one label, so it is listed once. `sid` in the past
+    # tense above is the same syncretism and is listed once too.
+    "ksin", "ksid", "ks", "ksime", "ksite",
     # participles
     "nud", "tud", "v", "tav",
     # imperative (mostly 2nd / 3rd person)
@@ -1791,8 +1794,12 @@ def _paradigm(word: str) -> dict:
             "better than the bare lemma when a word has several paradigms: "
             "it tells the server which one you mean. Where a word has both "
             "'ainsuse sisseütlev' (majasse) and 'ainsuse lühike sisseütlev' "
-            "(majja), BOTH are correct and the short one is usually the "
-            "commoner: do not rewrite one into the other."
+            "(majja), both are correct illatives and the short one is often "
+            "the commoner, so neither should be 'corrected' into the other. "
+            "Note that for most words with a short illative the surface is "
+            "identical to the singular partitive (vend: venda is both), so "
+            "finding a word in this table does NOT confirm the case is "
+            "right for the sentence it appears in."
         ),
     }
     if key:
@@ -1845,11 +1852,15 @@ def paradigm(word: Annotated[str, Field(description="A single Estonian word (lem
     comparatives, superlatives): produces all 14 cases × 2 numbers = up to
     28 forms, plus the SHORT ILLATIVE (`adt`, ainsuse lühike sisseütlev)
     for the words that have one: `majja` beside `majasse`, `kätte` beside
-    `käesse`. Both are correct where both appear, and the short one is
-    usually the commoner, so do not rewrite either into the other. For
-    verbs: produces infinitives, present/past/conditional indicative,
-    imperative, and participles (~31 forms). Other parts of speech
-    (adverbs, conjunctions, particles) don't inflect, so `forms` is empty.
+    `käesse`. Both are correct illatives and the short one is often the
+    commoner, so neither should be "corrected" into the other. For most
+    words that have one, though, the short illative is spelled exactly
+    like the singular partitive (`vend`: `venda` is both), so a surface
+    appearing in this table does not confirm the case is right where it
+    was used. For verbs: produces infinitives, present/past/conditional
+    indicative, imperative, and participles (~30 forms). Other parts of
+    speech (adverbs, conjunctions, particles) don't inflect, so `forms`
+    is empty.
 
     Each form entry has the Vabamorf form code (e.g. `sg p`, `ksin`),
     its Estonian label (e.g. `ainsuse osastav`, `tingiv 1.p ainsus`),

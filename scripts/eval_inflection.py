@@ -82,7 +82,7 @@ _CASE = {
     "nimetav": ["n"],      # nominative
     "omastav": ["g"],      # genitive
     "osastav": ["p"],      # partitive
-    "sisseütlev": ["ill"], # illative, long form; the short one is below
+    "sisseütlev": ["ill"], # illative, long form only; short one below
 }
 
 # The SHORT ILLATIVE (aditiiv) is spelled without a number prefix and
@@ -102,11 +102,18 @@ def forms_for(case: str, num: str) -> list[str]:
     call the same construction the scoring does. Checking the constant
     alone would not have caught the original defect: the constant was
     right and the string built from it ("sg adt") was not.
+
+    ORDER MATTERS. word_surfaces() takes form_codes[0] as the first
+    candidate, and first-candidate accuracy is a published number, so the
+    long illative has to stay in front: putting the short one first drops
+    it from 99.1% to 87.9%.
     """
     codes = [f"{num} {c}" for c in _CASE[case]]
     if case == "sisseütlev" and num == "sg":
         codes.append(_SHORT_ILLATIVE_FORM)
     return codes
+
+
 _KEY_FORM = "sg g"   # the form Estonian reads the inflection type off
 
 

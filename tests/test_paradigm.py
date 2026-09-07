@@ -304,9 +304,10 @@ def synthesis_invariants() -> None:
           isinstance(server._synthesize("qwertyxyz", "sg g", "S"), list))
 
     print("no form is silently dropped from a table")
-    # 31 for the verb since `tava`, which synthesised nothing for any
-    # verb, was replaced by `tavat`, which does (kasutatavat).
-    cases = [("kott", 28), ("maitse", 28), ("esimene", 28), ("kasutama", 31)]
+    # 30 for the verb: `tava` synthesised nothing for any verb and was
+    # replaced by `tavat`, which does (kasutatavat), and the duplicated
+    # `ksid` slot is now listed once like the `sid` it mirrors.
+    cases = [("kott", 28), ("maitse", 28), ("esimene", 28), ("kasutama", 30)]
     if HAVE_CORPUS:
         cases.append(("kaunis", 28))   # reaches 28 only once promoted
     for word, n in cases:
@@ -606,14 +607,6 @@ def disputes_file_is_well_formed() -> None:
     check("sources are cited", len(DISPUTES.get("sources", [])) >= 1)
 
 
-ordinals_comparatives_superlatives_inflect()
-no_form_is_invented_for_a_word_that_lacks_it()
-verb_free_variants_are_not_two_inflection_types()
-a_shared_form_does_not_select_a_type()
-a_rare_reading_is_not_promoted()
-unambiguous_words_never_touch_the_model()
-every_return_path_carries_paradigm_count()
-
 def the_short_illative_is_in_the_table() -> None:
     """`adt`, the lühike sisseütlev: majja beside majasse.
 
@@ -647,9 +640,19 @@ def the_short_illative_is_in_the_table() -> None:
     r = server._paradigm("maja")
     labels = [e["form_estonian"] for e in r["forms"] if e["form"] == "adt"]
     check("adt is labelled in Estonian", labels == ["ainsuse lühike sisseütlev"], str(labels))
-    check("the note tells a caller not to rewrite one into the other",
-          "lühike sisseütlev" in r["note"] and "do not rewrite" in r["note"],
-          r["note"][-160:])
+    check("the note names the slot and warns against 'correcting' it",
+          "lühike sisseütlev" in r["note"] and "corrected" in r["note"],
+          r["note"][-200:])
+    # For most words that have one, the short illative is spelled exactly
+    # like the singular partitive (vend: venda is both), so a note that
+    # only said "both are correct" would tell an agent to leave a real
+    # case error alone.
+    check("and says the surface does not confirm the case",
+          "singular partitive" in r["note"] and "does NOT confirm" in r["note"],
+          r["note"][-200:])
+    homographs = [w for w in ("vend", "sõber", "president", "kool")
+                  if form_of(server._paradigm(w), "adt") == form_of(server._paradigm(w), "sg p")]
+    check("the homograph the warning is about is real", len(homographs) >= 3, str(homographs))
 
 
 def every_form_string_is_one_vabamorf_accepts() -> None:
@@ -693,6 +696,19 @@ def every_form_string_is_one_vabamorf_accepts() -> None:
                 check(f"harness form {form!r} ({case}) synthesizes", got,
                       "the harness asks Vabamorf for a code it answers nothing to")
 
+    print("and the order the harness builds is the order it scores on")
+    # word_surfaces() takes form_codes[0] as the first candidate, so the
+    # long illative has to come first. Reversing this leaves every other
+    # check green and drops published first-candidate accuracy to 87.9%.
+    check("the long illative is the first candidate",
+          eval_inflection.forms_for("sisseütlev", "sg") == ["sg ill", "adt"],
+          str(eval_inflection.forms_for("sisseütlev", "sg")))
+    for case in eval_inflection._CASE:
+        for num in ("sg", "pl"):
+            built = eval_inflection.forms_for(case, num)
+            check(f"{num} {case} leads with the numbered code",
+                  built[0] == f"{num} {eval_inflection._CASE[case][0]}", str(built))
+
     print("and the short illative reaches the words that have one")
     sg_ill = eval_inflection.forms_for("sisseütlev", "sg")
     produced = {surface for f in sg_ill for surface in server._synthesize("maja", f, "S")}
@@ -705,6 +721,16 @@ def every_form_string_is_one_vabamorf_accepts() -> None:
     check("no other case asks for one either",
           all(eval_inflection._SHORT_ILLATIVE_FORM not in eval_inflection.forms_for(c, "sg")
               for c in eval_inflection._CASE if c != "sisseütlev"))
+
+
+ordinals_comparatives_superlatives_inflect()
+no_form_is_invented_for_a_word_that_lacks_it()
+verb_free_variants_are_not_two_inflection_types()
+a_shared_form_does_not_select_a_type()
+a_rare_reading_is_not_promoted()
+unambiguous_words_never_touch_the_model()
+every_return_path_carries_paradigm_count()
+
 
 estonian_labels_accompany_every_pos_code()
 genuinely_uninflecting_words_still_say_so()

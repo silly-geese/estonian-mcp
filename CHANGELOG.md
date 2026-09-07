@@ -28,13 +28,21 @@ defects are ours; the prompt to look was his.
 
   The slot is now generated where it exists and absent where it does not
   (`raamat`, `auto` and `töö` have no short illative), it carries its
-  Estonian name, and the tool note says both forms are correct so neither
-  gets rewritten into the other.
+  Estonian name, and the tool note says both forms are correct illatives
+  so neither gets "corrected" into the other. The note also says what the
+  table cannot: for most words that have a short illative it is spelled
+  exactly like the singular partitive (`vend`: `venda` is both), so
+  finding a surface in the table does not confirm the case is right where
+  it was used.
 
-- **A verb slot that generated nothing.** `tava` sat in the verb form list
-  and synthesises nothing for any verb, so the slot never appeared in a
-  table. Its intended counterpart to the `vat` already there is `tavat`
-  (`kasutatavat`), which does exist and is now generated in its place.
+- **A verb slot that generated nothing, and one listed twice.** `tava` sat
+  in the verb form list and synthesises nothing for any verb, so its slot
+  never appeared in a table. Its counterpart to the `vat` already there is
+  `tavat` (`kasutatavat`), which does exist and takes its place. `ksid`
+  was listed twice, once for the conditional 2nd person singular and once
+  for the 3rd person plural, which share both surface and label, so the
+  table carried two byte-identical entries; the past tense's identical
+  syncretism (`sid`) was already listed once and this now matches.
 
 - **The benchmark harness only looked like it scored short illatives.**
   `scripts/eval_inflection.py` listed `adt` beside `ill`, then prefixed
@@ -42,11 +50,12 @@ defects are ours; the prompt to look was his.
   the harness never produced a short form while appearing to support them.
 
   The published numbers do not move: 99.1% any-candidate and
-  100% EKI-adjudicated, unchanged. 86 of the dataset's 200 singular
-  illative rows carry a short form in their gold, but the gold lists both
-  spellings, so our long-only output scored anyway. That is why a
-  benchmark at 99.1% never revealed a tool that was missing the form
-  Estonians actually use.
+  100% EKI-adjudicated, unchanged, from two full runs against the pinned
+  dataset revision. 115 of the dataset's 200 singular illative rows carry
+  a short form in their gold that our engine generates, but the gold
+  lists both spellings, so our long-only output scored anyway. That is
+  why a benchmark at 99.1% never revealed a tool that was missing the
+  form Estonians actually use.
 
 ### Added
 
