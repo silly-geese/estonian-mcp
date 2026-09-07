@@ -68,6 +68,7 @@ sys.path.insert(0, str(_ROOT))
 from server import (
     _is_indeclinable_attr,
     _paradigm_hints,
+    _rank_surfaces,
     _synthesize,
     _vabamorf,
 )
@@ -170,7 +171,10 @@ def word_surfaces(word: str, form_codes: list[str]) -> tuple[str, set[str]]:
     every: set[str] = set()
     for hint in hints:
         for form in form_codes:
-            got = _synthesize(lemma, form, pos, hint)
+            # _rank_surfaces, so "top" here is the surface `paradigm`
+            # actually puts first. Scoring an order the tool does not
+            # return would measure a server nobody is running.
+            got = _rank_surfaces(_synthesize(lemma, form, pos, hint))
             every.update(got)
             if hint == hints[0] and form == form_codes[0]:
                 primary = got

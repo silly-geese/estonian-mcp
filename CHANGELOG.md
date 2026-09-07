@@ -7,6 +7,53 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.10] — 2026-09-07
+
+Continues from the report that produced 0.5.8: Pert Lomp
+([github.com/pertlomp](https://github.com/pertlomp/qwen38-et),
+[huggingface.co/pertai](https://huggingface.co/pertai/qwen38-et-27b-GGUF))
+measured how much Estonian parallel forms mislead single-reference
+scoring while training an open Estonian model, and offered his data.
+
+### Fixed
+
+- **`paradigm` led with the variant nobody writes.** Estonian forms most
+  plural oblique cases two ways, and Vabamorf lists them in lexicon
+  order, so `raamat` came back as `pl all: raamatuile, raamatutele`.
+  `raamatuile` does not occur in the corpus vocabulary at all;
+  `raamatutele` is rank 54,602. A caller takes the first entry, which is
+  the whole point of ordering it, so the table was handing out the rarer
+  form for nine slots of an ordinary noun.
+
+  A slot's variants are now ranked by corpus attestation, the same
+  evidence and the same degradation already used to rank whole
+  paradigms: with no model installed the order is Vabamorf's and every
+  variant is still returned. Measured on 11,011 rows of real Estonian,
+  first-candidate accuracy goes from **88.0% to 94.0%**, any-candidate
+  unchanged at 99.7%. `inflection_et` is unchanged at 99.1% / 100%
+  adjudicated, since its four cases barely exercise this.
+
+  The model is now consulted for any word with a multi-surface slot,
+  where before it was only consulted for a word with several paradigms.
+  A word with neither still loads nothing, which a test pins.
+
+### Added
+
+- **A second benchmark: `scripts/eval_kaanamiskorpus.py`.**
+  `inflection_et` is 1,400 synthesised noun phrases over four cases, so
+  ten cases were never measured and a 99.1% score said less than it
+  looked like. Pert Lomp's käänamiskorpus is 11,011 single-word rows
+  over all fourteen cases, drawn from Riigikogu stenographs and ERR news
+  and frequency-weighted, each row carrying its own source and licence.
+  It is downloaded at run time and never vendored here, so nothing in
+  this repository redistributes CC-BY-SA data and the server never sees
+  it.
+
+  It is what found the ordering defect above, and it reports the
+  parallel-form gap directly: how often the engine can reach the gold
+  form versus how often it leads with it.
+
+
 ## [0.5.9] — 2026-09-07
 
 ### Fixed

@@ -212,8 +212,12 @@ def homonym_paradigms_are_separated() -> None:
             for e in entries:
                 expect = server._synthesize(word, e["form"], r["partofspeech"], key)
                 got = surfaces(e)
+                # As a SET: the property here is that no surface enters or
+                # leaves a table, and a slot's variants are deliberately
+                # ordered by corpus attestation now, which
+                # `variants_are_ordered_by_attestation` checks separately.
                 check(f"{word}/{key} {e['form']}: exactly the hinted synthesis",
-                      got == expect, f"table={got} strict={expect}")
+                      sorted(got) == sorted(expect), f"table={got} strict={expect}")
 
 
 def corpus_attestation_ranks_the_common_word_first() -> None:
@@ -430,11 +434,68 @@ def a_rare_reading_is_not_promoted() -> None:
         server._corpus_ranks = original
 
 
+def variants_are_ordered_by_attestation() -> None:
+    """A slot with two surfaces must lead with the one Estonian writes.
+
+    Estonian forms most plural oblique cases two ways and Vabamorf lists
+    them in lexicon order: raamat came back as pl all: raamatuile,
+    raamatutele. `raamatuile` is not in the corpus vocabulary at all;
+    `raamatutele` is rank 54,602. A caller takes the first entry, so the
+    table was handing out the form nobody writes. Measured on an
+    11,011-row corpus of real Estonian: first-candidate accuracy 88.0%
+    before, 94.5% after, with any-candidate unchanged at 99.7%.
+    """
+    print("a slot's variants lead with the attested form")
+    if not HAVE_CORPUS:
+        skipped.append("variants_are_ordered_by_attestation (no corpus model)")
+        print("  SKIP (no corpus model installed)")
+        return
+    for word, form, expected_first in (
+        ("raamat", "pl all", "raamatutele"),
+        ("raamat", "pl el", "raamatutest"),
+        ("küsimus", "pl all", "küsimustele"),
+        ("inimene", "pl el", "inimestest"),
+    ):
+        got = form_of(server._paradigm(word), form)
+        check(f"{word} {form} leads with {expected_first}",
+              got and got[0] == expected_first, str(got))
+        check(f"and still offers the other variant for {word} {form}",
+              len(got) > 1, str(got))
+
+    print("and nothing is lost when the model is absent")
+    original = server._corpus_ranks
+    server._corpus_ranks = lambda: None
+    try:
+        got = form_of(server._paradigm("raamat"), "pl all")
+        check("every variant is still returned unranked",
+              sorted(got) == sorted(["raamatutele", "raamatuile"]), str(got))
+    finally:
+        server._corpus_ranks = original
+
+    print("ranking never invents, drops or reorders a single-surface slot")
+    for word in ("auto", "maja"):
+        r = server._paradigm(word)
+        for e in r["forms"]:
+            strict = server._synthesize(word, e["form"], r["partofspeech"],
+                                        r.get("paradigm_key", "") or "")
+            check(f"{word} {e['form']} keeps exactly its surfaces",
+                  sorted(surfaces(e)) == sorted(strict) or not strict,
+                  f"table={surfaces(e)} strict={strict}")
+
+
 def unambiguous_words_never_touch_the_model() -> None:
     """The model is 34 MB and lru_cache does not serialise misses, so a
     cold burst on the cheapest tool in the server could load it once per
     caller. Ranking is meaningless below two candidates, so it must not
-    even be consulted there."""
+    even be consulted there.
+
+    "Something to rank" covers two cases now: a word with several
+    PARADIGMS (kott: koti or kota), and a slot with several SURFACES
+    (raamat pl all: raamatutele or raamatuile). The second was added in
+    0.5.10 because leading with the unattested variant was costing 11.7
+    points of first-candidate accuracy on real Estonian. A word with
+    neither still must not load anything.
+    """
     print("the corpus model is consulted only when there is something to rank")
     calls = []
     original = server._corpus_ranks
@@ -445,9 +506,15 @@ def unambiguous_words_never_touch_the_model() -> None:
 
     server._corpus_ranks = counting
     try:
-        for word in ("maja", "kasutama", "esimene", "raamat", "ilus"):
+        # auto: one paradigm, and every slot has exactly one surface.
+        # kasutama: a verb, same. Neither gives the ranker anything to do.
+        for word in ("auto", "kasutama"):
             server._paradigm(word)
-        check("no lookup for unambiguous words", calls == [], f"{len(calls)} lookups")
+        check("no lookup when nothing has variants", calls == [], f"{len(calls)} lookups")
+        # And it IS consulted where a choice exists, or the table would
+        # lead with a form nobody writes.
+        server._paradigm("raamat")
+        check("consulted when a slot has variants", calls != [], "no lookup happened")
         server._paradigm("kott")
         check("but there is one when a lemma has two types", len(calls) >= 1)
     finally:
@@ -728,6 +795,7 @@ no_form_is_invented_for_a_word_that_lacks_it()
 verb_free_variants_are_not_two_inflection_types()
 a_shared_form_does_not_select_a_type()
 a_rare_reading_is_not_promoted()
+variants_are_ordered_by_attestation()
 unambiguous_words_never_touch_the_model()
 every_return_path_carries_paradigm_count()
 

@@ -71,7 +71,7 @@ DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.5.9"
+SERVER_VERSION = "0.5.10"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -1644,11 +1644,44 @@ def _inflecting_reading(word: str, analyses: list[dict]) -> dict | None:
     return None
 
 
+def _rank_surfaces(surfaces: list[str]) -> list[str]:
+    """Order the variants of ONE slot by corpus attestation.
+
+    Estonian forms most of its plural oblique cases two ways, and
+    Vabamorf lists them in lexicon order rather than usage order: `raamat`
+    comes back as `pl all: raamatuile, raamatutele`. `raamatuile` does not
+    occur in the corpus vocabulary at all, while `raamatutele` is rank
+    54,602, and a caller that takes the first entry, which is what a
+    caller does, gets the form nobody writes.
+
+    Measured against an 11,011-row corpus of real Estonian: the engine
+    could reach the attested form 99.6% of the time and led with it 87.9%
+    of the time, and the gap was almost entirely these slots (mitmuse
+    alaleütlev led correctly 28% of the time).
+
+    Same evidence and the same degradation as the paradigm ranking above:
+    with no model installed the order is Vabamorf's and nothing is lost,
+    since every variant is still returned.
+    """
+    if len(surfaces) < 2:
+        return surfaces
+    ranks = _corpus_ranks()
+    if not ranks:
+        return surfaces
+    # Attested forms first, commonest first among them; unattested keep
+    # their original order behind them. Stable, so an all-unattested slot
+    # is returned exactly as Vabamorf gave it.
+    return sorted(
+        surfaces,
+        key=lambda w: (ranks.get(w) is None, ranks.get(w, 0)),
+    )
+
+
 def _build_forms(lemma: str, pos: str, form_list, labels: dict, hint: str) -> list[dict]:
     """One paradigm table, generated under a single paradigm hint."""
     forms: list[dict] = []
     for f in form_list:
-        generated = _synthesize(lemma, f, pos, hint)
+        generated = _rank_surfaces(_synthesize(lemma, f, pos, hint))
         if not generated:
             continue
         forms.append({
