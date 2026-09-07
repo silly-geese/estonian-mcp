@@ -44,6 +44,10 @@ of images is not one, however natural it sounds in ML jargon).
 > contradicts EKI, so EKI-adjudicated the score is **100% / 100%**; the
 > disputed rows are listed with their citations in
 > [`data/inflection_et_eki_disputes.json`](data/inflection_et_eki_disputes.json).
+> `uv run python scripts/apply_eki_corrections.py` rebuilds the dataset
+> locally with those 13 rows corrected. The corrections live here; the
+> data does not, because the dataset carries no licence and re-hosting it
+> is not ours to do.
 > Reproduce: `uv run python scripts/eval_inflection.py`.
 > (We're a tool server, not a rankable LLM, so this scores our tools
 > against published gold data.)
