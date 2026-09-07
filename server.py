@@ -71,7 +71,7 @@ DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.5.10"
+SERVER_VERSION = "0.6.0"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -572,7 +572,7 @@ _CASE_LABELS_ET: dict[str, str] = {
 
 _VERB_FORMS: tuple[str, ...] = (
     # infinitives + supine
-    "ma", "da", "vat", "tavat", "mas", "mast", "mata",
+    "ma", "da", "des", "maks", "vat", "tavat", "mas", "mast", "mata",
     # present indicative (1sg, 2sg, 3sg, 1pl, 2pl, 3pl)
     "n", "d", "b", "me", "te", "vad",
     # past indicative
@@ -584,8 +584,16 @@ _VERB_FORMS: tuple[str, ...] = (
     "ksin", "ksid", "ks", "ksime", "ksite",
     # participles
     "nud", "tud", "v", "tav",
-    # imperative (mostly 2nd / 3rd person)
-    "gu", "gem", "ge",
+    # imperative
+    "o", "gu", "gem", "ge",
+    # umbisikuline tegumood. The table carried its participles (tud,
+    # tav) and its quotative (tavat) but none of its indicative or
+    # conditional forms, though this is the voice official Estonian is
+    # largely written in: kasutatakse is rank 232 in the corpus
+    # vocabulary, well ahead of kasutatavat at 24,225.
+    "takse", "ti", "taks", "ta", "tagu",
+    # synthetic past conditional
+    "nuks",
 )
 
 # Passive-voice form codes from Vabamorf. When analyze_morphology
@@ -663,6 +671,7 @@ _REPETITION_SKIP_POS: frozenset[str] = frozenset({
 
 _VERB_LABELS_ET: dict[str, str] = {
     "ma": "ma-tegevusnimi", "da": "da-tegevusnimi",
+    "des": "des-vorm", "maks": "maks-vorm",
     "vat": "vat-vorm", "tavat": "tavat-vorm", "mas": "mas-vorm",
     "mast": "mast-vorm", "mata": "mata-vorm",
     "n": "olevik 1.p ainsus", "d": "olevik 2.p ainsus",
@@ -672,12 +681,76 @@ _VERB_LABELS_ET: dict[str, str] = {
     "s": "lihtminevik 3.p ainsus", "sime": "lihtminevik 1.p mitmus",
     "site": "lihtminevik 2.p mitmus",
     "ksin": "tingiv 1.p ainsus", "ksid": "tingiv 2.p ainsus / 3.p mitmus",
-    "ks": "tingiv 3.p ainsus", "ksime": "tingiv 1.p mitmus",
+    "ks": "tingiv 3.p ainsus / pöördelõputa vorm",
+    "ksime": "tingiv 1.p mitmus",
     "ksite": "tingiv 2.p mitmus",
-    "nud": "mineviku kesksõna", "tud": "tegumoeline kesksõna",
-    "v": "olevikuline kesksõna", "tav": "tegumoeline olevikuline kesksõna",
-    "gu": "käskiv 3.p ainsus", "gem": "käskiv 1.p mitmus",
-    "ge": "käskiv 2.p mitmus",
+    "nud": "isikuline mineviku kesksõna",
+    "tud": "umbisikuline mineviku kesksõna",
+    "v": "isikuline oleviku kesksõna",
+    "tav": "umbisikuline oleviku kesksõna",
+    # `o` is the imperative AND the form after `ei` (ei tea, ei kasuta),
+    # and `gu` is 3rd person of either number (ta tulgu, nad tulgu).
+    "o": "käskiv 2.p ainsus / isikuline eitav vorm",
+    "gu": "käskiv 3.p ainsus / mitmus",
+    "gem": "käskiv 1.p mitmus", "ge": "käskiv 2.p mitmus",
+    "takse": "umbisikuline olevik", "ti": "umbisikuline lihtminevik",
+    "taks": "umbisikuline tingiv", "ta": "umbisikuline eitav vorm",
+    "tagu": "umbisikuline käskiv",
+    "nuks": "tingiv minevik",
+}
+
+
+# Forms Vabamorf returns that no paradigm slot lists: the personal past
+# conditional's persons, the past quotatives, and the umbisikuline
+# supine and past conditional. Rare, but a caller who meets one deserves
+# its name rather than a bare code.
+_ANALYSIS_FORM_LABELS_ET: dict[str, str] = {
+    "nuksin": "tingiv minevik 1.p ainsus",
+    "nuksid": "tingiv minevik 2.p ainsus / 3.p mitmus",
+    "nuksime": "tingiv minevik 1.p mitmus",
+    "nuksite": "tingiv minevik 2.p mitmus",
+    "nuvat": "nuvat-vorm", "tuvat": "tuvat-vorm",
+    "tuks": "umbisikuline tingiv minevik",
+    "tama": "umbisikuline ma-tegevusnimi",
+}
+
+
+# A `neg` code belongs to one of three words, and the same code means
+# different things in each: `neg o` is `ära`, the imperative negator,
+# but it is also `pole` and `lähe`, neither of which is an imperative.
+# The lemma separates them — every other `neg` code belongs to one word
+# — so the label is looked up by lemma rather than composed by prefixing
+# "eitav" to the suffix's ordinary label, which called `pole` a command,
+# `polnud` a participle and `ärme` an indicative.
+_NEG_LEMMA_FAMILY: dict[str, str] = {
+    "ära": "ära", "olema": "olema", "ole": "olema",
+    "minema": "minema", "mine": "minema",
+}
+_NEG_LABELS_ET: dict[str, dict[str, str]] = {
+    # ära, ärge, ärgem, ärme, ärgu: the negator's own imperative paradigm.
+    "ära": {
+        "o": "eitav käskiv 2.p ainsus",
+        "ge": "eitav käskiv 2.p mitmus",
+        "gem": "eitav käskiv 1.p mitmus",
+        "me": "eitav käskiv 1.p mitmus",
+        # Vabamorf gives `neg gu` no person: `ärgu` covers `ärgu ta
+        # tulgu`, `ärgu nad tulgu` and the umbisikuline `ärgu tehtagu`.
+        "gu": "eitav käskiv",
+    },
+    # pole, polda, polnud, poldud, poleks, polnuks, polevat: olema's
+    # contracted negatives, which carry no person at all.
+    "olema": {
+        "o": "eitav olevik",
+        "da": "umbisikuline eitav vorm",
+        "nud": "eitav lihtminevik",
+        "tud": "umbisikuline eitav lihtminevik",
+        "ks": "eitav tingiv",
+        "nuks": "eitav tingiv minevik",
+        "vat": "eitav vat-vorm",
+    },
+    # lähe: minema's suppletive negative stem, as in `ei lähe`. The same
+    # slot other verbs fill with the plain `o` code (ei tule, ei anna).
+    "minema": {"o": "isikuline eitav vorm"},
 }
 
 
@@ -1414,6 +1487,7 @@ def analyze_morphology(text: Annotated[str, Field(description="Estonian text to 
                     "lemma": lemmas[i],
                     "partofspeech": pos[i],
                     "form": forms[i],
+                    "form_estonian": _form_et(forms[i], lemmas[i]),
                     "root": roots[i],
                     "ending": endings[i],
                     "clitic": clitics[i],
@@ -1436,6 +1510,7 @@ def analyze_morphology(text: Annotated[str, Field(description="Estonian text to 
                 "lemma": _first(lemmas),
                 "partofspeech": _first(pos),
                 "form": _first(forms),
+                "form_estonian": _form_et(_first(forms), _first(lemmas)),
                 "root": _first(roots),
                 "ending": _first(endings),
                 "clitic": _first(clitics),
@@ -1447,6 +1522,33 @@ def analyze_morphology(text: Annotated[str, Field(description="Estonian text to 
                 "indeclinable": indeclinable,
             })
     return out
+
+
+def _form_et(code: str, lemma: str | None = None) -> str | None:
+    """The Estonian name of a Vabamorf form code, or None.
+
+    `paradigm` has labelled its forms since it existed, while
+    `analyze_morphology` returned the raw code: a caller was told a word
+    is `adt` or `takse` and left to guess, in a server whose stated rule
+    is that every English label carries a correct Estonian rendering.
+
+    `lemma` only matters for the `neg` codes, where one code covers
+    three unrelated words (see _NEG_LABELS_ET). Without it they go
+    unnamed rather than guessed at.
+
+    None rather than the code itself when there is no label, so a caller
+    can tell "this is the Estonian name" from "we do not have one", and
+    so a missing label cannot masquerade as terminology.
+    """
+    if not code:
+        return None
+    if code == "neg":
+        return "eitussõna"
+    if code.startswith("neg "):
+        family = _NEG_LEMMA_FAMILY.get((lemma or "").lower())
+        return _NEG_LABELS_ET.get(family or "", {}).get(code[4:])
+    return (_CASE_LABELS_ET.get(code) or _VERB_LABELS_ET.get(code)
+            or _ANALYSIS_FORM_LABELS_ET.get(code))
 
 
 # Vabamorf part-of-speech codes whose words inflect as nominals. O, C and
@@ -1908,10 +2010,11 @@ def paradigm(word: Annotated[str, Field(description="A single Estonian word (lem
     words that have one, though, the short illative is spelled exactly
     like the singular partitive (`vend`: `venda` is both), so a surface
     appearing in this table does not confirm the case is right where it
-    was used. For verbs: produces infinitives, present/past/conditional
-    indicative, imperative, and participles (~30 forms). Other parts of
-    speech (adverbs, conjunctions, particles) don't inflect, so `forms`
-    is empty.
+    was used. For verbs: produces infinitives, the indicative present
+    and past, the conditional, the imperative, the participles, and the
+    umbisikuline tegumood's own finite forms (`kasutatakse`, `kasutati`,
+    `kasutataks`), about 39 in all. Other parts of speech (adverbs,
+    conjunctions, particles) don't inflect, so `forms` is empty.
 
     Each form entry has the Vabamorf form code (e.g. `sg p`, `ksin`),
     its Estonian label (e.g. `ainsuse osastav`, `tingiv 1.p ainsus`),

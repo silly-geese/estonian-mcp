@@ -7,27 +7,64 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-09-08
+
+### Fixed
+
+- **The verb table carried the rare forms and omitted the common ones.**
+  `vat` (`kasutavat`) was in it and does not occur in the corpus
+  vocabulary at all; `tavat` (`kasutatavat`) is rank 24,225. `takse`
+  (`kasutatakse`) was absent, and it is rank 232. Estonian officialese is
+  written largely in the umbisikuline tegumood, and the table carried
+  that voice's participles and its quotative but none of its indicative
+  or conditional forms: no `kasutatakse`, no `kasutati`, no
+  `kasutataks`. An agent asking for a verb's paradigm could not find the
+  form the text in front of it was using.
+
+  The table now covers the umbisikuline finite forms (`takse`, `ti`,
+  `taks`, `ta`, `tagu`), the `des`- and `maks`-vorm, the 2nd person
+  singular imperative (`kasuta`) and the synthetic past conditional
+  (`kasutanuks`). 39 forms where there were 30, every one of which
+  Vabamorf generates, which a test enforces.
+
+- **Three labels named one reading of a form that has two.** `kasuta` is
+  the imperative and equally the form after `ei` (`ei kasuta`), and was
+  labelled only "käskiv 2.p ainsus". `kasutagu` is 3rd person of either
+  number (`ta tulgu`, `nad tulgu`) and was labelled singular.
+  `kasutaks` serves every person without an ending (`ma kasutaks`) and
+  was labelled 3rd person singular. Each now names both readings, the
+  way `sid` and `ksid` already did.
+
+- **Participle labels named the voice with a word this codebase uses
+  nowhere else.** `tud` was "tegumoeline kesksõna" and `tav`
+  "tegumoeline olevikuline kesksõna", while "umbisikuline tegumood"
+  appears throughout the rest of the file. The four participles are now
+  labelled symmetrically: `v` isikuline oleviku kesksõna, `nud`
+  isikuline mineviku kesksõna, `tav` umbisikuline oleviku kesksõna,
+  `tud` umbisikuline mineviku kesksõna.
+
 ### Added
 
-- **`scripts/apply_eki_corrections.py`: the corrected `inflection_et`, as
-  a patch rather than a copy.** The 13 gold rows that contradict EKI have
-  been recorded here since 0.5.6, and the discussion opened against the
-  dataset on 23 August has had no reply. This rebuilds the dataset
-  locally with those rows fixed, in one command.
+- **`analyze_morphology` names its form codes in Estonian.** It returned
+  the raw Vabamorf code, so a caller was told a word is `adt` or `takse`
+  and left to guess, in a server whose stated rule is that every English
+  label carries a correct Estonian rendering. Each word now has
+  `form_estonian` beside `form`, drawn from the same label tables
+  `paradigm` uses. A code with no label gives `null` rather than echoing
+  itself, so a caller can tell a name from the absence of one.
 
-  It publishes the corrections, not the data. `TalTechNLP/inflection_et`
-  carries no licence at all: no dataset card, no LICENSE file, no licence
-  tag. No licence means no permission to redistribute, so the script
-  fetches the original at the pinned revision and patches a local copy
-  instead of this repository hosting one.
+  Every form code Vabamorf declares is covered, including the ones no
+  paradigm slot lists: the personal past conditional (`kasutanuksin`),
+  the past quotatives (`kasutanuvat`), the umbisikuline supine
+  (`ehitatama`) and its past conditional (`kasutatuks`).
 
-  Each correction is checked against the row as it stands upstream before
-  it is applied. A gold that has moved since the dispute was recorded is
-  left exactly as the authors wrote it and reported as stale, which is
-  the same rule the benchmark applies before awarding an adjudicated
-  point. Suggested by Pert Lomp
-  ([github.com/pertlomp](https://github.com/pertlomp/qwen38-et)).
-
+  The negatives are read against the word's lemma. Vabamorf gives one
+  code to three unrelated words, so `neg o` is `ära`, and also `pole`,
+  and also `lähe`; the lemma is what separates them. Naming the
+  negatives by prefixing "eitav" to the ordinary label for the suffix
+  would call `pole` a command, `polnud` a past participle, `ärme` an
+  indicative and `lähe` in `ei lähe` a command as well. Each is a whole
+  word an agent meets in ordinary Estonian.
 
 ## [0.5.10] — 2026-09-07
 
