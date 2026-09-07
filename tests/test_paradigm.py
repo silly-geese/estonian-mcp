@@ -434,6 +434,50 @@ def a_rare_reading_is_not_promoted() -> None:
         server._corpus_ranks = original
 
 
+def eki_corrections_apply_only_where_they_still_fit() -> None:
+    """`scripts/apply_eki_corrections.py` rebuilds inflection_et with the
+    13 adjudicated rows fixed.
+
+    The dataset carries no licence, so the corrections live here and the
+    data does not: the script fetches the original and patches a local
+    copy. The property that matters is that it patches exactly the rows
+    it recorded a dispute against, and refuses a row whose gold has moved
+    upstream, because a correction written against data that has since
+    changed is not a correction any more.
+    """
+    print("EKI corrections apply to exactly the disputed rows")
+    sys.path.insert(0, str(_ROOT / "scripts"))
+    import apply_eki_corrections as aec
+
+    doc = json.loads((_ROOT / "data" / "inflection_et_eki_disputes.json").read_text("utf-8"))
+    disputes = doc["disputes"]
+    # A stand-in dataset: every disputed row as recorded, plus one row
+    # nobody disputes.
+    rows = [{"noun_phrase": d["noun_phrase"], "plurality": d["plurality"],
+             "case": d["case"], "inflection": list(d["dataset_gold"])} for d in disputes]
+    rows.append({"noun_phrase": "kollane päevalill", "plurality": "ainsuse",
+                 "case": "omastav", "inflection": ["kollase päevalille"]})
+
+    out, applied, stale = aec.apply_corrections(rows, disputes)
+    check("every dispute applies", len(applied) == len(disputes), f"{len(applied)}")
+    check("nothing is stale", stale == [], str(stale))
+    check("no row is added or lost", len(out) == len(rows), f"{len(out)} vs {len(rows)}")
+    check("the undisputed row is untouched", out[-1] == rows[-1], str(out[-1]))
+    check("each corrected row carries the EKI forms",
+          all(o["inflection"] == d["eki_forms"]
+              for o, d in zip(out, disputes, strict=False)),
+          str([o["inflection"] for o in out[:2]]))
+
+    print("and a row that moved upstream is left alone")
+    moved = [dict(r) for r in rows]
+    moved[0]["inflection"] = ["something the authors changed"]
+    out2, applied2, stale2 = aec.apply_corrections(moved, disputes)
+    check("the moved row keeps the authors' gold",
+          out2[0]["inflection"] == ["something the authors changed"], str(out2[0]))
+    check("and its dispute is reported stale", len(stale2) == 1, str(len(stale2)))
+    check("while the rest still apply", len(applied2) == len(disputes) - 1, str(len(applied2)))
+
+
 def variants_are_ordered_by_the_paradigm_stem() -> None:
     """A slot with two surfaces must lead with the one this paradigm
     builds on its own genitive stem.
@@ -820,6 +864,7 @@ verb_free_variants_are_not_two_inflection_types()
 a_shared_form_does_not_select_a_type()
 a_rare_reading_is_not_promoted()
 variants_are_ordered_by_the_paradigm_stem()
+eki_corrections_apply_only_where_they_still_fit()
 unambiguous_words_never_touch_the_model()
 every_return_path_carries_paradigm_count()
 

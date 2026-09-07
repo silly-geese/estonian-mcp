@@ -7,6 +7,28 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/apply_eki_corrections.py`: the corrected `inflection_et`, as
+  a patch rather than a copy.** The 13 gold rows that contradict EKI have
+  been recorded here since 0.5.6, and the discussion opened against the
+  dataset on 23 August has had no reply. This rebuilds the dataset
+  locally with those rows fixed, in one command.
+
+  It publishes the corrections, not the data. `TalTechNLP/inflection_et`
+  carries no licence at all: no dataset card, no LICENSE file, no licence
+  tag. No licence means no permission to redistribute, so the script
+  fetches the original at the pinned revision and patches a local copy
+  instead of this repository hosting one.
+
+  Each correction is checked against the row as it stands upstream before
+  it is applied. A gold that has moved since the dispute was recorded is
+  left exactly as the authors wrote it and reported as stale, which is
+  the same rule the benchmark applies before awarding an adjudicated
+  point. Suggested by Pert Lomp
+  ([github.com/pertlomp](https://github.com/pertlomp/qwen38-et)).
+
+
 ## [0.5.10] — 2026-09-07
 
 Continues from the report that produced 0.5.8: Pert Lomp
