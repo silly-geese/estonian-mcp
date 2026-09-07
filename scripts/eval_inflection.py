@@ -93,6 +93,20 @@ _CASE = {
 # carry a short form in their gold; they scored anyway, because the gold
 # lists both spellings, which is why the benchmark never showed this.
 _SHORT_ILLATIVE_FORM = "adt"
+
+
+def forms_for(case: str, num: str) -> list[str]:
+    """The Vabamorf form codes to synthesize for one dataset row.
+
+    A function rather than an expression inline in the loop, so a test can
+    call the same construction the scoring does. Checking the constant
+    alone would not have caught the original defect: the constant was
+    right and the string built from it ("sg adt") was not.
+    """
+    codes = [f"{num} {c}" for c in _CASE[case]]
+    if case == "sisseütlev" and num == "sg":
+        codes.append(_SHORT_ILLATIVE_FORM)
+    return codes
 _KEY_FORM = "sg g"   # the form Estonian reads the inflection type off
 
 
@@ -188,9 +202,7 @@ def main() -> None:
         phrase = row["noun_phrase"]
         gold = set(row["inflection"])
         num = _NUM[row["plurality"]]
-        forms = [f"{num} {c}" for c in _CASE[row["case"]]]
-        if row["case"] == "sisseütlev" and num == "sg":
-            forms.append(_SHORT_ILLATIVE_FORM)
+        forms = forms_for(row["case"], num)
         words = phrase.split()
         key = (row["plurality"], row["case"])
         n += 1

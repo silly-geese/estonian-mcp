@@ -681,20 +681,30 @@ def every_form_string_is_one_vabamorf_accepts() -> None:
     except Exception as e:   # pragma: no cover - the harness is dev-only
         check("the eval harness imports without its dataset dependency", False, str(e))
         return
-    check("the harness imports with no `datasets` installed", True)
-    for case, codes in eval_inflection._CASE.items():
+    # Through forms_for(), the function the scoring loop itself calls.
+    # Checking the constant beside it would not have caught the original
+    # defect: the constant was right and the string built from it was not.
+    for case in eval_inflection._CASE:
         for num in ("sg", "pl"):
-            for code in codes:
-                form = f"{num} {code}"
+            built = eval_inflection.forms_for(case, num)
+            check(f"harness builds codes for {num} {case}", bool(built))
+            for form in built:
                 got = any(server._synthesize(w, form, "S") for w in probes_nominal)
-                check(f"harness form {form!r} ({case}) synthesizes", got)
-    short = eval_inflection._SHORT_ILLATIVE_FORM
-    check(f"the harness short illative {short!r} synthesizes",
-          server._synthesize("maja", short, "S") == ["majja"],
-          str(server._synthesize("maja", short, "S")))
-    check("and it is NOT the number-prefixed spelling that generates nothing",
-          server._synthesize("maja", f"sg {short}", "S") == [],
-          "sg adt used to be what the harness asked for")
+                check(f"harness form {form!r} ({case}) synthesizes", got,
+                      "the harness asks Vabamorf for a code it answers nothing to")
+
+    print("and the short illative reaches the words that have one")
+    sg_ill = eval_inflection.forms_for("sisseütlev", "sg")
+    produced = {surface for f in sg_ill for surface in server._synthesize("maja", f, "S")}
+    check("a singular illative row generates majja as well as majasse",
+          produced == {"majja", "majasse"}, str(produced))
+    check("a plural illative row does not ask for a short form",
+          all(f != eval_inflection._SHORT_ILLATIVE_FORM
+              for f in eval_inflection.forms_for("sisseütlev", "pl")),
+          str(eval_inflection.forms_for("sisseütlev", "pl")))
+    check("no other case asks for one either",
+          all(eval_inflection._SHORT_ILLATIVE_FORM not in eval_inflection.forms_for(c, "sg")
+              for c in eval_inflection._CASE if c != "sisseütlev"))
 
 estonian_labels_accompany_every_pos_code()
 genuinely_uninflecting_words_still_say_so()

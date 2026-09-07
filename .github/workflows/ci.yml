@@ -159,10 +159,16 @@ jobs:
           # returns every inflection type, and says the ranking is not
           # corpus-backed rather than implying it is.
           r = server.paradigm("kott")
-          # 28 number-and-case slots. `adt` (the short illative, kotti) is
-          # counted separately: only some words have one.
+          # 28 number-and-case slots. `adt` (the short illative) is counted
+          # separately: only some words have one.
           assert len([f for f in r["forms"] if f["form"] != "adt"]) == 28, r
-          assert [f["surface"] for f in r["forms"] if f["form"] == "adt"] == ["kotti"], r
+          # Asserted on `koti`, not `kott`. Which of kott's two paradigms
+          # leads is decided by corpus ranking, and this job runs BEFORE any
+          # model is installed, so `kott` leads with kota (adt: kotta) here
+          # and with koti once the model is present. An inflected input
+          # picks the table outright, so the expectation holds either way.
+          k = server.paradigm("koti")
+          assert [f["surface"] for f in k["forms"] if f["form"] == "adt"] == ["kotti"], k
           assert r["paradigm_count"] == 2, r
           assert r["ranked_by_corpus_frequency"] is False, r
           assert server.paradigm("esimene")["forms"], "ordinals lost their paradigm"
