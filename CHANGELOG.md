@@ -7,6 +7,55 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.8] — 2026-09-07
+
+Both of these came out of a reader checking our
+`data/inflection_et_eki_disputes.json` against his own Estonian inflection
+corpus and writing to say what he had measured about parallel forms. The
+defects are ours; the prompt to look was his.
+
+### Fixed
+
+- **`paradigm` left out the short illative entirely.** Estonian has two
+  illatives for many words, the long `majasse` and the short `majja`, and
+  Vabamorf generates the short one under a form code of its own (`adt`,
+  no number prefix, singular only). The nominal table never asked for it,
+  so `maja` came back with `majasse` alone, `käsi` with `käesse`, `meri`
+  with `meresse`, `kivi` with `kivisse`. For those words the short form is
+  the one people write, so an agent reading the table would "correct" a
+  correct `majja` into `majasse`, which is the exact failure this server
+  exists to prevent.
+
+  The slot is now generated where it exists and absent where it does not
+  (`raamat`, `auto` and `töö` have no short illative), it carries its
+  Estonian name, and the tool note says both forms are correct so neither
+  gets rewritten into the other.
+
+- **A verb slot that generated nothing.** `tava` sat in the verb form list
+  and synthesises nothing for any verb, so the slot never appeared in a
+  table. Its intended counterpart to the `vat` already there is `tavat`
+  (`kasutatavat`), which does exist and is now generated in its place.
+
+- **The benchmark harness only looked like it scored short illatives.**
+  `scripts/eval_inflection.py` listed `adt` beside `ill`, then prefixed
+  the number and asked Vabamorf for `sg adt`, which answers nothing. So
+  the harness never produced a short form while appearing to support them.
+
+  The published numbers do not move: 99.1% any-candidate and
+  100% EKI-adjudicated, unchanged. 86 of the dataset's 200 singular
+  illative rows carry a short form in their gold, but the gold lists both
+  spellings, so our long-only output scored anyway. That is why a
+  benchmark at 99.1% never revealed a tool that was missing the form
+  Estonians actually use.
+
+### Added
+
+- **A test that a form code nobody can generate cannot sit in a table.**
+  Every code in the nominal and verb lists, and every code the benchmark
+  harness builds, has to synthesise for at least one probe word. That is
+  what turned up `tava`, and it fails on the old `sg adt` spelling.
+
+
 ## [0.5.7] — 2026-08-25
 
 ### Added

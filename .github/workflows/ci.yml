@@ -159,7 +159,10 @@ jobs:
           # returns every inflection type, and says the ranking is not
           # corpus-backed rather than implying it is.
           r = server.paradigm("kott")
-          assert len(r["forms"]) == 28, r
+          # 28 number-and-case slots. `adt` (the short illative, kotti) is
+          # counted separately: only some words have one.
+          assert len([f for f in r["forms"] if f["form"] != "adt"]) == 28, r
+          assert [f["surface"] for f in r["forms"] if f["form"] == "adt"] == ["kotti"], r
           assert r["paradigm_count"] == 2, r
           assert r["ranked_by_corpus_frequency"] is False, r
           assert server.paradigm("esimene")["forms"], "ordinals lost their paradigm"

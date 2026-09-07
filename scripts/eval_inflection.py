@@ -63,8 +63,6 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from datasets import load_dataset
-
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 from server import (
@@ -84,8 +82,17 @@ _CASE = {
     "nimetav": ["n"],      # nominative
     "omastav": ["g"],      # genitive
     "osastav": ["p"],      # partitive
-    "sisseütlev": ["ill", "adt"],  # illative (long + short)
+    "sisseütlev": ["ill"], # illative, long form; the short one is below
 }
+
+# The SHORT ILLATIVE (aditiiv) is spelled without a number prefix and
+# exists only in the singular. It used to sit in _CASE as "adt", which
+# the loop below turned into "sg adt" — a form string Vabamorf answers
+# nothing to, so the branch generated no short illatives at all while
+# looking like it did. 86 of the dataset's 200 singular illative rows
+# carry a short form in their gold; they scored anyway, because the gold
+# lists both spellings, which is why the benchmark never showed this.
+_SHORT_ILLATIVE_FORM = "adt"
 _KEY_FORM = "sg g"   # the form Estonian reads the inflection type off
 
 
@@ -156,6 +163,8 @@ def main() -> None:
         print(render_disputes(doc))
         return
 
+    from datasets import load_dataset
+
     ds = load_dataset("TalTechNLP/inflection_et", split="train")
 
     # Disputes, keyed for lookup. A dispute is honoured only if the gold
@@ -180,6 +189,8 @@ def main() -> None:
         gold = set(row["inflection"])
         num = _NUM[row["plurality"]]
         forms = [f"{num} {c}" for c in _CASE[row["case"]]]
+        if row["case"] == "sisseütlev" and num == "sg":
+            forms.append(_SHORT_ILLATIVE_FORM)
         words = phrase.split()
         key = (row["plurality"], row["case"])
         n += 1
