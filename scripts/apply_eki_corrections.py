@@ -39,8 +39,8 @@ stale, because a correction written against data that has since moved is
 no longer a correction. That is the same rule `scripts/eval_inflection.py`
 applies before awarding an adjudicated point.
 
-Suggested by Pert Lomp (github.com/pertlomp/qwen38-et), who asked
-whether the 13 were still live and proposed publishing a fixed version.
+Suggested by Tom Kristian Abel, who asked whether the 13 were still
+live and proposed publishing a fixed version.
 """
 from __future__ import annotations
 
