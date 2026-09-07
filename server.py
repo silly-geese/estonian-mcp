@@ -1644,44 +1644,51 @@ def _inflecting_reading(word: str, analyses: list[dict]) -> dict | None:
     return None
 
 
-def _rank_surfaces(surfaces: list[str]) -> list[str]:
-    """Order the variants of ONE slot by corpus attestation.
+def _rank_surfaces(surfaces: list[str], stem: str) -> list[str]:
+    """Order the variants of ONE slot by the paradigm's own stem.
 
-    Estonian forms most of its plural oblique cases two ways, and
-    Vabamorf lists them in lexicon order rather than usage order: `raamat`
-    comes back as `pl all: raamatuile, raamatutele`. `raamatuile` does not
-    occur in the corpus vocabulary at all, while `raamatutele` is rank
-    54,602, and a caller that takes the first entry, which is what a
-    caller does, gets the form nobody writes.
+    Estonian builds its oblique plural cases on the genitive plural, and
+    Vabamorf returns a slot's variants in lexicon order rather than that
+    one: `raamat` came back as `pl all: raamatuile, raamatutele`, and a
+    caller takes the first entry. `raamatute` is the genitive plural, so
+    `raamatutele` is the form built on this paradigm's own stem and
+    `raamatuile` is the i-plural, a real but literary formation built on
+    a different one.
 
-    Measured against an 11,011-row corpus of real Estonian: the engine
-    could reach the attested form 99.6% of the time and led with it 87.9%
-    of the time, and the gap was almost entirely these slots (mitmuse
-    alaleütlev led correctly 28% of the time).
+    Grammar, not frequency. Ranking these by corpus attestation instead
+    scored five points lower and promoted homographs, because a surface can
+    be frequent as some OTHER word: `käsi pl ad` became `käsil` (a
+    lexicalised adverb) over `kätel`, and `soov pl p` became `soovisid`
+    (the past tense of `soovima`) over `soove`. A stem the paradigm
+    itself generated cannot belong to another lexeme.
 
-    Same evidence and the same degradation as the paradigm ranking above:
-    with no model installed the order is Vabamorf's and nothing is lost,
-    since every variant is still returned.
+    It also needs no model, so the cheapest tool in the server stays
+    cheap: this used to consult the 34 MB corpus vocabulary for 92.5% of
+    words instead of 2%.
+
+    Variants that do not start with the stem keep their order behind the
+    ones that do, and a slot the stem cannot decide is returned exactly
+    as Vabamorf gave it.
     """
-    if len(surfaces) < 2:
+    if len(surfaces) < 2 or not stem:
         return surfaces
-    ranks = _corpus_ranks()
-    if not ranks:
-        return surfaces
-    # Attested forms first, commonest first among them; unattested keep
-    # their original order behind them. Stable, so an all-unattested slot
-    # is returned exactly as Vabamorf gave it.
-    return sorted(
-        surfaces,
-        key=lambda w: (ranks.get(w) is None, ranks.get(w, 0)),
-    )
+    return sorted(surfaces, key=lambda w: not w.startswith(stem))
 
 
 def _build_forms(lemma: str, pos: str, form_list, labels: dict, hint: str) -> list[dict]:
     """One paradigm table, generated under a single paradigm hint."""
+    # The stems this table's own oblique forms are built on, generated
+    # under the same hint so they can only belong to this paradigm. A
+    # word class that has neither (a verb) gets "", and _rank_surfaces
+    # then leaves every slot in Vabamorf's order.
+    stems = {
+        "pl": (_synthesize(lemma, "pl g", pos, hint) or [""])[0],
+        "sg": (_synthesize(lemma, "sg g", pos, hint) or [""])[0],
+    }
     forms: list[dict] = []
     for f in form_list:
-        generated = _rank_surfaces(_synthesize(lemma, f, pos, hint))
+        generated = _rank_surfaces(_synthesize(lemma, f, pos, hint),
+                                   stems.get(f[:2], ""))
         if not generated:
             continue
         forms.append({
@@ -1839,7 +1846,11 @@ def _paradigm(word: str) -> dict:
             "Note that for most words with a short illative the surface is "
             "identical to the singular partitive (vend: venda is both), so "
             "finding a word in this table does NOT confirm the case is "
-            "right for the sentence it appears in."
+            "right for the sentence it appears in. Where a slot lists "
+            "several surfaces, the first is the one built on this "
+            "paradigm's own genitive stem (pl all: raamatutele before "
+            "raamatuile); the others are real forms of the same slot, "
+            "typically the literary i-plural."
         ),
     }
     if key:

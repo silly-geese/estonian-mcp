@@ -174,7 +174,8 @@ def word_surfaces(word: str, form_codes: list[str]) -> tuple[str, set[str]]:
             # _rank_surfaces, so "top" here is the surface `paradigm`
             # actually puts first. Scoring an order the tool does not
             # return would measure a server nobody is running.
-            got = _rank_surfaces(_synthesize(lemma, form, pos, hint))
+            stem = (_synthesize(lemma, f"{form[:2]} g", pos, hint) or [""])[0]
+            got = _rank_surfaces(_synthesize(lemma, form, pos, hint), stem)
             every.update(got)
             if hint == hints[0] and form == form_codes[0]:
                 primary = got

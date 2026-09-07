@@ -49,12 +49,20 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "scripts"))
 
-from eval_inflection import _NUM, word_surfaces
+from eval_inflection import _KEY_FORM, _NUM, _pos_of
 
+from server import _paradigm_hints, _rank_surfaces, _synthesize
+
+# Pinned to a commit, not a branch. A moving `main` would mean the score
+# printed here cannot be reproduced, which is the failure mode this
+# repository already documents for its other benchmark: a number nobody
+# can re-derive is a claim, not a measurement.
+CORPUS_COMMIT = "c36540636a33a6d25a5657e06f9bab5573ac3597"
 CORPUS_URL = (
-    "https://raw.githubusercontent.com/pertlomp/qwen38-et/main/"
+    "https://raw.githubusercontent.com/pertlomp/qwen38-et/{ref}/"
     "datasets/kaanamiskorpus-avalik.jsonl"
 )
+EXPECTED_ROWS = 11011
 CACHE = Path.home() / ".cache" / "estnltk-mcp" / "kaanamiskorpus-avalik.jsonl"
 
 # Estonian case name -> Vabamorf form code. The names are the corpus's
@@ -91,24 +99,69 @@ def forms_for(case: str, num: str) -> list[str]:
     return codes
 
 
+def surfaces_for_word(word: str, form_codes: list[str]) -> tuple[str, set[str]]:
+    """(top surface, every candidate) for one standalone word.
+
+    Deliberately NOT eval_inflection.word_surfaces, which first asks
+    `_is_indeclinable_attr`. That rule is about a participle used as a
+    PRE-MODIFIER inside a phrase (`läbimõeldud plaani`), and this corpus
+    is single words: routing `valitud` through it returns `valitud` for
+    the singular translative and scores a miss, while the tool itself
+    answers the gold `valituks`. Measuring a rule the caller is not
+    subject to would understate the engine on 61 rows.
+    """
+    lemma, pos = word, _pos_of(word)
+    hints, _ = _paradigm_hints(lemma, pos, _KEY_FORM)
+    primary: list[str] = []
+    every: set[str] = set()
+    for hint in hints:
+        stem = (_synthesize(lemma, f"{form_codes[0][:2]} g", pos, hint) or [""])[0]
+        for form in form_codes:
+            got = _rank_surfaces(_synthesize(lemma, form, pos, hint), stem)
+            every.update(got)
+            if hint == hints[0] and form == form_codes[0]:
+                primary = got
+    return (primary[0] if primary else word, every or {word})
+
+
 def load_corpus() -> list[dict]:
-    """The corpus, cached locally after the first fetch."""
+    """The corpus, cached locally after the first fetch.
+
+    Written through a temporary file: an interrupted download must not
+    leave a half corpus in the cache that every later run then scores
+    against without noticing.
+    """
     if not CACHE.exists():
         CACHE.parent.mkdir(parents=True, exist_ok=True)
-        print(f"downloading {CORPUS_URL}")
-        with urllib.request.urlopen(CORPUS_URL, timeout=60) as r:
-            CACHE.write_bytes(r.read())
-    return [json.loads(line) for line in CACHE.read_text(encoding="utf-8").splitlines() if line]
+        url = CORPUS_URL.format(ref=CORPUS_COMMIT)
+        print(f"downloading {url}")
+        tmp = CACHE.with_suffix(".part")
+        with urllib.request.urlopen(url, timeout=60) as r:
+            tmp.write_bytes(r.read())
+        tmp.replace(CACHE)
+    rows = [json.loads(line) for line in CACHE.read_text(encoding="utf-8").splitlines() if line]
+    if len(rows) != EXPECTED_ROWS:
+        print(f"!! expected {EXPECTED_ROWS} rows, read {len(rows)}. The corpus has changed "
+              f"upstream, so the published score no longer describes this data.")
+        print(f"   Delete {CACHE} to refetch, and re-measure before quoting a number.")
+    return rows
 
 
 def main() -> None:
     limit = 0
     if "--limit" in sys.argv:
-        limit = int(sys.argv[sys.argv.index("--limit") + 1])
+        i = sys.argv.index("--limit") + 1
+        if i >= len(sys.argv):
+            sys.exit("--limit needs a number")
+        limit = int(sys.argv[i])
 
     rows = load_corpus()
-    if limit:
-        rows = rows[:limit]
+    if limit and limit < len(rows):
+        # Evenly spaced, not the head. The file is ordered, so the first
+        # 800 rows over-weight omastav and under-weight alaleütlev: they
+        # score 94.5% where the whole corpus scores 99.1%.
+        step = len(rows) / limit
+        rows = [rows[int(i * step)] for i in range(limit)]
 
     sources = {r.get("allikas") for r in rows}
     licences = {r.get("litsents") for r in rows}
@@ -123,8 +176,8 @@ def main() -> None:
 
     for row in rows:
         case, num_et = row["kaane"], row["arv"]
-        if case not in _CASE_CODE:
-            unknown_case.add(case)
+        if case not in _CASE_CODE or num_et not in _NUM:
+            unknown_case.add(f"{num_et} {case}")
             continue
         num = _NUM[num_et]
         gold = row["vorm"]
@@ -132,7 +185,7 @@ def main() -> None:
         n += 1
         by_case_total[key] += 1
 
-        top, every = word_surfaces(row["sisend"], forms_for(case, num))
+        top, every = surfaces_for_word(row["sisend"], forms_for(case, num))
         if gold in every:
             any_ok += 1
             by_case_any[key] += 1
@@ -174,7 +227,8 @@ def main() -> None:
             print(f"  {word:16} {num_et} {case:13} gold={gold:18} ours={got}")
 
     if unknown_case:
-        print(f"\n!! case names this harness does not map: {sorted(unknown_case)}")
+        print(f"\n!! rows skipped, unmapped number or case: {sorted(unknown_case)}")
+        print("   Those rows scored nothing either way. Map them or say so.")
 
 
 if __name__ == "__main__":

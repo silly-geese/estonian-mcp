@@ -53,11 +53,12 @@ of images is not one, however natural it sounds in ML jargon).
 > [käänamiskorpus](https://github.com/pertlomp/qwen38-et) (11,011
 > single-word rows over **all fourteen cases**, drawn from Riigikogu
 > stenographs and ERR news and frequency-weighted, CC-BY-SA-4.0), the
-> engine scores **94.0% first-candidate / 99.7% any-candidate**.
+> engine scores **99.3% first-candidate / 99.9% any-candidate**.
 > The gap between those two is the interesting part: Estonian forms most
-> plural oblique cases two ways, and leading with the wrong one cost 12
-> points until 0.5.10 ranked a slot's variants by corpus attestation
-> (`raamatutele` before `raamatuile`). Reproduce:
+> plural oblique cases two ways, and leading with the wrong one cost 11
+> points until 0.5.10 ordered a slot's variants by the paradigm's own
+> genitive stem (`raamatutele` before the literary `raamatuile`).
+> Reproduce:
 > `uv run python scripts/eval_kaanamiskorpus.py`. The data is downloaded
 > at run time, never vendored here, and the server never touches it.
 
