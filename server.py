@@ -71,7 +71,7 @@ DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.5.7"
+SERVER_VERSION = "0.5.8"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -534,8 +534,18 @@ _POS_USAGE_NOTES_ET: dict[str, tuple[str, str]] = {
 # Vabamorf.synthesize(lemma, form, pos). Phase-1 scope: the most
 # commonly-needed forms per word class, not every possible form.
 
+# `adt` is the SHORT ILLATIVE (lühike sisseütlev, aditiiv): majja beside
+# majasse, kätte beside käesse, merre beside meresse. It is a Vabamorf
+# form of its own, spelled without a number prefix ("adt", never
+# "sg adt", which synthesises nothing), and it exists only in the
+# singular. Words that have no short illative return nothing for it and
+# the slot is simply absent, which is what every empty form does here.
+#
+# Leaving it out was not a missing nicety. For maja, tuba, käsi, meri and
+# kivi the short form is the one Estonians write, so a table containing
+# only majasse invites a caller to "correct" a correct majja.
 _NOMINAL_FORMS: tuple[str, ...] = (
-    "sg n", "sg g", "sg p", "sg ill", "sg in", "sg el", "sg all",
+    "sg n", "sg g", "sg p", "sg ill", "adt", "sg in", "sg el", "sg all",
     "sg ad", "sg abl", "sg tr", "sg ter", "sg es", "sg ab", "sg kom",
     "pl n", "pl g", "pl p", "pl ill", "pl in", "pl el", "pl all",
     "pl ad", "pl abl", "pl tr", "pl ter", "pl es", "pl ab", "pl kom",
@@ -545,6 +555,7 @@ _NOMINAL_FORMS: tuple[str, ...] = (
 _CASE_LABELS_ET: dict[str, str] = {
     "sg n": "ainsuse nimetav", "sg g": "ainsuse omastav",
     "sg p": "ainsuse osastav", "sg ill": "ainsuse sisseütlev",
+    "adt": "ainsuse lühike sisseütlev",
     "sg in": "ainsuse seesütlev", "sg el": "ainsuse seestütlev",
     "sg all": "ainsuse alaleütlev", "sg ad": "ainsuse alalütlev",
     "sg abl": "ainsuse alaltütlev", "sg tr": "ainsuse saav",
@@ -561,15 +572,18 @@ _CASE_LABELS_ET: dict[str, str] = {
 
 _VERB_FORMS: tuple[str, ...] = (
     # infinitives + supine
-    "ma", "da", "vat", "mas", "mast", "mata",
+    "ma", "da", "vat", "tavat", "mas", "mast", "mata",
     # present indicative (1sg, 2sg, 3sg, 1pl, 2pl, 3pl)
     "n", "d", "b", "me", "te", "vad",
     # past indicative
     "sin", "sid", "s", "sime", "site",
     # conditional
-    "ksin", "ksid", "ks", "ksime", "ksite", "ksid",
+    # `ksid` covers the 2nd person singular and the 3rd person plural,
+    # one surface with one label, so it is listed once. `sid` in the past
+    # tense above is the same syncretism and is listed once too.
+    "ksin", "ksid", "ks", "ksime", "ksite",
     # participles
-    "nud", "tud", "v", "tav", "tava",
+    "nud", "tud", "v", "tav",
     # imperative (mostly 2nd / 3rd person)
     "gu", "gem", "ge",
 )
@@ -649,7 +663,7 @@ _REPETITION_SKIP_POS: frozenset[str] = frozenset({
 
 _VERB_LABELS_ET: dict[str, str] = {
     "ma": "ma-tegevusnimi", "da": "da-tegevusnimi",
-    "vat": "vat-vorm", "mas": "mas-vorm",
+    "vat": "vat-vorm", "tavat": "tavat-vorm", "mas": "mas-vorm",
     "mast": "mast-vorm", "mata": "mata-vorm",
     "n": "olevik 1.p ainsus", "d": "olevik 2.p ainsus",
     "b": "olevik 3.p ainsus", "me": "olevik 1.p mitmus",
@@ -662,7 +676,6 @@ _VERB_LABELS_ET: dict[str, str] = {
     "ksite": "tingiv 2.p mitmus",
     "nud": "mineviku kesksõna", "tud": "tegumoeline kesksõna",
     "v": "olevikuline kesksõna", "tav": "tegumoeline olevikuline kesksõna",
-    "tava": "umbisikuline olevikuline kesksõna",
     "gu": "käskiv 3.p ainsus", "gem": "käskiv 1.p mitmus",
     "ge": "käskiv 2.p mitmus",
 }
@@ -1779,7 +1792,14 @@ def _paradigm(word: str) -> dict:
             "morphologically possible, not what a native speaker would "
             "necessarily use. Passing an INFLECTED form (e.g. 'koti') is "
             "better than the bare lemma when a word has several paradigms: "
-            "it tells the server which one you mean."
+            "it tells the server which one you mean. Where a word has both "
+            "'ainsuse sisseütlev' (majasse) and 'ainsuse lühike sisseütlev' "
+            "(majja), both are correct illatives and the short one is often "
+            "the commoner, so neither should be 'corrected' into the other. "
+            "Note that for most words with a short illative the surface is "
+            "identical to the singular partitive (vend: venda is both), so "
+            "finding a word in this table does NOT confirm the case is "
+            "right for the sentence it appears in."
         ),
     }
     if key:
@@ -1830,10 +1850,17 @@ def paradigm(word: Annotated[str, Field(description="A single Estonian word (lem
 
     For nominals (nouns, adjectives, pronouns, cardinals, ordinals,
     comparatives, superlatives): produces all 14 cases × 2 numbers = up to
-    28 forms. For verbs: produces infinitives, present/past/conditional
+    28 forms, plus the SHORT ILLATIVE (`adt`, ainsuse lühike sisseütlev)
+    for the words that have one: `majja` beside `majasse`, `kätte` beside
+    `käesse`. Both are correct illatives and the short one is often the
+    commoner, so neither should be "corrected" into the other. For most
+    words that have one, though, the short illative is spelled exactly
+    like the singular partitive (`vend`: `venda` is both), so a surface
+    appearing in this table does not confirm the case is right where it
+    was used. For verbs: produces infinitives, present/past/conditional
     indicative, imperative, and participles (~30 forms). Other parts of
-    speech (adverbs, conjunctions, particles) don't inflect, so `forms` is
-    empty.
+    speech (adverbs, conjunctions, particles) don't inflect, so `forms`
+    is empty.
 
     Each form entry has the Vabamorf form code (e.g. `sg p`, `ksin`),
     its Estonian label (e.g. `ainsuse osastav`, `tingiv 1.p ainsus`),
@@ -3168,7 +3195,7 @@ def _check_object_case(text: str) -> dict:
             # Skip if already partitive (correct) or clearly non-object case.
             if form in _NON_OBJECT_CASES:
                 continue
-            if " p" in form:   # partitive ('sg p', 'pl p', 'adt')
+            if " p" in form:   # partitive ('sg p', 'pl p')
                 continue
             if form not in _DIRECT_OBJECT_CASES:
                 continue

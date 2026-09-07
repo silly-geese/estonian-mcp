@@ -63,8 +63,6 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from datasets import load_dataset
-
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 from server import (
@@ -84,8 +82,38 @@ _CASE = {
     "nimetav": ["n"],      # nominative
     "omastav": ["g"],      # genitive
     "osastav": ["p"],      # partitive
-    "sisseütlev": ["ill", "adt"],  # illative (long + short)
+    "sisseütlev": ["ill"], # illative, long form only; short one below
 }
+
+# The SHORT ILLATIVE (aditiiv) is spelled without a number prefix and
+# exists only in the singular. It used to sit in _CASE as "adt", which
+# the loop below turned into "sg adt" — a form string Vabamorf answers
+# nothing to, so the branch generated no short illatives at all while
+# looking like it did. 86 of the dataset's 200 singular illative rows
+# carry a short form in their gold; they scored anyway, because the gold
+# lists both spellings, which is why the benchmark never showed this.
+_SHORT_ILLATIVE_FORM = "adt"
+
+
+def forms_for(case: str, num: str) -> list[str]:
+    """The Vabamorf form codes to synthesize for one dataset row.
+
+    A function rather than an expression inline in the loop, so a test can
+    call the same construction the scoring does. Checking the constant
+    alone would not have caught the original defect: the constant was
+    right and the string built from it ("sg adt") was not.
+
+    ORDER MATTERS. word_surfaces() takes form_codes[0] as the first
+    candidate, and first-candidate accuracy is a published number, so the
+    long illative has to stay in front: putting the short one first drops
+    it from 99.1% to 87.9%.
+    """
+    codes = [f"{num} {c}" for c in _CASE[case]]
+    if case == "sisseütlev" and num == "sg":
+        codes.append(_SHORT_ILLATIVE_FORM)
+    return codes
+
+
 _KEY_FORM = "sg g"   # the form Estonian reads the inflection type off
 
 
@@ -156,6 +184,8 @@ def main() -> None:
         print(render_disputes(doc))
         return
 
+    from datasets import load_dataset
+
     ds = load_dataset("TalTechNLP/inflection_et", split="train")
 
     # Disputes, keyed for lookup. A dispute is honoured only if the gold
@@ -179,7 +209,7 @@ def main() -> None:
         phrase = row["noun_phrase"]
         gold = set(row["inflection"])
         num = _NUM[row["plurality"]]
-        forms = [f"{num} {c}" for c in _CASE[row["case"]]]
+        forms = forms_for(row["case"], num)
         words = phrase.split()
         key = (row["plurality"], row["case"])
         n += 1

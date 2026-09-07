@@ -56,6 +56,17 @@ def check(label: str, cond: bool, detail: str = "") -> None:
         print(f"  FAIL {label} {detail}")
 
 
+def case_forms(result: dict) -> list[dict]:
+    """The 28 number-and-case slots, without the short illative.
+
+    `adt` (lühike sisseütlev) exists only for the words that have one:
+    maja gives majja, raamat gives nothing. Counting it would make the
+    expected total depend on the word, so the assertions below count the
+    fixed 28 and the short illative is checked on its own.
+    """
+    return [e for e in result.get("forms", []) if e.get("form") != "adt"]
+
+
 def surfaces(entry: dict) -> list[str]:
     s = entry["surface"]
     return [s] if isinstance(s, str) else list(s)
@@ -96,8 +107,8 @@ def ordinals_comparatives_superlatives_inflect() -> None:
         ("suurim", "U", "suurima", "suurimat"),
     ):
         r = server._paradigm(word)
-        check(f"{word} ({pos}) has 28 forms", len(r.get("forms", [])) == 28,
-              f"got {len(r.get('forms', []))}: {r.get('summary_estonian')}")
+        check(f"{word} ({pos}) has 28 case forms", len(case_forms(r)) == 28,
+              f"got {len(case_forms(r))}: {r.get('summary_estonian')}")
         check(f"{word} sg g = {gen}", gen in form_of(r, "sg g"), str(form_of(r, "sg g")))
         check(f"{word} sg p = {part}", part in form_of(r, "sg p"), str(form_of(r, "sg p")))
         check(f"{word} POS reported as {pos}", r.get("partofspeech") == pos,
@@ -126,7 +137,7 @@ def inflecting_reading_is_found() -> None:
         skipped.append("inflecting_reading_is_found")
         return
     r = server._paradigm("kaunis")
-    check("kaunis has a paradigm", len(r.get("forms", [])) == 28,
+    check("kaunis has a paradigm", len(case_forms(r)) == 28,
           f"{r.get('summary_estonian')}")
     check("kaunis sg g = kauni", "kauni" in form_of(r, "sg g"), str(form_of(r, "sg g")))
     check("kaunis sg p = kaunist", "kaunist" in form_of(r, "sg p"),
@@ -293,13 +304,17 @@ def synthesis_invariants() -> None:
           isinstance(server._synthesize("qwertyxyz", "sg g", "S"), list))
 
     print("no form is silently dropped from a table")
+    # 30 for the verb: `tava` synthesised nothing for any verb and was
+    # replaced by `tavat`, which does (kasutatavat), and the duplicated
+    # `ksid` slot is now listed once like the `sid` it mirrors.
     cases = [("kott", 28), ("maitse", 28), ("esimene", 28), ("kasutama", 30)]
     if HAVE_CORPUS:
         cases.append(("kaunis", 28))   # reaches 28 only once promoted
     for word, n in cases:
         r = server._paradigm(word)
-        check(f"{word} has {n} forms", len(r.get("forms", [])) == n,
-              f"got {len(r.get('forms', []))}")
+        # Verbs have no short illative, so case_forms() is a no-op there.
+        check(f"{word} has {n} forms", len(case_forms(r)) == n,
+              f"got {len(case_forms(r))}")
 
     print("_paradigm_hints")
     check("an unambiguous lemma needs no hint",
@@ -403,7 +418,7 @@ def a_rare_reading_is_not_promoted() -> None:
         ranks = server._corpus_ranks()
         check("the premise: kauni is attested, koheda is not",
               "kauni" in ranks and "koheda" not in ranks)
-        check("kaunis IS promoted", len(server._paradigm("kaunis")["forms"]) == 28)
+        check("kaunis IS promoted", len(case_forms(server._paradigm("kaunis"))) == 28)
 
     original = server._corpus_ranks
     server._corpus_ranks = lambda: None
@@ -592,6 +607,122 @@ def disputes_file_is_well_formed() -> None:
     check("sources are cited", len(DISPUTES.get("sources", [])) >= 1)
 
 
+def the_short_illative_is_in_the_table() -> None:
+    """`adt`, the lühike sisseütlev: majja beside majasse.
+
+    The table used to stop at the long form. For these words the short one
+    is what Estonians write, so a caller reading the table would "correct"
+    a correct majja into majasse — the exact failure this server exists to
+    prevent, and reported by a reader who had measured how much parallel
+    forms cost single-reference scoring.
+    """
+    print("the short illative (aditiiv) is generated")
+    expected = {
+        "maja": "majja", "tuba": "tuppa", "käsi": "kätte", "meri": "merre",
+        "kivi": "kivvi", "jõgi": "jõkke", "vesi": "vette", "suur": "suurde",
+    }
+    for word, short in expected.items():
+        r = server._paradigm(word)
+        got = form_of(r, "adt")
+        check(f"{word} -> {short}", short in got, f"got {got}")
+        # The long form has to survive alongside it, not be replaced.
+        check(f"{word} keeps its long illative", bool(form_of(r, "sg ill")),
+              str(form_of(r, "sg ill")))
+
+    print("and is absent, not empty, where the word has none")
+    for word in ("raamat", "auto", "arvuti", "töö"):
+        r = server._paradigm(word)
+        forms = [e["form"] for e in r.get("forms", [])]
+        check(f"{word} has no adt slot", "adt" not in forms, str(form_of(r, "adt")))
+        check(f"{word} still has its long illative", bool(form_of(r, "sg ill")))
+
+    print("the slot carries its Estonian name")
+    r = server._paradigm("maja")
+    labels = [e["form_estonian"] for e in r["forms"] if e["form"] == "adt"]
+    check("adt is labelled in Estonian", labels == ["ainsuse lühike sisseütlev"], str(labels))
+    check("the note names the slot and warns against 'correcting' it",
+          "lühike sisseütlev" in r["note"] and "corrected" in r["note"],
+          r["note"][-200:])
+    # For most words that have one, the short illative is spelled exactly
+    # like the singular partitive (vend: venda is both), so a note that
+    # only said "both are correct" would tell an agent to leave a real
+    # case error alone.
+    check("and says the surface does not confirm the case",
+          "singular partitive" in r["note"] and "does NOT confirm" in r["note"],
+          r["note"][-200:])
+    homographs = [w for w in ("vend", "sõber", "president", "kool")
+                  if form_of(server._paradigm(w), "adt") == form_of(server._paradigm(w), "sg p")]
+    check("the homograph the warning is about is real", len(homographs) >= 3, str(homographs))
+
+
+def every_form_string_is_one_vabamorf_accepts() -> None:
+    """A form string the synthesizer does not recognise generates nothing,
+    silently, for every word.
+
+    That is how the short illative went missing twice: absent from the
+    nominal table here, and present but misspelled as "sg adt" in
+    scripts/eval_inflection.py, where it produced no forms at all while
+    looking like support. A form nobody can generate should fail a test,
+    not sit in a tuple.
+    """
+    print("every form string in the paradigm tables can actually be synthesized")
+    probes_nominal = ("maja", "kott", "vesi", "suur", "raamat", "kaunis", "esimene")
+    for form in server._NOMINAL_FORMS:
+        got = any(server._synthesize(w, form, "S") or server._synthesize(w, form, "A")
+                  for w in probes_nominal)
+        check(f"nominal form {form!r} synthesizes", got,
+              "no probe word produced this form; is the tag spelled the way Vabamorf spells it?")
+    probes_verb = ("kasutama", "olema", "tegema")
+    for form in server._VERB_FORMS:
+        got = any(server._synthesize(w, form, "V") for w in probes_verb)
+        check(f"verb form {form!r} synthesizes", got, "no probe verb produced this form")
+
+    print("and so can the ones the benchmark harness builds")
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    try:
+        import eval_inflection
+    except Exception as e:   # pragma: no cover - the harness is dev-only
+        check("the eval harness imports without its dataset dependency", False, str(e))
+        return
+    # Through forms_for(), the function the scoring loop itself calls.
+    # Checking the constant beside it would not have caught the original
+    # defect: the constant was right and the string built from it was not.
+    for case in eval_inflection._CASE:
+        for num in ("sg", "pl"):
+            built = eval_inflection.forms_for(case, num)
+            check(f"harness builds codes for {num} {case}", bool(built))
+            for form in built:
+                got = any(server._synthesize(w, form, "S") for w in probes_nominal)
+                check(f"harness form {form!r} ({case}) synthesizes", got,
+                      "the harness asks Vabamorf for a code it answers nothing to")
+
+    print("and the order the harness builds is the order it scores on")
+    # word_surfaces() takes form_codes[0] as the first candidate, so the
+    # long illative has to come first. Reversing this leaves every other
+    # check green and drops published first-candidate accuracy to 87.9%.
+    check("the long illative is the first candidate",
+          eval_inflection.forms_for("sisseütlev", "sg") == ["sg ill", "adt"],
+          str(eval_inflection.forms_for("sisseütlev", "sg")))
+    for case in eval_inflection._CASE:
+        for num in ("sg", "pl"):
+            built = eval_inflection.forms_for(case, num)
+            check(f"{num} {case} leads with the numbered code",
+                  built[0] == f"{num} {eval_inflection._CASE[case][0]}", str(built))
+
+    print("and the short illative reaches the words that have one")
+    sg_ill = eval_inflection.forms_for("sisseütlev", "sg")
+    produced = {surface for f in sg_ill for surface in server._synthesize("maja", f, "S")}
+    check("a singular illative row generates majja as well as majasse",
+          produced == {"majja", "majasse"}, str(produced))
+    check("a plural illative row does not ask for a short form",
+          all(f != eval_inflection._SHORT_ILLATIVE_FORM
+              for f in eval_inflection.forms_for("sisseütlev", "pl")),
+          str(eval_inflection.forms_for("sisseütlev", "pl")))
+    check("no other case asks for one either",
+          all(eval_inflection._SHORT_ILLATIVE_FORM not in eval_inflection.forms_for(c, "sg")
+              for c in eval_inflection._CASE if c != "sisseütlev"))
+
+
 ordinals_comparatives_superlatives_inflect()
 no_form_is_invented_for_a_word_that_lacks_it()
 verb_free_variants_are_not_two_inflection_types()
@@ -599,6 +730,8 @@ a_shared_form_does_not_select_a_type()
 a_rare_reading_is_not_promoted()
 unambiguous_words_never_touch_the_model()
 every_return_path_carries_paradigm_count()
+
+
 estonian_labels_accompany_every_pos_code()
 genuinely_uninflecting_words_still_say_so()
 inflecting_reading_is_found()
@@ -613,6 +746,8 @@ junk_input_is_safe()
 eki_rules_hold_on_the_disputed_rows()
 the_two_eki_rules_are_encoded()
 disputes_file_is_well_formed()
+the_short_illative_is_in_the_table()
+every_form_string_is_one_vabamorf_accepts()
 
 if failures:
     print(f"\n{len(failures)} failure(s):")
