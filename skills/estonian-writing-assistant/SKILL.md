@@ -36,7 +36,7 @@ The hard rule, applied throughout this skill:
 | `check_redundancy` | Pleonasm / semantic-doubling check — flags `samuti ka` (also+also), `kõige optimaalsem` (most+optimal), and fixed redundant phrases. Run it before claiming a redundancy "the MCP can't catch" — it catches the common ones. |
 | `check_object_case` | Käändeõpetus heuristic — catches the most common confidently-wrong Estonian: direct-object case after negation (must be partitive) and after partitive-only verbs (`armastama`, `vihkama`, `vajama`, …). Lexicon-based, no syntactic parser; only flags nouns AFTER the trigger so subject-noun false positives are minimal. |
 | `check_abbreviation_hyphenation` | Lühendiortograafia — flags abbreviations carrying a case ending without the EKI-mandated hyphen (`MCPst` → `MCP-st`, `OÜle` → `OÜ-le`, `APIga` → `API-ga`). Uses Vabamorf's POS+form analysis to filter to actual abbreviations. |
-| `check_compound_familiarity` | Calque-risk diagnostic — surfaces fastText nearest-neighbour data for each compound noun. Suspect flag = top similarity < 0.60, or a junk-dominated neighbour tail when that tail is decisive (top score also under 0.60, or the top neighbour is itself junk). **Critically**, it still flags some legitimate-but-uncommon compounds (small fastText vocab). Read the `neighbours` list to judge: subword-similar neighbours = likely calque; semantically coherent neighbours = real compound. Note the converse limit too: a compound that is merely *stilted* rather than invented (`teadusandmestik`) will pass — similarity can't judge register, so use `check_officialese` for that. Run on any Estonian compound you yourself produced (rather than verbatim user input). |
+| `check_compound_familiarity` | Attestation check for each compound noun: is the lemma in the fastText corpus vocabulary (`in_vocab`), in Estonian WordNet (`in_wordnet`), or a legal term of art? **Read `attested` first, and read `attested: false` for what it is**: outside a 100K-word vocabulary, which is the normal state for correct specialist vocabulary. `lisakäive`, `klikkimismäär`, `koolitoit`, `rehvivahetus` are all unattested here and all ordinary Estonian, so unattested is NEVER on its own a reason to rewrite. `is_suspect` is narrow: unattested AND the nearest neighbour is a real word AND that similarity is still under 0.55 (`mõtteliin`, 0.536). Recall is low on purpose: a coinage scoring inside the band real vocabulary occupies is missed rather than bought at the price of flagging good Estonian, so `toortõlkeoht` (0.571) passes. `neighbour_quality.signal: none` means the nearest neighbour is a scrape-artifact token, the score means nothing, and no verdict is offered. Note the other limit too: a compound that is merely *stilted* rather than invented (`teadusandmestik`) passes, because similarity can't judge register, so use `check_officialese` for that. Run on any Estonian compound you yourself produced (rather than verbatim user input). |
 | `check_officialese` | Kantseliit check for **non-legal** prose — reports, academic writing, business copy, grant/R&D paperwork. Use this, not `check_legalese`, for anything that isn't a statute or contract: `check_legalese`'s lexicon and 34-word gate are tuned for legislation and return nothing on report officialese. Gives nominalisation density with the verb to swap in (`hindamine` → `hindama`), correctly-counted umbisikuline tegumood, clause stacking, Estonian-calibrated sentence length, and admin filler. |
 | `check_term_consistency` | One referent, one term. Run on any document longer than a couple of paragraphs: catches `andmestik` in §1, `teadusandmestik` in §2, `pildiandmestik` in §3. Reports per-variant counts so you can standardise on the dominant one. Read each group before rewriting — some are genuinely distinct concepts. |
 | `check_capitalization` | Algustäheortograafia (initial-letter orthography) check per EKI Reeglid. Flags weekdays, months, nationalities, and language/culture adjectives wrongly capitalized mid-sentence. Run on every Estonian text you produce. |
@@ -164,8 +164,11 @@ A word can pass `spell_check`, be a valid compound, and still be wrong.
    suulise teksti elektrooniline kogu", so a set of *images* is not a
    `korpus` however normal that sounds in ML jargon — `andmestik`
    carries no such constraint.
-2. If the candidate is a compound you or the user coined, call
-   `check_compound_familiarity`. Remember it clears well-formed but
+2. If the candidate is a compound **you** coined, call
+   `check_compound_familiarity` and act on `attested`, not on the score:
+   unattested plus a compound you invented on the spot means find an
+   attested phrasing; unattested for a term the user or the domain
+   already uses means nothing at all. Remember it clears well-formed but
    stilted compounds — `teadusandmestik` passes at 0.705 even though a
    native speaker reads it as artificial.
 3. For register fit, call `classify_register` or `check_officialese`.
@@ -336,8 +339,8 @@ not in the polished output — they break the fourth wall and read as
 hedging. If you spotted something a tool missed, just make the
 correction cleanly. (And if you think a tool *should* have caught it,
 check first: `check_redundancy` catches `samuti ka`-style doubling,
-`check_compound_familiarity` catches calques, etc. — the gap you
-assume may not exist.)
+`check_compound_familiarity` tells you whether a compound is
+attested, etc. The gap you assume may not exist.)
 
 **Reference native-speaker intuition neutrally.** Prefer
 *"emakeele kõneleja tajub seda kohe"* or *"eestlasele hakkab see kohe

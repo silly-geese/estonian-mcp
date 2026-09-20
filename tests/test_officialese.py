@@ -271,14 +271,14 @@ def term_consistency() -> None:
           str(r["groups"]))
 
 
-def familiarity_decisiveness_guard() -> None:
-    """The junk-tail gate must not fire when a real, >= 0.60 top neighbour
-    vouches for the compound. Captured production fastText data."""
-    print("familiarity — junk-tail decisiveness guard")
+def familiarity_junk_neighbourhood() -> None:
+    """A junk neighbourhood is no evidence, in either direction. Captured
+    production fastText data."""
+    print("familiarity: junk neighbourhood carries no verdict")
 
     # pildiandmestik: ordinary compound, top neighbour is its own head at
     # 0.71, but 5/8 of the tail is scrape junk. Must NOT flag.
-    is_suspect, reasons, _q = server._familiarity_verdict(
+    is_suspect, reasons, q = server._familiarity_verdict(
         False, 0.71, [
             ("andmestik", 0.71), ("andmestiku", 0.59), ("juhtmestik", 0.526),
             ("graafikaKunst", 0.506), ("kunstitarbedMõõdutabelidTellimise", 0.496),
@@ -288,10 +288,17 @@ def familiarity_decisiveness_guard() -> None:
         ], ["pildi", "andmestik"])
     check("pildiandmestik not flagged (real top neighbour vouches)",
           is_suspect is False, str(reasons))
+    check("pildiandmestik: junk tail still counted",
+          q["scrape_junk"] == 5 and q["signal"] == "usable", str(q))
 
-    # sisuaudit: 0.605 top score but the top neighbour is ITSELF junk —
-    # the tail is decisive here, so it must still flag.
-    is_suspect, reasons, _q = server._familiarity_verdict(
+    # sisuaudit: top neighbour is ITSELF junk. This case used to flag:
+    # the junk tail was treated as decisive whenever the top neighbour was
+    # junk too. It is not decisive. `lisakäive` and `otsingureklaam`, both
+    # ordinary business Estonian, have exactly this shape at exactly this
+    # score, and so does the coinage `klõpsusild`. When fastText falls
+    # back to n-grams and lands in a hub of scrape tokens it has told us
+    # nothing, so nothing is claimed.
+    is_suspect, reasons, q = server._familiarity_verdict(
         False, 0.605, [
             ("ÜhisgümnaasiumKudumidPolosärgidPüksid", 0.605),
             ("põhjalTripAdvisori", 0.603), ("terviktekstRedaktsiooni", 0.603),
@@ -300,15 +307,16 @@ def familiarity_decisiveness_guard() -> None:
             ("kihtFliisidPluusidPüksid", 0.59),
             ("graafikaKunst", 0.588), ("PortaalUudised", 0.585),
         ], ["sisu", "audit"])
-    check("sisuaudit still flagged (top neighbour is junk)",
-          is_suspect is True, str(reasons))
+    check("sisuaudit not flagged (top neighbour is junk, no signal)",
+          is_suspect is False, str(reasons))
+    check("sisuaudit: signal reported as none", q["signal"] == "none", str(q))
 
 
 impersonal_voice_corrections()
 officialese_separation()
 officialese_lexicons()
 term_consistency()
-familiarity_decisiveness_guard()
+familiarity_junk_neighbourhood()
 
 if failures:
     print(f"\n{len(failures)} failure(s):")

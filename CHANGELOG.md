@@ -7,6 +7,63 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-20
+
+### Fixed
+
+- **`check_compound_familiarity` reported ordinary Estonian as invented.**
+  A client checking its own copy was told `lisakäive` and `klikkimismäär`
+  were coinages. They are not, and they were not alone: measured against
+  the deployed model, 13 of 64 attested compounds drawn from business,
+  marketing, public-sector and household Estonian came back flagged:
+  `koolitoit`, `rehvivahetus`, `katusekorter`, `pilveteenus`,
+  `tervisetõend`, `hinnakujundus`, `müügilehter`, `kliendibaas`,
+  `konversioonimäär`, `majapidamistarve`, `otsingureklaam` among them.
+  Every flag in that set was wrong.
+
+  Two gates were producing them, and neither could survive the data.
+
+  The **0.60 similarity gate** sat inside the band attested vocabulary
+  occupies. It had been raised there from 0.55 to catch one coinage,
+  `toortõlkeoht` (0.571). But attested `hinnakujundus` scores 0.563,
+  `kliendibaas` 0.566, `klikkimismäär` 0.586, `koolitoit` 0.590,
+  `rehvivahetus` 0.596, `müügilehter` 0.599. No threshold holds the
+  coinage and releases the rest; `pilveteenus` (attested, standard IT
+  Estonian) and `mõtteliin` (the canonical calque) score *the same
+  0.536*. The gate is back at 0.55, under the attested floor, and
+  `toortõlkeoht` is now a documented miss rather than a false-positive
+  generator. Recall is lower on purpose: a missed coinage costs one
+  review, a flagged real word costs correct Estonian.
+
+  The **junk-neighbour gate** read "the nearest neighbour is a
+  scrape-artifact token" as evidence of invention. It is evidence of
+  nothing: fastText has fallen back to character n-grams and landed in a
+  hub, where attested `lisakäive` (0.670) and `otsingureklaam` (0.670)
+  sit beside coined `klõpsusild` (0.656) with the same flat score
+  plateau. That configuration now reports `neighbour_quality.signal:
+  "none"` and offers no verdict in either direction. The junk *ratio* over
+  the tail is still counted and surfaced, and no longer votes.
+
+### Added
+
+- **Estonian WordNet is a second attestation source for
+  `check_compound_familiarity`.** The pruned 100K corpus vocabulary
+  misses compounds a thesaurus carries (`pilveteenus` and
+  `katusekorter` are both in WordNet), so each compound is now checked
+  against both, and `attested` is true when either vouches for it (or
+  the legal terms-of-art list does). Per-compound `in_wordnet` and
+  top-level `wordnet_checked` report what was consulted; with the
+  resource absent the tool runs on corpus evidence alone and says so.
+  As before, nothing is downloaded at runtime.
+- **The output now separates attestation from suspicion.** Each compound
+  carries `attested`, `in_wordnet` and `neighbour_quality.signal`, and
+  the response carries `unattested_compounds` alongside
+  `suspect_compounds`. `attested: false` means "outside a 100K-word
+  vocabulary", the normal state for correct specialist vocabulary in a
+  language that compounds this freely, and the tool note, the tool
+  description and the skill now say so in as many words, because the
+  previous framing invited exactly the rewrite that started this.
+
 ## [0.6.0] — 2026-09-08
 
 ### Fixed
