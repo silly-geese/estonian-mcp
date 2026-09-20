@@ -7,6 +7,37 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-20
+
+### Security
+
+- Dependency refresh resolving 4 Dependabot advisories (1 critical, 3
+  medium), no API or behaviour change:
+  - **anyio** 4.13.0 -> 4.15.1. CVE-2026-63374 (critical): `TLSStream`
+    encoded host names with IDNA 2003, which can resolve differently from
+    IDNA 2008 and so enable TLS certificate spoofing. CVE-2026-64847
+    (medium): process-pool workers can block indefinitely on undrained
+    stderr. anyio arrives transitively under `mcp`, `starlette`,
+    `sse-starlette` and `httpx`. Neither path is reachable in the running
+    server, which opens no outbound connection at all (the PRIVACY.md
+    promise, enforced for every tool by `tests/test_no_network.py`) and
+    never calls `anyio.to_process`. Patched regardless.
+  - **soupsieve** 2.8.4 -> 2.9.2. CVE-2026-86000 and CVE-2026-85999 (both
+    medium): polynomial-time ReDoS in the `IDENTIFIER` / `VALUE` selector
+    sub-patterns and in the `RE_WS_END` whitespace-trimming regex, the
+    second triggering on valid selectors. soupsieve arrives transitively
+    under `beautifulsoup4` -> `bs4` -> `estnltk`. The server parses no
+    HTML and no tool accepts a CSS selector, so nothing caller-controlled
+    reaches those regexes. Patched regardless.
+- **typing-extensions** 4.15.0 -> 4.16.0, pulled in by the anyio bump.
+- The lockfile's own project version, left at 0.6.0 by the 0.6.1 release,
+  now matches `pyproject.toml`.
+- One advisory stays knowingly open: **nltk** GHSA-8mgp-746c-j5xp
+  (CVE-2026-81726, path traversal in the model-artifact APIs). 3.10.3 is
+  still the latest release and still carries it; the dismissal holds,
+  because the six affected APIs are never called, no tool takes a path,
+  and nltk serves `punkt_tab` only.
+
 ## [0.6.1] - 2026-09-20
 
 ### Fixed
