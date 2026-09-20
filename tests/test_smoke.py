@@ -209,22 +209,53 @@ check("mõtteliin analysed as compound",
 check("mõtteliin flagged as suspect",
       any(c["lemma"] == "mõtteliin" and c["is_suspect"] for c in r["all_compounds"]),
       str(r["suspect_compounds"]))
+check("wordnet_checked reported", isinstance(r["wordnet_checked"], bool),
+      str(r.get("wordnet_checked")))
 r = server.check_compound_familiarity("Käisin raamatukogus ja koolimajas.")
 check("real compounds analysed", r["compounds_analysed"] == 2)
 check("real compounds NOT suspect", len(r["suspect_compounds"]) == 0,
       str(r["suspect_compounds"]))
-# Regression: 'toortõlkeoht' is an AI coinage that scored 0.571 — just
-# over the old 0.55 gate, so it used to slip through. The raised 0.60
-# gate must now flag it, with a populated reasons list.
+# Regression, the false positives that cost the gate its credibility:
+# `lisakäive` (junk top neighbour at 0.670) and `klikkimismäär` (clean
+# neighbourhood, 0.586) are both ordinary business Estonian and both were
+# reported to a client as invented compounds. Neither may flag. They stay
+# unattested, because no 100K-word vocabulary holds them, which is
+# exactly the distinction the output now draws.
+r = server.check_compound_familiarity(
+    "Kampaania tõi lisakäive ja klikkimismäär kasvas."
+)
+for lemma in ("lisakäive", "klikkimismäär"):
+    c = next((x for x in r["all_compounds"] if x["lemma"] == lemma), None)
+    check(f"{lemma} analysed", c is not None,
+          str([x["lemma"] for x in r["all_compounds"]]))
+    if c:
+        check(f"{lemma} NOT flagged suspect", c["is_suspect"] is False, str(c))
+        check(f"{lemma} reported unattested", c["attested"] is False, str(c))
+check("unattested_compounds lists both",
+      len(r["unattested_compounds"]) == 2, str(r["unattested_compounds"]))
+check("suspect_compounds empty", r["suspect_compounds"] == [],
+      str(r["suspect_compounds"]))
+# `lisakäive`'s nearest neighbour is a scrape-artifact token, so the
+# similarity score means nothing and the tool says so rather than
+# guessing.
+lk = next((x for x in r["all_compounds"] if x["lemma"] == "lisakäive"), None)
+if lk:
+    check("lisakäive: signal reported as none",
+          lk["neighbour_quality"]["signal"] == "none", str(lk))
+# Documented miss: 'toortõlkeoht' (0.571) sits inside the band attested
+# compounds occupy (`hinnakujundus` is 0.563), so it passes. Catching it
+# is what put the gate at 0.60 and swept in ordinary Estonian with it.
 r = server.check_compound_familiarity("See on tõsine toortõlkeoht.")
 tt = next((c for c in r["all_compounds"] if c["lemma"] == "toortõlkeoht"), None)
 check("toortõlkeoht analysed", tt is not None, str([c["lemma"] for c in r["all_compounds"]]))
 if tt:
-    check("toortõlkeoht flagged suspect", tt["is_suspect"] is True, str(tt))
-    check("toortõlkeoht has reasons", len(tt.get("reasons", [])) > 0, str(tt))
+    check("toortõlkeoht is a documented miss", tt["is_suspect"] is False, str(tt))
+    check("toortõlkeoht reported unattested", tt["attested"] is False, str(tt))
     check("toortõlkeoht has neighbour_quality",
           isinstance(tt.get("neighbour_quality"), dict)
-          and "scrape_junk" in tt["neighbour_quality"], str(tt))
+          and "scrape_junk" in tt["neighbour_quality"]
+          and tt["neighbour_quality"].get("signal") in ("none", "usable"),
+          str(tt))
 r = server.check_compound_familiarity("Eile käisin poes ja ostsin leiba.")
 check("no compounds → empty analysis", r["compounds_analysed"] == 0)
 # Legal de-noise: solidaarvõlgnik is a real legal term that used to
