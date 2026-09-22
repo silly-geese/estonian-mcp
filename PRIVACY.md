@@ -61,7 +61,9 @@ account to create.
   do not persist rate-limit state across restarts. Two numbers leave
   it, both at `/metrics`: how many requests were rate limited, and in
   how many separate runs ("episodes"). They are totals across everyone.
-  Neither records which IP was limited, or when.
+  Neither records which IP was limited, or when. The landing page,
+  icons and `/metrics` have a separate per-IP limit that works the same
+  way.
 - **Run platform health checks** on `/health` from Fly.io's edge.
 
 ## What we do NOT do
@@ -86,7 +88,12 @@ account to create.
   into the Docker image; NLTK `punkt_tab`, WordNet and fastText
   resources are pre-downloaded at image-build time and served from the
   container filesystem.
-- **No cookies, no tracking, no fingerprinting.**
+- **No cookies, no tracking, no fingerprinting.** For requests to the
+  site icon only, `/metrics` counts which kind of software asked
+  ("browser", "google", "script" and a few more fixed groups), so that
+  a client stuck fetching it in a loop can be identified. The
+  User-Agent header is matched against that list and discarded. Only
+  the per-group totals are kept.
 - **No training.** Your inputs are not used to train any model. The
   fastText, WordNet, and morphological models bundled with the
   server are static; they don't update from runtime traffic.
@@ -146,4 +153,4 @@ This policy may be updated; substantive changes will appear in git
 history. The latest version is always at
 `https://github.com/silly-geese/estonian-mcp/blob/master/PRIVACY.md`.
 
-Last updated: 2026-08-26.
+Last updated: 2026-09-22.

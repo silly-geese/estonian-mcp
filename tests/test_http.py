@@ -296,6 +296,9 @@ def metrics_persistence_test() -> None:
     saved_sessions = server._STATS.get("sessions", 0)
     saved_methods = dict(server._STATS.get("mcp_methods", {}))
     saved_episodes = server._STATS.get("rate_limit_episodes", 0)
+    saved_static = server._STATS.get("static_rate_limited", 0)
+    saved_static_eps = server._STATS.get("static_rate_limit_episodes", 0)
+    saved_icons = dict(server._STATS.get("icon_clients", {}))
     try:
         with tempfile.TemporaryDirectory() as d:
             server._METRICS_PATH = Path(d) / "metrics.json"
@@ -305,6 +308,11 @@ def metrics_persistence_test() -> None:
             server._STATS["sessions"] = 678
             server._STATS["mcp_methods"] = {"initialize": 678, "tools/call": 91, "other": 2}
             server._STATS["rate_limit_episodes"] = 17
+            server._STATS["static_rate_limited"] = 40
+            server._STATS["static_rate_limit_episodes"] = 3
+            # A key outside the fixed family list must not survive a
+            # restore, however it got into the file.
+            server._STATS["icon_clients"] = {"google": 9, "browser": 4, "evil<script>": 1}
             server._recent_errors.clear()
             server._recent_errors.append({"ts": 1700000000, "path": "/mcp", "status": 500, "error": "RuntimeError"})
             server._save_persistent_stats()
@@ -316,6 +324,9 @@ def metrics_persistence_test() -> None:
             server._STATS["sessions"] = 0
             server._STATS["mcp_methods"] = {}
             server._STATS["rate_limit_episodes"] = 0
+            server._STATS["static_rate_limited"] = 0
+            server._STATS["static_rate_limit_episodes"] = 0
+            server._STATS["icon_clients"] = {}
             server._recent_errors.clear()
             server._load_persistent_stats()
             check("total restored", server._STATS["total"] == 12345)
@@ -328,6 +339,12 @@ def metrics_persistence_test() -> None:
             check("rate_limit_episodes restored",
                   server._STATS["rate_limit_episodes"] == 17,
                   str(server._STATS["rate_limit_episodes"]))
+            check("static rate-limit counts restored",
+                  (server._STATS["static_rate_limited"],
+                   server._STATS["static_rate_limit_episodes"]) == (40, 3))
+            check("icon_clients restored, unknown family dropped",
+                  server._STATS["icon_clients"] == {"google": 9, "browser": 4},
+                  str(server._STATS["icon_clients"]))
             check("recent_errors restored", list(server._recent_errors) == [
                 {"ts": 1700000000, "path": "/mcp", "status": 500, "error": "RuntimeError"}], str(list(server._recent_errors)))
             # graceful no-op when parent dir is gone (local dev path)
@@ -345,6 +362,9 @@ def metrics_persistence_test() -> None:
         server._STATS["sessions"] = saved_sessions
         server._STATS["mcp_methods"] = saved_methods
         server._STATS["rate_limit_episodes"] = saved_episodes
+        server._STATS["static_rate_limited"] = saved_static
+        server._STATS["static_rate_limit_episodes"] = saved_static_eps
+        server._STATS["icon_clients"] = saved_icons
         server._recent_errors.clear()
         server._recent_errors.extend(saved_errors)
 
@@ -430,6 +450,82 @@ async def rate_limited_metrics_test() -> None:
         check("throttled client's IP is not on /metrics", flood_ip not in r.text)
 
 
+def classify_user_agent_unit_test() -> None:
+    """icon_clients must name the usual fetchers and must never turn a
+    caller-supplied header into a metrics key."""
+    print("_classify_user_agent (unit)")
+
+    def fam(ua: str | None) -> str:
+        headers = [] if ua is None else [(b"user-agent", ua.encode("latin-1"))]
+        return server._classify_user_agent({"headers": headers})
+
+    cases = {
+        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)": "google",
+        "Mozilla/5.0 (Windows NT 5.1) Google Favicon": "google",
+        "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ClaudeBot/1.0)": "anthropic",
+        "Claude-User/1.0": "anthropic",
+        "Mozilla/5.0 (compatible; GPTBot/1.2; +https://openai.com/gptbot)": "openai",
+        "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)": "link-preview",
+        "curl/8.7.1": "script",
+        "python-httpx/0.28.1": "script",
+        "Go-http-client/2.0": "script",
+        "Mozilla/5.0 (compatible; bingbot/2.0)": "other-bot",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+        "(KHTML, like Gecko) Version/18.0 Safari/605.1.15": "browser",
+        "evil/../../etc/passwd": "other",
+        "   ": "none",
+    }
+    for ua, want in cases.items():
+        check(f"{ua[:40]!r} -> {want}", fam(ua) == want, fam(ua))
+    check("no User-Agent header -> none", fam(None) == "none")
+    check("every result is a fixed family",
+          all(fam(ua) in server._UA_FAMILY_NAMES for ua in cases))
+
+
+async def static_path_limit_test() -> None:
+    """The public paths answered before /mcp share a per-IP limit of their
+    own: a looping icon fetcher is throttled, /health is not, and the same
+    address keeps its /mcp budget."""
+    print("static-path rate limit")
+    app = server._build_http_app(token=None, rate_limit=100, public_mode=True,
+                                 inner=stub_inner, static_rate_limit=3)
+    looper = {"X-Forwarded-For": "198.51.100.9",
+              "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1)"}
+    watcher = {"X-Forwarded-For": "198.51.100.200"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        before = (await c.get("/metrics", headers=watcher)).json()
+        statuses = [(await c.get("/favicon.svg", headers=looper)).status_code
+                    for _ in range(5)]
+        check("icon loop throttled after the limit",
+              statuses == [200, 200, 200, 429, 429], str(statuses))
+        r = await c.get("/", headers=looper)
+        check("landing page shares the static bucket", r.status_code == 429, str(r.status_code))
+        health = [(await c.get("/health", headers=looper)).status_code for _ in range(5)]
+        check("/health is never throttled", health == [200] * 5, str(health))
+        r = await c.post("/mcp", json={}, headers=looper)
+        check("throttled icon fetcher keeps its /mcp budget", r.status_code == 200, str(r.status_code))
+
+        r = await c.get("/metrics", headers=watcher)
+        after = r.json()
+        rl_b, rl_a = before["rate_limited"], after["rate_limited"]
+        check("static_paths.requests counts the 3 static 429s",
+              rl_a["static_paths"]["requests"] - rl_b["static_paths"]["requests"] == 3,
+              f"{rl_b} -> {rl_a}")
+        check("one icon loop is one static episode",
+              rl_a["static_paths"]["episodes"] - rl_b["static_paths"]["episodes"] == 1,
+              f"{rl_b} -> {rl_a}")
+        check("static episode is in the total too",
+              rl_a["episodes"] - rl_b["episodes"] == 1, f"{rl_b} -> {rl_a}")
+        check("static 429s are in requests too",
+              rl_a["requests"] - rl_b["requests"] == 3, f"{rl_b} -> {rl_a}")
+        google = (after["icon_clients"].get("google", 0)
+                  - before["icon_clients"].get("google", 0))
+        check("icon_clients counts throttled fetches under their family",
+              google == 5, str(after["icon_clients"]))
+        check("looping client's IP is not on /metrics", "198.51.100.9" not in r.text)
+        check("looping client's User-Agent is not on /metrics", "Googlebot" not in r.text)
+
+
 async def inner_exc_capture_test() -> None:
     """An inner-returned 500 (SDK logs the exception, then returns 500 itself)
     should be labelled in the ring buffer with the logged exception type,
@@ -487,6 +583,8 @@ metrics_persistence_test()
 classify_mcp_method_unit_test()
 rate_limit_episode_unit_test()
 asyncio.run(rate_limited_metrics_test())
+classify_user_agent_unit_test()
+asyncio.run(static_path_limit_test())
 asyncio.run(session_counter_test())
 asyncio.run(inner_exc_capture_test())
 

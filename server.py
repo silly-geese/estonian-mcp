@@ -62,6 +62,13 @@ MAX_DOC_CHARS = 500_000
 # for actual DDoS, not tighter per-IP limits.
 DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
+# Per-IP limit on the public paths answered without reaching /mcp (see
+# _STATIC_PATHS), in either mode. A browser loading the landing page
+# makes two or three of these requests, and the icons are cached for a
+# year, so 60 a minute from one address is a client in a loop. Until
+# 0.6.4 these paths had no limit at all, and something fetched
+# /favicon.svg about 6M times between 2026-07-18 and 2026-08-14.
+DEFAULT_STATIC_RATE_LIMIT_PER_MINUTE = 60
 
 # How many reverse proxies sit in front of this server. Used to pick the
 # trustworthy entry out of X-Forwarded-For for the public-mode per-IP rate
@@ -71,7 +78,7 @@ DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.6.3"
+SERVER_VERSION = "0.6.4"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -4763,6 +4770,14 @@ _STATS: dict[str, Any] = {
     # a few clients at length. Only the count is kept: which IP or token
     # was throttled never leaves the limiter's in-memory state.
     "rate_limit_episodes": 0,
+    # The share of the above that came from the static-path limiter.
+    "static_rate_limited": 0,
+    "static_rate_limit_episodes": 0,
+    # Icon requests by User-Agent FAMILY (see _UA_FAMILIES), so the next
+    # client that fetches the icon in a loop can be named. The header is
+    # caller-controlled and is never stored: it is matched against a fixed
+    # list and only the family's count is kept.
+    "icon_clients": {},
 }
 
 # Ring buffer of recent 5xx errors so they're inspectable at /metrics
@@ -4794,6 +4809,12 @@ def _load_persistent_stats() -> None:
         _STATS["by_path"] = {str(k): int(v) for k, v in (data.get("by_path") or {}).items()}
         _STATS["sessions"] = int(data.get("sessions", 0))
         _STATS["rate_limit_episodes"] = int(data.get("rate_limit_episodes", 0))
+        _STATS["static_rate_limited"] = int(data.get("static_rate_limited", 0))
+        _STATS["static_rate_limit_episodes"] = int(data.get("static_rate_limit_episodes", 0))
+        _STATS["icon_clients"] = {
+            str(k): int(v) for k, v in (data.get("icon_clients") or {}).items()
+            if str(k) in _UA_FAMILY_NAMES
+        }
         _STATS["mcp_methods"] = {
             str(k): int(v) for k, v in (data.get("mcp_methods") or {}).items()
             if str(k) in _MCP_METHODS or str(k) == "other"
@@ -4826,6 +4847,9 @@ def _save_persistent_stats() -> None:
             "sessions": _STATS["sessions"],
             "mcp_methods": _STATS["mcp_methods"],
             "rate_limit_episodes": _STATS["rate_limit_episodes"],
+            "static_rate_limited": _STATS["static_rate_limited"],
+            "static_rate_limit_episodes": _STATS["static_rate_limit_episodes"],
+            "icon_clients": _STATS["icon_clients"],
             "tool_calls": _TOOL_CALLS,
             "recent_errors": list(_recent_errors),
             "saved_at_unix": int(time.time()),
@@ -4881,6 +4905,64 @@ def _classify_mcp_method(body: bytes) -> str | None:
     if not isinstance(method, str):
         return None
     return method if method in _MCP_METHODS else "other"
+
+
+# Public paths the wrapper answers itself, before the /mcp limiter. They
+# share one per-IP limiter of their own (DEFAULT_STATIC_RATE_LIMIT_PER_MINUTE)
+# so a looping icon fetcher can neither run unbounded nor spend the /mcp
+# budget of real clients behind the same address. /health stays exempt:
+# Fly's probes hit it every 30 s.
+_STATIC_PATHS: frozenset[str] = frozenset({
+    "/",
+    "/metrics",
+    "/favicon.ico",
+    "/favicon.png",
+    "/favicon.svg",
+    "/.well-known/mcp/server-card.json",
+    "/sse",
+    "/sse/",
+})
+_ICON_PATHS: frozenset[str] = frozenset({
+    "/favicon.ico", "/favicon.png", "/favicon.svg",
+})
+
+# User-Agent families for icon_clients. Checked in order, first match
+# wins: crawlers announce themselves as "Mozilla/5.0 (compatible; ...bot)",
+# so every named family comes before "browser". Matching is substring on
+# the lowercased header; the header itself is never stored.
+_UA_FAMILIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("google", ("google",)),
+    ("anthropic", ("claude", "anthropic")),
+    ("openai", ("openai", "chatgpt", "gptbot")),
+    ("link-preview", (
+        "slackbot", "discordbot", "telegrambot", "twitterbot",
+        "facebookexternalhit", "linkedinbot", "whatsapp",
+    )),
+    ("script", (
+        "curl", "wget", "python", "go-http-client", "node", "axios",
+        "okhttp", "java/", "ruby", "httpx", "aiohttp", "libwww",
+    )),
+    ("other-bot", ("bot", "crawler", "spider", "preview")),
+    ("browser", ("mozilla/",)),
+)
+_UA_FAMILY_NAMES: frozenset[str] = frozenset(
+    {name for name, _ in _UA_FAMILIES} | {"none", "other"}
+)
+
+
+def _classify_user_agent(scope: dict) -> str:
+    """Bucket a request's User-Agent into one of _UA_FAMILY_NAMES."""
+    ua = ""
+    for raw_key, raw_val in (scope.get("headers") or []):
+        if raw_key.lower() == b"user-agent":
+            ua = raw_val.decode("latin-1").strip().lower()
+            break
+    if not ua:
+        return "none"
+    for name, needles in _UA_FAMILIES:
+        if any(n in ua for n in needles):
+            return name
+    return "other"
 
 
 async def _drain_body(receive):
@@ -5182,13 +5264,22 @@ def _client_ip(scope: dict) -> str:
     return client[0] if isinstance(client, (tuple, list)) and client else "unknown"
 
 
-def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = False, inner=None):
+def _build_http_app(
+    token: str | None,
+    rate_limit: int,
+    public_mode: bool = False,
+    inner=None,
+    static_rate_limit: int | None = None,
+):
     """Wrap an ASGI MCP app with auth (or none) + rate limit + /health bypass.
 
     public_mode=False (default): require bearer token, rate-limit per token.
     public_mode=True:           no auth, rate-limit per client IP.
 
     `inner` defaults to FastMCP's streamable-http app; tests inject a stub.
+    `static_rate_limit` is the per-IP limit on _STATIC_PATHS; it defaults
+    to $ESTNLTK_MCP_STATIC_RATE_LIMIT_PER_MINUTE, then
+    DEFAULT_STATIC_RATE_LIMIT_PER_MINUTE.
     """
     # Start capturing the exception type the MCP SDK logs-then-swallows on
     # an inner 500, so the recent-errors buffer can label it.
@@ -5211,6 +5302,12 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
         mcp.settings.json_response = True  # simpler for clients without SSE
         inner = mcp.streamable_http_app()
     limiter = _RateLimiter(rate_limit)
+    if static_rate_limit is None:
+        static_rate_limit = int(os.environ.get(
+            "ESTNLTK_MCP_STATIC_RATE_LIMIT_PER_MINUTE",
+            str(DEFAULT_STATIC_RATE_LIMIT_PER_MINUTE),
+        ))
+    static_limiter = _RateLimiter(static_rate_limit)
 
     async def app(scope, receive, send_raw):
         if scope["type"] == "lifespan":
@@ -5247,6 +5344,23 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                     "tools": _count_registered_tools(),
                 })
                 return
+
+            if path in _STATIC_PATHS:
+                # Counted before the limit, so a throttled loop still shows
+                # up under its family.
+                if path in _ICON_PATHS:
+                    family = _classify_user_agent(scope)
+                    _STATS["icon_clients"][family] = (
+                        _STATS["icon_clients"].get(family, 0) + 1
+                    )
+                static_key = f"ip:{_client_ip(scope)}"
+                if not static_limiter.allow(static_key):
+                    _STATS["static_rate_limited"] += 1
+                    if static_limiter.note_denial(static_key):
+                        _STATS["rate_limit_episodes"] += 1
+                        _STATS["static_rate_limit_episodes"] += 1
+                    await _send_status(send, 429, {"error": "rate_limited"})
+                    return
 
             # A human pasting the /mcp URL into a browser otherwise gets a
             # cryptic JSON-RPC 406 ("Client must accept text/event-stream").
@@ -5288,7 +5402,12 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                     "rate_limited": {
                         "requests": _STATS["by_status"].get("429", 0),
                         "episodes": _STATS["rate_limit_episodes"],
+                        "static_paths": {
+                            "requests": _STATS["static_rate_limited"],
+                            "episodes": _STATS["static_rate_limit_episodes"],
+                        },
                     },
+                    "icon_clients": dict(_STATS["icon_clients"]),
                     "recent_errors": list(_recent_errors),
                     "uptime_seconds": int(time.time() - _STATS_START_TS),
                     "started_at_unix": int(_STATS_START_TS),
@@ -5312,7 +5431,14 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                         "kept going. An episode is NOT a distinct client: one "
                         "that hits the limit twice an hour apart counts twice. "
                         "Only the two counts are stored, never which IP or "
-                        "token was throttled. "
+                        "token was throttled. rate_limited.static_paths is the "
+                        "part of both that came from the separate per-IP "
+                        "limit on the landing page, icons, server card, "
+                        "/metrics and /sse (not /health). icon_clients counts "
+                        "icon requests by User-Agent family against a FIXED "
+                        "list (google, anthropic, openai, link-preview, "
+                        "script, other-bot, browser, none, other); the header "
+                        "itself is never stored. "
                         "mcp_methods buckets POST /mcp by JSON-RPC method "
                         "against a FIXED allowlist (anything else counts as "
                         "'other', so a caller-supplied method name can never "

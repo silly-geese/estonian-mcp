@@ -7,6 +7,51 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-09-22
+
+### Security
+
+- **Every public path except `/health` is now rate limited.** The paths
+  the server answers itself (`/`, `/metrics`, `/favicon.ico`,
+  `/favicon.png`, `/favicon.svg`, the MCP server card, the `/sse`
+  pointer) came before the limiter and had no limit at all. The daily
+  metrics history shows what that allowed: from 2026-07-18 to
+  2026-08-14 something fetched `/favicon.svg` up to 350,000 times a
+  day, about 6M in total, 86% of every request the server has ever
+  answered. It ignored both the one-year `immutable` cache and the
+  ETag (0.4.3): the server has sent 54 `304 Not Modified` in all. Then
+  it stopped by itself. Nothing recorded who it was, or whether it was
+  one client or many.
+
+  These paths now share a per-IP limit of their own: 60 a minute by
+  default, set with `ESTNLTK_MCP_STATIC_RATE_LIMIT_PER_MINUTE`, in both
+  modes. A browser loading the landing page makes two or three such
+  requests, and the icons are cached for a year. It is kept apart from
+  the `/mcp` limit on purpose: MCP traffic from a hosted client arrives
+  from that provider's shared addresses, and an icon loop from one of
+  them must not spend the `/mcp` budget of real users behind it.
+  `/health` stays exempt for Fly's probes. The self-hosted nginx stack
+  in `deploy/` already limited these paths. The hosted service now
+  matches it.
+
+  No server can stop a client from sending requests. What this changes
+  is that a repeat now costs one cheap 429 per request past the limit,
+  and it shows up at `/metrics`.
+
+### Added
+
+- **`rate_limited.static_paths` at `/metrics`**: `{"requests",
+  "episodes"}` for the new limit. They are also included in
+  `rate_limited.requests` and `rate_limited.episodes`.
+- **`icon_clients` at `/metrics`**: icon requests counted by
+  User-Agent family: `google`, `anthropic`, `openai`, `link-preview`,
+  `script`, `other-bot`, `browser`, `none`, `other`. This is the
+  question the July flood left open. It is counted before the limit,
+  so a throttled loop still appears under its family. Same rule as
+  `mcp_methods`: the header is caller-controlled, so it is matched
+  against a fixed list and discarded, and a family outside the list is
+  dropped on restore. Only for the three icon paths, not `/mcp`.
+
 ## [0.6.3] - 2026-09-22
 
 ### Added
