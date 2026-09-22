@@ -58,7 +58,10 @@ account to create.
   classification) and return the result to your client.
 - **Rate-limit per IP** in memory. The bucket key (your IP) lives in
   the running process and is **lost when the machine restarts**. We
-  do not persist rate-limit state across restarts.
+  do not persist rate-limit state across restarts. Two numbers leave
+  it, both at `/metrics`: how many requests were rate limited, and in
+  how many separate runs ("episodes"). They are totals across everyone.
+  Neither records which IP was limited, or when.
 - **Run platform health checks** on `/health` from Fly.io's edge.
 
 ## What we do NOT do

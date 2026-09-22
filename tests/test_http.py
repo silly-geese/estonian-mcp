@@ -295,6 +295,7 @@ def metrics_persistence_test() -> None:
     saved_errors = list(server._recent_errors)
     saved_sessions = server._STATS.get("sessions", 0)
     saved_methods = dict(server._STATS.get("mcp_methods", {}))
+    saved_episodes = server._STATS.get("rate_limit_episodes", 0)
     try:
         with tempfile.TemporaryDirectory() as d:
             server._METRICS_PATH = Path(d) / "metrics.json"
@@ -303,6 +304,7 @@ def metrics_persistence_test() -> None:
             server._STATS["by_path"] = {"/mcp": 12300, "/health": 45}
             server._STATS["sessions"] = 678
             server._STATS["mcp_methods"] = {"initialize": 678, "tools/call": 91, "other": 2}
+            server._STATS["rate_limit_episodes"] = 17
             server._recent_errors.clear()
             server._recent_errors.append({"ts": 1700000000, "path": "/mcp", "status": 500, "error": "RuntimeError"})
             server._save_persistent_stats()
@@ -313,6 +315,7 @@ def metrics_persistence_test() -> None:
             server._STATS["by_path"] = {}
             server._STATS["sessions"] = 0
             server._STATS["mcp_methods"] = {}
+            server._STATS["rate_limit_episodes"] = 0
             server._recent_errors.clear()
             server._load_persistent_stats()
             check("total restored", server._STATS["total"] == 12345)
@@ -322,6 +325,9 @@ def metrics_persistence_test() -> None:
             check("mcp_methods restored",
                   server._STATS["mcp_methods"] == {"initialize": 678, "tools/call": 91, "other": 2},
                   str(server._STATS["mcp_methods"]))
+            check("rate_limit_episodes restored",
+                  server._STATS["rate_limit_episodes"] == 17,
+                  str(server._STATS["rate_limit_episodes"]))
             check("recent_errors restored", list(server._recent_errors) == [
                 {"ts": 1700000000, "path": "/mcp", "status": 500, "error": "RuntimeError"}], str(list(server._recent_errors)))
             # graceful no-op when parent dir is gone (local dev path)
@@ -338,6 +344,7 @@ def metrics_persistence_test() -> None:
         server._STATS["by_path"] = saved_pathd
         server._STATS["sessions"] = saved_sessions
         server._STATS["mcp_methods"] = saved_methods
+        server._STATS["rate_limit_episodes"] = saved_episodes
         server._recent_errors.clear()
         server._recent_errors.extend(saved_errors)
 
@@ -374,6 +381,53 @@ def classify_mcp_method_unit_test() -> None:
     check("no unbounded key growth: every result is allowlisted",
           all(cm(b) in server._MCP_METHODS or cm(b) in ("other", None)
               for b in (init, tool, sneaky, lister, noti, batch, hostile, huge, b"")))
+
+
+def rate_limit_episode_unit_test() -> None:
+    """A throttle episode is a run of 429s to one client with no gap over
+    EPISODE_GAP_SECONDS. Ages timestamps by hand rather than sleeping."""
+    print("rate-limit episodes (unit)")
+    lim = server._RateLimiter(per_minute=2)
+    gap = lim.EPISODE_GAP_SECONDS
+    check("first denial opens an episode", lim.note_denial("ip:a") is True)
+    check("denial within the gap continues it", lim.note_denial("ip:a") is False)
+    check("another client opens its own episode", lim.note_denial("ip:b") is True)
+    lim.last_denied["ip:a"] -= gap + 1
+    check("denial after a quiet gap opens a new episode",
+          lim.note_denial("ip:a") is True)
+    lim.last_denied["ip:b"] -= gap + 1
+    lim.note_denial("ip:c")
+    check("an ended episode's key is pruned", "ip:b" not in lim.last_denied,
+          str(lim.last_denied))
+    check("a live episode's key is kept", "ip:a" in lim.last_denied,
+          str(lim.last_denied))
+
+
+async def rate_limited_metrics_test() -> None:
+    """End-to-end: a flood past the limit shows up at /metrics as every 429
+    in rate_limited.requests and as ONE episode, and the throttled client's
+    address appears nowhere in the response."""
+    print("rate_limited at /metrics")
+    app = server._build_http_app(token=None, rate_limit=3, public_mode=True, inner=stub_inner)
+    flood_ip = "203.0.113.7"  # TEST-NET-3, bucketed via X-Forwarded-For
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        before = (await c.get("/metrics")).json()["rate_limited"]
+        statuses = []
+        for _ in range(10):
+            r = await c.post("/mcp", json={}, headers={"X-Forwarded-For": flood_ip})
+            statuses.append(r.status_code)
+        r = await c.get("/metrics")
+        after = r.json()["rate_limited"]
+        throttled = statuses.count(429)
+        check("flood past a limit of 3 got 7 x 429", throttled == 7, str(statuses))
+        check("rate_limited.requests counts every 429",
+              after["requests"] - before["requests"] == throttled,
+              f"{before} -> {after}")
+        check("one sustained flood is one episode",
+              after["episodes"] - before["episodes"] == 1, f"{before} -> {after}")
+        check("rate_limited.requests equals by_status['429']",
+              after["requests"] == r.json()["by_status"].get("429"), r.text[:200])
+        check("throttled client's IP is not on /metrics", flood_ip not in r.text)
 
 
 async def inner_exc_capture_test() -> None:
@@ -431,6 +485,8 @@ async def session_counter_test() -> None:
 asyncio.run(run())
 metrics_persistence_test()
 classify_mcp_method_unit_test()
+rate_limit_episode_unit_test()
+asyncio.run(rate_limited_metrics_test())
 asyncio.run(session_counter_test())
 asyncio.run(inner_exc_capture_test())
 
