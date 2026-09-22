@@ -7,6 +7,39 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-09-22
+
+### Added
+
+- **`rate_limited` at `/metrics`**: `{"requests": N, "episodes": M}`.
+  `by_status["429"]` already counted throttled requests: 32,789 of them
+  on the live server when this was written, about 5% of the traffic
+  that reaches the limiter. It could not say whether that was many
+  people brushing the limit or one client hammering it. `episodes`
+  answers that. An episode is a run of 429s to one client (one IP in
+  public mode, one token in bearer mode) with no gap over 60 s, so
+  `requests / episodes` is how long a throttled client kept going.
+
+  The 60 s gap is deliberate. A client flooding past the limit gets one
+  request through each time a slot frees up. Counting every
+  allowed-then-denied flip would count one sustained flood hundreds of
+  times.
+
+  Still PII-free. The limiter already held each client's IP (or token
+  prefix) in memory to enforce the limit. It now also holds the time of
+  that client's latest 429, and drops it once the gap passes. Only the
+  two counts reach `/metrics` and `/data/metrics.json`. An episode is
+  not a distinct client: one that hits the limit twice an hour apart
+  counts twice. Counting distinct clients would mean remembering them.
+
+### Changed
+
+- The `SECURITY.md` note on `/metrics` listed only `total`, `by_status`
+  and `by_path`, and said no per-tool breakdown was stored. `/metrics`
+  has carried tool-call, MCP-method and 5xx counts for several
+  releases. The note now lists everything, and still records no
+  bodies, arguments, tokens or IPs.
+
 ## [0.6.2] - 2026-09-20
 
 ### Security

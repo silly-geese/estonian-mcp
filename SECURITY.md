@@ -104,15 +104,19 @@ defence-in-depth.
 - **Public health endpoint.** `/health` returns `{"ok": true}` with
   no auth and is bypassed by the rate limiter. Used for Fly health
   probes and uptime monitoring.
-- **Public metrics endpoint.** `/metrics` returns aggregate request
-  counts (total, by HTTP status, by path) — optionally persisted to a
-  Fly volume at `/data/metrics.json` (via `ESTNLTK_MCP_METRICS_PATH`)
-  so counters survive machine restarts. If the configured path's
-  parent dir doesn't exist (local dev), persistence silently no-ops
-  and we stay in-memory. **No request bodies, tokens, IP addresses,
-  timing, or per-tool breakdown are stored** — only HTTP-level
-  aggregate counters. The persisted file is a single JSON blob with
-  `total`, `by_status`, `by_path`, `saved_at_unix`. Reading or
+- **Public metrics endpoint.** `/metrics` returns aggregate counts
+  (requests by HTTP status and by path, tool calls by tool name, MCP
+  methods against a fixed allowlist, `initialize` count, rate-limited
+  requests and throttle episodes) plus a ring buffer of the last 20
+  5xx responses (timestamp, path, status, exception type). These are
+  optionally persisted to a Fly volume at `/data/metrics.json` (via
+  `ESTNLTK_MCP_METRICS_PATH`) so counters survive machine restarts. If
+  the configured path's parent dir doesn't exist (local dev),
+  persistence silently no-ops and we stay in-memory. **No request
+  bodies, tool arguments, tokens, or IP addresses are stored**, only
+  counts. A throttle episode is counted from the limiter's in-memory
+  per-client state, and only the count is written: which IP or token
+  was throttled never reaches `/metrics` or the file. Reading or
   deleting `/data/metrics.json` only affects the displayed counts; it
   doesn't reveal anything about what users sent.
 - **Stateless HTTP.** `mcp.settings.stateless_http = True` so each

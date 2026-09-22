@@ -71,7 +71,7 @@ DEFAULT_PUBLIC_RATE_LIMIT_PER_MINUTE = 300
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.6.2"
+SERVER_VERSION = "0.6.3"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -4757,6 +4757,12 @@ _STATS: dict[str, Any] = {
     # probe, and `tools/list` vs `tools/call` shows how many clients
     # enumerate the tools but never use one.
     "mcp_methods": {},
+    # Runs of 429s to one client with no gap over a minute (see
+    # _RateLimiter.note_denial). by_status["429"] says how many requests
+    # were throttled; this says whether that was many clients briefly or
+    # a few clients at length. Only the count is kept: which IP or token
+    # was throttled never leaves the limiter's in-memory state.
+    "rate_limit_episodes": 0,
 }
 
 # Ring buffer of recent 5xx errors so they're inspectable at /metrics
@@ -4787,6 +4793,7 @@ def _load_persistent_stats() -> None:
         _STATS["by_status"] = {str(k): int(v) for k, v in (data.get("by_status") or {}).items()}
         _STATS["by_path"] = {str(k): int(v) for k, v in (data.get("by_path") or {}).items()}
         _STATS["sessions"] = int(data.get("sessions", 0))
+        _STATS["rate_limit_episodes"] = int(data.get("rate_limit_episodes", 0))
         _STATS["mcp_methods"] = {
             str(k): int(v) for k, v in (data.get("mcp_methods") or {}).items()
             if str(k) in _MCP_METHODS or str(k) == "other"
@@ -4818,6 +4825,7 @@ def _save_persistent_stats() -> None:
             "by_path": _STATS["by_path"],
             "sessions": _STATS["sessions"],
             "mcp_methods": _STATS["mcp_methods"],
+            "rate_limit_episodes": _STATS["rate_limit_episodes"],
             "tool_calls": _TOOL_CALLS,
             "recent_errors": list(_recent_errors),
             "saved_at_unix": int(time.time()),
@@ -4987,14 +4995,23 @@ class _RateLimiter:
     """Per-token leaky-bucket rate limiter (in-process, restart-resets).
 
     Sufficient for one-process containers. Behind a load balancer with
-    multiple replicas, each replica enforces independently — combined
+    multiple replicas, each replica enforces independently: combined
     quota is N*replicas, which is acceptable for a defence-in-depth
     measure.
     """
 
+    # A client whose denials are further apart than this has stopped
+    # hammering, so its next denial opens a new throttle episode.
+    EPISODE_GAP_SECONDS = 60.0
+
     def __init__(self, per_minute: int) -> None:
         self.per_minute = per_minute
         self.buckets: dict[str, collections.deque[float]] = {}
+        # Time of each bucket's latest denial, pruned once it is older
+        # than EPISODE_GAP_SECONDS. Holds the same keys as `buckets` (IP
+        # or token prefix), in memory only, and never leaves the process:
+        # only the episode COUNT reaches /metrics.
+        self.last_denied: dict[str, float] = {}
 
     def allow(self, key: str) -> bool:
         now = time.monotonic()
@@ -5005,6 +5022,28 @@ class _RateLimiter:
         if len(bucket) >= self.per_minute:
             return False
         bucket.append(now)
+        return True
+
+    def note_denial(self, key: str) -> bool:
+        """Record a 429 for `key`. True if it opens a new throttle episode,
+        i.e. `key` had no denial in the previous EPISODE_GAP_SECONDS.
+
+        A client hammering past the limit gets one allowed request each
+        time a slot frees up, so counting every allowed-to-denied flip
+        would count a single sustained flood hundreds of times. Measuring
+        the gap between denials counts it once."""
+        now = time.monotonic()
+        last = self.last_denied.get(key)
+        self.last_denied[key] = now
+        if last is not None and now - last <= self.EPISODE_GAP_SECONDS:
+            return False
+        # A new episode is rare, so this is the cheap moment to drop
+        # entries whose episode has ended. Keeps the dict bounded by the
+        # number of clients throttled in the last minute.
+        cutoff = now - self.EPISODE_GAP_SECONDS
+        self.last_denied = {
+            k: t for k, t in self.last_denied.items() if t >= cutoff
+        }
         return True
 
 
@@ -5234,10 +5273,9 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                 })
                 return
 
-            # Public metrics — aggregate request counters since process
-            # start. Resets on Fly machine restart (idle auto-stop,
-            # redeploy, crash). No body inspection, no token logging —
-            # only counts.
+            # Public metrics: aggregate request counters, persisted across
+            # restarts when a volume is mounted (see _METRICS_PATH). No body
+            # inspection, no token logging, no IPs: only counts.
             if path == "/metrics":
                 payload = {
                     "total_requests": _STATS["total"],
@@ -5247,20 +5285,34 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                     "tool_calls": dict(_TOOL_CALLS),
                     "sessions_total": _STATS["sessions"],
                     "mcp_methods": dict(_STATS["mcp_methods"]),
+                    "rate_limited": {
+                        "requests": _STATS["by_status"].get("429", 0),
+                        "episodes": _STATS["rate_limit_episodes"],
+                    },
                     "recent_errors": list(_recent_errors),
                     "uptime_seconds": int(time.time() - _STATS_START_TS),
                     "started_at_unix": int(_STATS_START_TS),
                     "note": (
                         "tool_calls counts ONLY real tool executions (not "
                         "initialize / tools-list / SSE opens, which inflate "
-                        "the /mcp path bucket) — use tool_calls_total as the "
+                        "the /mcp path bucket); use tool_calls_total as the "
                         "true usage number. sessions_total counts MCP "
-                        "initialize calls — a privacy-safe proxy for client "
+                        "initialize calls, a privacy-safe proxy for client "
                         "connections, NOT a user count: a client that "
                         "reconnects counts again and automated probes count "
-                        "too. No identity, IP, or request body is ever stored "
-                        "— only the fact of an initialize. Daily connections "
+                        "too. No identity, IP, or request body is ever stored, "
+                        "only the fact of an initialize. Daily connections "
                         "= the day-over-day delta in the metrics snapshot. "
+                        "rate_limited.requests is every 429 the rate limiter "
+                        "sent (the same number as by_status['429']). "
+                        "rate_limited.episodes counts runs of 429s to one "
+                        "client (one IP in public mode, one token in bearer "
+                        "mode) with no gap over 60 s between them, so "
+                        "requests / episodes is how long a throttled client "
+                        "kept going. An episode is NOT a distinct client: one "
+                        "that hits the limit twice an hour apart counts twice. "
+                        "Only the two counts are stored, never which IP or "
+                        "token was throttled. "
                         "mcp_methods buckets POST /mcp by JSON-RPC method "
                         "against a FIXED allowlist (anything else counts as "
                         "'other', so a caller-supplied method name can never "
@@ -5280,7 +5332,7 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                         "(local dev) they reset. Counts are per-Fly-machine, "
                         "so with >1 machine each tracks its own and /metrics "
                         "reflects whichever served the request. started_at_unix "
-                        "is the process start, NOT when tracking began — the "
+                        "is the process start, NOT when tracking began: the "
                         "counts span all persisted history. recent_errors is a "
                         "ring buffer of the last 20 5xx responses (ts, path, "
                         "status, exception type) so failures are inspectable "
@@ -5359,6 +5411,8 @@ def _build_http_app(token: str | None, rate_limit: int, public_mode: bool = Fals
                 bucket_key = provided[:8]
 
             if not limiter.allow(bucket_key):
+                if limiter.note_denial(bucket_key):
+                    _STATS["rate_limit_episodes"] += 1
                 await _send_status(send, 429, {"error": "rate_limited"})
                 return
 
