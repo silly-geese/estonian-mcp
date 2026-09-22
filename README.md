@@ -480,8 +480,10 @@ to a bearer-mode setup.
 - **HTTP / bearer mode**: `ESTNLTK_MCP_AUTH_TOKEN` (≥16 chars)
   required, server refuses to start without it. Bearer auth on every
   request, constant-time comparison, per-token rate limit (120/min).
-- **Common to all HTTP**: `/health` is the only unauthenticated path.
-  No request or token logging. `proxy_headers` is **off**: the server
+- **Common to all HTTP**: `/health` is the only path without a rate
+  limit. The landing page, favicons, server card and `/metrics` share
+  a separate per-IP limit (60/min default). No request or token
+  logging. `proxy_headers` is **off**: the server
   reads `X-Forwarded-For` itself, counting
   `ESTNLTK_MCP_TRUSTED_PROXY_HOPS` entries from the RIGHT (default 1,
   for Fly's single edge proxy), because the leftmost entry is
