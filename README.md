@@ -98,6 +98,7 @@ of images is not one, however natural it sounds in ML jargon).
 | `check_object_case(text)` | Käändeõpetus, flags direct-object case errors under negation and after partitive-only verbs (armastama, vihkama, vajama, …) |
 | `check_abbreviation_hyphenation(text)` | Lühendiortograafia, flags abbreviations with case endings missing the EKI-mandated hyphen (`MCPst` → `MCP-st`, `OÜle` → `OÜ-le`) |
 | `check_compound_familiarity(text)` | Attestation check, for each compound noun, reports whether the lemma is in the corpus vocabulary or Estonian WordNet and returns its top fastText neighbours. Unattested is ordinary for specialist vocabulary and is not a rewrite signal; the narrow `is_suspect` flag needs an unattested lemma whose nearest real neighbour is still under 0.55 (`mõtteliin`-style translationese, literal English "train of thought" → real Estonian is `mõttekäik`) |
+| `check_domain_terms(text, glossary?)` | Domain-glossary check, reports compounds that are unattested AND absent from the operator's glossary (`ESTNLTK_MCP_DOMAIN_GLOSSARY`, one lemma per line) and identifier list (`ESTNLTK_MCP_DOMAIN_IDENTIFIERS`), with the nearest glossary terms as suggestions. For Estonian written about an organisation's own systems, where a coined compound should be the organisation's term or the thing's identifier. A per-call `glossary` extends the file |
 | `check_capitalization(text)` | Algustäheortograafia check, flags wrongly capitalized weekdays, months, nationalities, and language/culture adjectives per EKI's Reeglid |
 | `check_compounds(text)` | Liitsõnaõigekiri, flags common AI-generated splits of words that should be a single compound (`kooli maja` → `koolimaja`) |
 | `check_punctuation(text)` | Kirjavahemärgid, flags missing commas before subordinating conjunctions (`et`, `sest`, `kuna`, `kuid`, `vaid`, `nagu`, …) |
@@ -192,7 +193,7 @@ so follow their current
 for the exact path rather than a menu name written down here.
 
 One limit worth knowing: ChatGPT's *deep research* connectors expect a
-server to expose `search` and `fetch` tools. This server exposes 26
+server to expose `search` and `fetch` tools. This server exposes 27
 Estonian NLP tools and neither of those, so it belongs in the ordinary
 connector slot, not the deep research one.
 
@@ -327,7 +328,7 @@ send to suppress it). You'll especially see it right after adding or
 updating the connector, since the client re-checks tools it hasn't
 seen before.
 
-Good news: **all 26 tools are marked `readOnlyHint: true`** (they only
+Good news: **all 27 tools are marked `readOnlyHint: true`** (they only
 read text, never write or call out), so any well-behaved client can
 safely let you allow them once and stop asking:
 

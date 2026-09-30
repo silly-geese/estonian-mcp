@@ -72,6 +72,7 @@ CALLS: list[tuple[str, dict]] = [
     ("check_object_case", {"text": "Ma ei näen koera."}),
     ("check_abbreviation_hyphenation", {"text": "MCPst tuleb abi."}),
     ("check_compound_familiarity", {"text": "See on mõtteliin."}),
+    ("check_domain_terms", {"text": "See on mõtteliin."}),
     ("check_hyphenation", {"word": "koerad"}),
     ("check_legalese", {"text": "Käesolev leping."}),
     ("check_defined_terms", {"text": 'Müüja (edaspidi «Müüja») müüb kauba.'}),

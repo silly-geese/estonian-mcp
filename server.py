@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import base64
 import collections
+import difflib
 import hashlib
 import json
 import logging
@@ -1194,6 +1195,15 @@ class _CompoundFamiliarityResult(TypedDict, total=False):
     unattested_compounds: list[dict]
     wordnet_checked: bool
     all_compounds: list[dict]
+    summary_estonian: str
+    note: str
+
+
+class _DomainTermsResult(TypedDict, total=False):
+    text: str
+    glossary_size: int
+    compounds_analysed: int
+    unlisted_compounds: list[dict]
     summary_estonian: str
     note: str
 
@@ -3064,6 +3074,7 @@ def _check_compound_familiarity(text: str) -> dict:
         except Exception:
             wn = None
     wordnet_lookups = 0
+    glossary = _domain_glossary()
 
     seen: set[str] = set()
     compounds: list[dict] = []
@@ -3141,6 +3152,7 @@ def _check_compound_familiarity(text: str) -> dict:
             "is_suspect": is_suspect,
             "reasons": reasons,
         })
+        _domain_mark(compounds[-1], glossary)
 
     suspects = [c for c in compounds if c["is_suspect"]]
     unattested = [c for c in compounds if not c["attested"]]
@@ -3240,6 +3252,129 @@ def check_compound_familiarity(text: Annotated[str, Field(description="Estonian 
     Input capped at 100,000 characters.
     """
     return _check_compound_familiarity(text)
+
+
+# Operator-supplied domain vocabulary. An organisation writing about its own
+# systems has words the general corpus never saw, and an agent writing for it
+# tends to coin compounds to name things instead of using them. Attestation
+# can't tell the two apart, by design (see _check_compound_familiarity); a
+# glossary can. Both files are optional: unset, nothing below changes any
+# output. One lemma per line, UTF-8, `#` starts a comment, matched
+# case-insensitively. IDENTIFIERS holds names that are always allowed but
+# are not terms to suggest (table or column names written as words).
+
+_DOMAIN_SUGGEST_CUTOFF = 0.6
+
+
+def _read_term_file(path: str) -> frozenset[str]:
+    terms: set[str] = set()
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        term = line.split("#", 1)[0].strip().lower()
+        if term:
+            terms.add(term)
+    return frozenset(terms)
+
+
+@lru_cache(maxsize=1)
+def _domain_glossary() -> frozenset[str]:
+    path = os.environ.get("ESTNLTK_MCP_DOMAIN_GLOSSARY")
+    return _read_term_file(path) if path else frozenset()
+
+
+@lru_cache(maxsize=1)
+def _domain_identifiers() -> frozenset[str]:
+    path = os.environ.get("ESTNLTK_MCP_DOMAIN_IDENTIFIERS")
+    return _read_term_file(path) if path else frozenset()
+
+
+def _domain_mark(compound: dict, glossary: frozenset[str]) -> dict:
+    """Stamp `in_domain_glossary` on a compound, only when a glossary is
+    loaded, so output without one stays exactly as it was."""
+    if glossary:
+        compound["in_domain_glossary"] = compound["lemma"] in glossary
+    return compound
+
+
+def _domain_terms_from(compounds: list[dict], terms: frozenset[str],
+                       allowed: frozenset[str]) -> list[dict]:
+    """The pure decision behind check_domain_terms: a compound is reported
+    when it is unattested AND not listed. Suggestions are the closest
+    glossary lemmas by spelling similarity (difflib), not fastText, because
+    a glossary term is usually outside the model vocabulary too."""
+    ranked = sorted(terms)
+    unlisted = []
+    for c in compounds:
+        if c["attested"] or c["lemma"] in allowed:
+            continue
+        unlisted.append({
+            "word": c["word"],
+            "lemma": c["lemma"],
+            "position": c["position"],
+            "suggestions": difflib.get_close_matches(
+                c["lemma"], ranked, n=3, cutoff=_DOMAIN_SUGGEST_CUTOFF),
+        })
+    return unlisted
+
+
+def _check_domain_terms(text: str, glossary: list[str] | None = None) -> dict:
+    terms = _domain_glossary() | frozenset(
+        t.strip().lower() for t in (glossary or []) if t and t.strip())
+    allowed = terms | _domain_identifiers()
+    fam = _check_compound_familiarity(text)
+    unlisted = _domain_terms_from(fam["all_compounds"], terms, allowed)
+    return {
+        "text": text,
+        "glossary_size": len(terms),
+        "compounds_analysed": fam["compounds_analysed"],
+        "unlisted_compounds": unlisted,
+        "summary_estonian": (
+            (f"{len(unlisted)} liitsõna ei leidu ei sõnavaras, tesauruses "
+             f"ega valdkonna sõnastikus.")
+            if unlisted else "Kõik liitsõnad on sõnavaras, tesauruses või "
+            "valdkonna sõnastikus."
+        ),
+        "note": (
+            "Compounds that are unattested (not in the corpus vocabulary, "
+            "WordNet or the legal terms list) AND not in the domain glossary "
+            "(server file ESTNLTK_MCP_DOMAIN_GLOSSARY, plus any `glossary` "
+            "passed with this call) or the identifier list. In text written "
+            "for an organisation, such a compound is often a coined name for "
+            "something the organisation already has a word for: use the "
+            "glossary term, or name the thing by its identifier. "
+            "`suggestions` are glossary lemmas by spelling similarity, "
+            "empty when nothing is close. With no glossary at all this is "
+            "simply the unattested list, and unattested alone is still not "
+            "a reason to rewrite (see check_compound_familiarity)."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian compounds against a domain glossary",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+@_counted
+def check_domain_terms(
+    text: Annotated[str, Field(description="Estonian text whose compound nouns are checked against the corpus, WordNet and the domain glossary.")],
+    glossary: Annotated[list[str] | None, Field(description="Optional domain lemmas for this call, added to the server's ESTNLTK_MCP_DOMAIN_GLOSSARY file.")] = None,
+) -> _DomainTermsResult:
+    """Flags compounds that no lexicon and no domain glossary vouches for.
+
+    A compound is reported when it is unattested (see
+    check_compound_familiarity) AND absent from the operator's glossary
+    (ESTNLTK_MCP_DOMAIN_GLOSSARY, one lemma per line), the identifier list
+    (ESTNLTK_MCP_DOMAIN_IDENTIFIERS) and the per-call `glossary`. Each
+    comes with up to three nearest glossary terms as `suggestions`.
+
+    Use it on Estonian you wrote about an organisation's own systems: a
+    reported compound is often a coinage where the organisation already
+    has a word, or where the thing should be named by its identifier.
+
+    Input capped at 100,000 characters.
+    """
+    return _check_domain_terms(text, glossary)
 
 
 def _check_abbreviation_hyphenation(text: str) -> dict:

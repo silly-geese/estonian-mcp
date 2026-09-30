@@ -7,6 +7,25 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`check_domain_terms(text, glossary?)`, and an optional domain
+  glossary.** An organisation writing about its own systems has words the
+  general corpus never saw, and an agent writing for it tends to coin a
+  compound to name a thing instead of using the word the organisation
+  already has. `check_compound_familiarity` cannot tell the two apart, on
+  purpose: unattested is the normal state of specialist vocabulary. A
+  glossary can. Set `ESTNLTK_MCP_DOMAIN_GLOSSARY` to a UTF-8 file, one
+  lemma per line, `#` for comments, and optionally
+  `ESTNLTK_MCP_DOMAIN_IDENTIFIERS` for names that are allowed but never
+  suggested. The new tool reports compounds that are unattested AND not
+  listed, each with up to three nearest glossary terms by spelling
+  similarity. A per-call `glossary` extends the file, for clients that
+  cannot configure the server.
+- **`in_domain_glossary` on `check_compound_familiarity` compounds**, only
+  when a glossary is loaded. Without one, every output is exactly as
+  before.
+
 ## [0.6.4] - 2026-09-22
 
 ### Security
