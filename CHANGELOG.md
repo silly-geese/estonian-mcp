@@ -242,7 +242,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   description and the skill now say so in as many words, because the
   previous framing invited exactly the rewrite that started this.
 
-## [0.6.0] — 2026-09-08
+## [0.6.0] - 2026-09-08
 
 ### Fixed
 
@@ -301,7 +301,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   indicative and `lähe` in `ei lähe` a command as well. Each is a whole
   word an agent meets in ordinary Estonian.
 
-## [0.5.10] — 2026-09-07
+## [0.5.10] - 2026-09-07
 
 Continues from the report that produced 0.5.8: Pert Lomp
 ([github.com/pertlomp](https://github.com/pertlomp/qwen38-et),
@@ -355,7 +355,7 @@ scoring while training an open Estonian model, and offered his data.
   rather than taking the head, because the file is ordered and its first
   rows score 5 points differently from the whole.
 
-## [0.5.9] — 2026-09-07
+## [0.5.9] - 2026-09-07
 
 ### Fixed
 
@@ -389,7 +389,7 @@ scoring while training an open Estonian model, and offered his data.
   and it runs in CI on both Python versions.
 
 
-## [0.5.8] — 2026-09-07
+## [0.5.8] - 2026-09-07
 
 Both of these came out of a reader checking our
 `data/inflection_et_eki_disputes.json` against his own Estonian inflection
@@ -447,7 +447,7 @@ defects are ours; the prompt to look was his.
   what turned up `tava`, and it fails on the old `sg adt` spelling.
 
 
-## [0.5.7] — 2026-08-25
+## [0.5.7] - 2026-08-25
 
 ### Added
 
@@ -553,7 +553,7 @@ defects are ours; the prompt to look was his.
   still the last few hundred lines of it, but the count stopped being
   true about twenty tools ago.
 
-## [0.5.6] — 2026-08-23
+## [0.5.6] - 2026-08-23
 
 Everything here came out of auditing the 13 `inflection_et` gold rows that
 contradict EKI. Those 13 are the dataset's, and they are reported upstream.
@@ -704,7 +704,7 @@ release:
   property that each inflection type's table is exactly what strict hinted
   synthesis produces, so no relaxation can creep back in.
 
-## [0.5.5] — 2026-08-23
+## [0.5.5] - 2026-08-23
 
 ### Fixed
 
@@ -728,7 +728,7 @@ release:
   Rather than add `-mata` to the ending list and leave that in place, the
   check now consults Vabamorf, which separates *most* of them: a frozen
   attributive has an adjective reading carrying no case/number form, a
-  declining one only ever carries `sg n` / `pl n`. Not all — see Known
+  declining one only ever carries `sg n` / `pl n`. Not all: see Known
   limits below. The ending list stays as a fallback,
   because Vabamorf sometimes misanalyses these as nouns (`hajutatud` →
   `S/pl n/hajutatu`) and the ending is correct there.
@@ -763,8 +763,8 @@ release:
   with no case/number form is enough to freeze the word. The probe is also
   looked up from the lowercased word, so capitalisation cannot change the
   answer (`Täitmata` analysed as `H/sg n` where `täitmata` is `V/mata`).
-  Without this, `lugupeetud` — the standard salutation in Estonian
-  official correspondence — reported as declinable.
+  Without this, `lugupeetud` (the standard salutation in Estonian
+  official correspondence) reported as declinable.
 
 ### Known limits
 
@@ -786,7 +786,7 @@ assert them so the documentation and the behaviour stay in step:
   plurals, so it exercises neither defect and could not have caught either.
   `tests/test_indeclinable.py` is what guards this now.
 
-## [0.5.4] — 2026-08-23
+## [0.5.4] - 2026-08-23
 
 ### Security
 
@@ -798,7 +798,7 @@ assert them so the documentation and the behaviour stay in step:
   different header got its own fresh bucket, and the public deployment's
   only DoS protection did nothing.
 
-  Reproduced against a local server in public mode at a 5/min limit — a
+  Reproduced against a local server in public mode at a 5/min limit: a
   fixed spoofed value gets 429 after five requests, rotating values stay
   200 indefinitely. `SECURITY.md` asserted the opposite and has been
   corrected.
@@ -808,7 +808,7 @@ assert them so the documentation and the behaviour stay in step:
   A caller cannot append after a proxy, so this is correct whether the edge
   appends to a client-supplied header or replaces it. uvicorn's
   `proxy_headers` is now **off**, because the fallback needs
-  `scope["client"]` to be the real peer — with it on, even
+  `scope["client"]` to be the real peer. With it on, even
   `TRUSTED_PROXY_HOPS=0` stayed bypassable, which the tests caught.
 
   Set `ESTNLTK_MCP_TRUSTED_PROXY_HOPS=0` if you run the server directly
@@ -817,11 +817,11 @@ assert them so the documentation and the behaviour stay in step:
   Surfaced while reviewing PR #36; credit to @laazik, whose nginx config
   prompted the question even though the bug is ours, not theirs.
 
-## [0.5.3] — 2026-08-23
+## [0.5.3] - 2026-08-23
 
 Fixes both issues reported by @Kivaste against 0.5.1. Neither affected the
-hosted server or the one-click image — verified by calling both tools on
-the live deployment before changing anything — so this is a source-install
+hosted server or the one-click image (verified by calling both tools on
+the live deployment before changing anything), so this is a source-install
 release. #37 asked whether the image was affected too; it is not, and CI
 now asserts that rather than leaving it to luck.
 
@@ -830,7 +830,7 @@ now asserts that rather than leaving it to luck.
 - **`check_term_consistency` reported a confident negative while running at
   half strength** ([#38](https://github.com/silly-geese/estonian-mcp/issues/38)).
   With Estonian WordNet missing it returned "Ebajärjekindlat terminikasutust
-  ei tuvastatud" — reads as a clean bill of health — while the
+  ei tuvastatud" (reads as a clean bill of health) while the
   `shared-wordnet-synset` rule never ran. The only signal was a `rules_run`
   flag you had to know to read. Now the degradation is stated in
   `summary_estonian` itself, in Estonian, with the command that fixes it,
@@ -838,8 +838,8 @@ now asserts that rather than leaving it to luck.
   honest, this was not.
 - **The server no longer attempts to DOWNLOAD a missing resource.** The old
   code called `Wordnet()` and caught the fallout, so on a machine without
-  the resource EstNLTK would try to fetch it — breaching the "no outbound
-  HTTP calls" promise in PRIVACY.md — and print its confirmation prompt to
+  the resource EstNLTK would try to fetch it (breaching the "no outbound
+  HTTP calls" promise in PRIVACY.md) and print its confirmation prompt to
   stdout, which under stdio transport *is* the MCP protocol channel. A new
   `_wordnet_available()` checks the filesystem first via
   `get_resource_paths(download_missing=False)`, so neither can happen.
@@ -847,11 +847,11 @@ now asserts that rather than leaving it to luck.
 
 ### Added
 
-- **`scripts/fetch_resources.py`** — the missing setup step for source
+- **`scripts/fetch_resources.py`**: the missing setup step for source
   installs ([#37](https://github.com/silly-geese/estonian-mcp/issues/37)).
   Fetches NLTK `punkt_tab`, Estonian WordNet and the fastText model, none of
   which can come from `uv.lock` because they are data, not Python
-  distributions. Sets `SSL_CERT_FILE` from `certifi` first — uv-provisioned
+  distributions. Sets `SSL_CERT_FILE` from `certifi` first: uv-provisioned
   interpreters ship without a CA trust store, so the documented
   `nltk.download()` route fails with `CERTIFICATE_VERIFY_FAILED`; credit to
   the reporter for diagnosing that. fastText is checksum-verified and moved
@@ -869,7 +869,7 @@ now asserts that rather than leaving it to luck.
   re-fetches it over HTTPS whenever the local copy is more than two hours
   old. So a healthy, long-running server made a periodic outbound call to
   `raw.githubusercontent.com` on the next `synonyms` or
-  `check_term_consistency` — and when that call failed it reported an
+  `check_term_consistency`, and when that call failed it reported an
   *installed* WordNet as missing. `_wordnet_available()` now reads the
   resources directory directly.
 
@@ -884,10 +884,10 @@ now asserts that rather than leaving it to luck.
   container path only, while `fetch_resources.py` writes to
   `~/.cache/estnltk-mcp/`. Following the documented setup and then running
   the documented verify step failed, because the script cannot export a
-  variable into the server process — and a JSON-configured MCP client
+  variable into the server process, and a JSON-configured MCP client
   cannot run a shell `export` at all. The lookup now tries both.
 - **Dockerfile fetches `punkt_tab` explicitly and asserts it loads.** The
-  image already worked, but by accident rather than by construction — a
+  image already worked, but by accident rather than by construction: a
   base-image change could have removed it silently and broken
   `check_compounds` for every one-click user.
 - **CI covers both issues.** The container test now calls `check_compounds`
@@ -899,7 +899,7 @@ now asserts that rather than leaving it to luck.
   why the server never downloads anything itself.
 - **`tests/test_no_network.py` enforces the privacy promise** rather than
   documenting it: every tool runs with sockets and DNS blocked, and the
-  blocker *records* each attempt instead of only raising — the first
+  blocker *records* each attempt instead of only raising. The first
   version raised, and the code under test caught the exception by design,
   so it passed against a live violation. Covers the stale-index case
   specifically, which is the production steady state.
@@ -915,11 +915,11 @@ now asserts that rather than leaving it to luck.
   accepted forever. punkt_tab extracts to a staging dir with zip-slip
   protection and is swapped in only after it tokenises, with rollback.
 
-## [0.5.2] — 2026-08-23
+## [0.5.2] - 2026-08-23
 
 ### Added
 
-- **`mcp_methods` at `/metrics`** — POST `/mcp` traffic bucketed by JSON-RPC
+- **`mcp_methods` at `/metrics`**: POST `/mcp` traffic bucketed by JSON-RPC
   method. This exists to answer a question the old counters could not:
   `tool_calls_total / sessions_total` was 0.53, i.e. more than half of
   `initialize` calls never led to a tool call, with no way to tell probes
@@ -930,7 +930,7 @@ now asserts that rather than leaving it to luck.
 
   Method names are bucketed against a **fixed allowlist**; anything else
   counts as `other`. The method comes from a request body and is therefore
-  caller-controlled, so it is never stored verbatim — that keeps the
+  caller-controlled, so it is never stored verbatim. That keeps the
   metrics dict bounded against a hostile client inventing method names and
   keeps arbitrary caller strings off `/metrics`. Still PII-free: only the
   `method` field is read, never params, arguments or clientInfo.
@@ -950,19 +950,19 @@ now asserts that rather than leaving it to luck.
   on even a 100k-char tool call is well under a millisecond against tool
   executions that run 10ms-7s, so the visibility is worth the trade. Method
   names are still matched by parsing rather than substring, so a tool call
-  whose Estonian text merely contains `initialize` is not miscounted —
-  pinned by test.
+  whose Estonian text merely contains `initialize` is not miscounted
+  (pinned by test).
 
 ### Security
 
 - **cryptography 48.0.1 → 50.0.0** (CVE-2026-69247, high): a Bleichenbacher
   oracle in PKCS#7 EnvelopedData decryption via distinguishable errors and
   timing. Transitive only (`mcp` → `pyjwt` → `cryptography`) and not in the
-  exploitable path — the server never touches JWT or PKCS#7; bearer auth is
+  exploitable path: the server never touches JWT or PKCS#7; bearer auth is
   a `secrets.compare_digest` comparison, and public mode has no auth at
   all. Patched regardless.
 
-## [0.5.1] — 2026-07-31
+## [0.5.1] - 2026-07-31
 
 ### Changed
 
@@ -973,7 +973,7 @@ now asserts that rather than leaving it to luck.
   `explanation` field, so the parenthetical was redundant. Output-only
   change, no logic touched.
 
-## [0.5.0] — 2026-07-31
+## [0.5.0] - 2026-07-31
 
 Editorial release. Everything here came out of replaying a real Estonian
 editing conversation through the server: a native speaker rewriting an
@@ -984,7 +984,7 @@ most of them stayed silent or gave the wrong verdict. 24 tools → 26.
 
 ### Added
 
-- **`check_officialese(text)` — kantseliit check for NON-legal Estonian.**
+- **`check_officialese(text)`: kantseliit check for NON-legal Estonian.**
   `check_legalese` exists but is scoped to statutes: on a real R&D report
   paragraph it returned zero issues, because its filler lexicon is
   legal-specific and its 34-word gate sits above where Estonian prose
@@ -999,11 +999,11 @@ most of them stayed silent or gave the wrong verdict. 24 tools → 26.
   the report: impersonal ratio 0.875 → 0.308, `-mine` per 100 words
   7.89 → 2.33, longest sentence 30 → 21 words. The bureaucratic
   original flags; the human rewrite comes back clean.
-- **`check_term_consistency(text)` — one referent, one term.** The
+- **`check_term_consistency(text)`: one referent, one term.** The
   long-document defect a model editing paragraph-by-paragraph reliably
   misses: a dataset that is `andmestik` on page 1, `teadusandmestik` on
-  page 2 and `pildiandmestik` on page 3. Two precision-first rules —
-  shared compound head, and shared Estonian WordNet synset — with
+  page 2 and `pildiandmestik` on page 3. Two precision-first rules
+  (shared compound head, and shared Estonian WordNet synset) with
   per-variant counts so you can standardise on the dominant term. Two
   compounds sharing a head is deliberately *not* enough to flag, since
   those are usually distinct things. Known gap, stated in the tool's own
@@ -1018,13 +1018,13 @@ most of them stayed silent or gave the wrong verdict. 24 tools → 26.
   *deflated* the ratio. The `ta` / `da` impersonal-present-negative form
   (`ei esitata`) was absent from the form set and missed entirely.
   `ei avaldatud` is tagged `pos=A`, not `V`, and was skipped. And
-  attributive `-tud` participles (`lukustatud hindamisosa` — a modifier,
+  attributive `-tud` participles (`lukustatud hindamisosa`, a modifier,
   not a predicate) were counted as passive; they now appear under
   `attributive_excluded` instead. The counter is shared with the two new
   tools, so all three agree.
 - **`check_compound_familiarity`'s junk-neighbour gate inverted human
-  judgement.** `pildiandmestik` — whose top fastText neighbour is its own
-  head `andmestik` at 0.71 — was flagged suspect purely because 5/8 of
+  judgement.** `pildiandmestik`, whose top fastText neighbour is its own
+  head `andmestik` at 0.71, was flagged suspect purely because 5/8 of
   the neighbour *tail* was scrape junk, while `teadusandmestik` (0.705),
   the word a native speaker called artificial, passed. The junk gate is
   now decisive only when the compound is also weak at the top (< 0.60)
@@ -1034,14 +1034,14 @@ most of them stayed silent or gave the wrong verdict. 24 tools → 26.
   converse limit explicitly: similarity cannot judge register, so a
   well-formed but *stilted* compound will pass. Relatedly, the
   `neighbour_quality.legal_term` marker is now stamped for every known
-  term of art rather than only for ones whose verdict had to be rescued —
+  term of art rather than only for ones whose verdict had to be rescued:
   with the guard in place, `solidaarvõlgnik` clears on its own merits but
   callers still want to know it is attested legal vocabulary.
 
 ### Changed
 
 - **`classify_register` scored dense officialese as `neutraalne`, 0.0,
-  with zero markers** — while 87.5% of that text's verbs were
+  with zero markers**, while 87.5% of that text's verbs were
   impersonal. Two fixes: the lexicon gains academic/report vocabulary
   (`aruandeperiood`, `ettevõttesiseselt`, `valideerima`, `metoodika`,
   …), and a new `structure` block folds in umbisikuline tegumood ratio
@@ -1051,8 +1051,8 @@ most of them stayed silent or gave the wrong verdict. 24 tools → 26.
   chatty copy can never be nudged formal.
 - **`synonyms` now documents the word-fit check.** The server already
   knew that `korpus` means "kirjaliku või suulise teksti elektrooniline
-  kogu" — the exact fact that settles whether a set of images can be
-  called one — but returned it as one of five unranked senses with
+  kogu" (the exact fact that settles whether a set of images can be
+  called one) but returned it as one of five unranked senses with
   nothing telling the model to test the gloss against context. The
   docstring now says to read each `definition` for its domain constraint
   when the question is "is this the right word here?".
@@ -1065,7 +1065,7 @@ most of them stayed silent or gave the wrong verdict. 24 tools → 26.
   table, and a corrected `check_compound_familiarity` threshold (the
   skill still documented the old 0.55 gate).
 
-## [0.4.4] — 2026-07-29
+## [0.4.4] - 2026-07-29
 
 ### Security
 
@@ -1075,26 +1075,26 @@ most of them stayed silent or gave the wrong verdict. 24 tools → 26.
   never invokes, so the advisories were not in the exploitable path. This
   patches it regardless and makes `/health` reflect the refreshed build.
 
-## [0.4.3] — 2026-07-20
+## [0.4.3] - 2026-07-20
 
 ### Changed
 
 - **Static icons now serve a 1-year immutable cache + ETag with `304 Not
   Modified` handling.** A client ignoring the existing cache header had been
-  re-fetching `/favicon.svg` in a loop (~65% of all requests — most likely
+  re-fetching `/favicon.svg` in a loop (~65% of all requests, most likely
   connector-directory icon rendering); conditional and well-behaved clients
   now stop re-downloading. Cheap, no functional change.
 - **README getting-started reflects the Connectors Directory.** Now that
   estonian-mcp is in Anthropic's official directory, the install flow leads
   with one-click from the directory; pasting the custom URL is the fallback.
 
-## [0.4.2] — 2026-07-18
+## [0.4.2] - 2026-07-18
 
 ### Security
 
 - Dependency refresh resolving 6 high-severity Dependabot advisories, no
-  API or behaviour change: **mcp** 1.27.0 → 1.28.1 (3 high — the core MCP
-  SDK), **nltk** 3.9.4 → 3.10.0 (1 high — the `nltk.data.load()`
+  API or behaviour change: **mcp** 1.27.0 → 1.28.1 (3 high: the core MCP
+  SDK), **nltk** 3.9.4 → 3.10.0 (1 high: the `nltk.data.load()`
   path-traversal previously left open for lack of an upstream patch, now
   fixed and no longer just monitored), **soupsieve** 2.8.3 → 2.8.4 (2 high).
 
@@ -1106,37 +1106,37 @@ most of them stayed silent or gave the wrong verdict. 24 tools → 26.
   Updated the README intro, `pyproject.toml`, and the GitHub About
   description (Smithery listing is a manual dashboard field).
 
-## [0.4.1] — 2026-07-06
+## [0.4.1] - 2026-07-06
 
 ### Changed
 
 - **The bundled `common_legal_usage` index is now real, license-clean data.**
   Replaced the tiny authored proof-of-concept sample with an index built from
-  **public-domain Riigi Teataja legislation** — the five core codes
+  **public-domain Riigi Teataja legislation**: the five core codes
   (Võlaõigusseadus, Tsiviilseadustiku üldosa seadus, Tsiviilkohtumenetluse
-  seadustik, Asjaõigusseadus, Karistusseadustik) — **~2,000 legal terms**
-  across obligations, general civil, civil procedure, property, and penal law,
+  seadustik, Asjaõigusseadus, Karistusseadustik). It holds **~2,000 legal
+  terms** across obligations, general civil, civil procedure, property, and penal law,
   with true corpus frequencies: `hagi` → `esitama hagi` / `hagi tagamine`,
   `kohustus` → `kohustuse täitmine`, `kuritegu` → `kuriteo toimepanemine`,
   `omand` → `omandi üleandmine`. ~100 KB, offline, PII-free.
-- **New `scripts/fetch_riigiteataja.py`** — fetches consolidated act text from
+- **New `scripts/fetch_riigiteataja.py`**: fetches consolidated act text from
   Riigi Teataja's public `/api/v1/akt/{id}/blob-html` endpoint into `.txt`
   files for `build_legal_collocations.py --source dir`. Coverage broadens by
-  adding act ids — no code change.
+  adding act ids. No code change.
 
-## [0.4.0] — 2026-07-06
+## [0.4.0] - 2026-07-06
 
 ### Added
 
-- **`common_legal_usage` (tool count 23 → 24)** — canonical legal-usage
+- **`common_legal_usage` (tool count 23 → 24)**: canonical legal-usage
   collocations from an offline corpus index. Given a legal term it returns
   how often it occurs in legislation and the content words most often seen
   directly before / after it (`hagi` → `esitama hagi`, `kohustus` →
   `kohustuse täitmine`), so the model uses real legalese instead of inventing
   collocations. Deterministic and offline.
-- **`scripts/build_legal_collocations.py`** — the index build pipeline. It
+- **`scripts/build_legal_collocations.py`**: the index build pipeline. It
   streams a corpus sentence-by-sentence, distills collocation/frequency
-  statistics with Vabamorf, and discards the text — the corpus is never
+  statistics with Vabamorf, and discards the text: the corpus is never
   stored, only the pruned index. Source-agnostic (`--source sample|dir|hf`).
 
 ### Notes
@@ -1149,19 +1149,19 @@ most of them stayed silent or gave the wrong verdict. 24 tools → 26.
   HuggingFace corpus is **non-commercial** (Estonian National Corpus), so it
   is a `--source hf` research option only and is NOT shipped.
 
-## [0.3.0] — 2026-07-06
+## [0.3.0] - 2026-07-06
 
 ### Added
 
-- **Two legal-Estonian tools (tool count 21 → 23)** — for working with
+- **Two legal-Estonian tools (tool count 21 → 23)**, for working with
   Estonian legal texts, offline and PII-free so confidential documents
   never leave the machine:
-  - **`check_legalese`** — plain-language simplification aid. Flags archaic
+  - **`check_legalese`**: plain-language simplification aid. Flags archaic
     'kantseliit' filler (`käesolev` → `see`, `juhul kui` → `kui`) and
     over-long / over-nested sentences to split, while listing the legal
     **terms of art** in the text that must be preserved verbatim (a general
     synonym would change the legal meaning).
-  - **`check_defined_terms`** — structural map for long documents: extracts
+  - **`check_defined_terms`**: structural map for long documents. Extracts
     `(edaspidi «X»)` definitions and their usage, `§` / `lõige` / `punkt`
     cross-references, and flags defined-but-unused or doubly-defined terms.
     Input cap raised to 500,000 chars so whole contracts fit.
@@ -1173,7 +1173,7 @@ most of them stayed silent or gave the wrong verdict. 24 tools → 26.
   (`õigussuhe`, `solidaarvõlgnik`, `abieluvaraleping`) that the general-web
   fastText vocabulary mistook for coinages.
 
-## [0.2.4] — 2026-07-04
+## [0.2.4] - 2026-07-04
 
 ### Security
 
@@ -1184,38 +1184,38 @@ most of them stayed silent or gave the wrong verdict. 24 tools → 26.
   2.14.2 (1 medium). One advisory is knowingly left open: **nltk**
   (GHSA-p4gq-832x-fm9v) has no upstream patch, and its vulnerable
   `nltk.data.load()` path-traversal is not reachable from user input here
-  (estnltk only ever calls it with a hardcoded resource path) — monitored
+  (estnltk only ever calls it with a hardcoded resource path). Monitored
   pending a fix.
 
-## [0.2.3] — 2026-06-29
+## [0.2.3] - 2026-06-29
 
 ### Changed
 
 - **Inner-returned 500s now carry an exception type in `recent_errors`.**
   When the MCP SDK hits an unhandled error in request handling it logs the
   exception and returns its own 500, so it never reached our wrapper and the
-  `/metrics` breadcrumb showed `error: null` (a blind spot — two such 500s on
+  `/metrics` breadcrumb showed `error: null` (a blind spot: two such 500s on
   Jun 21 were unattributable). A small logging handler now captures the
-  exception TYPE name the SDK logs (type only — never the message or
+  exception TYPE name the SDK logs (type only, never the message or
   traceback) and the ring buffer labels the 500 with it. Best-effort and
   bounded by a freshness window; PII-free; SECURITY.md posture unchanged.
 
-## [0.2.2] — 2026-06-19
+## [0.2.2] - 2026-06-19
 
 ### Added
 
-- **`sessions_total` at `/metrics`** — a count of MCP `initialize` calls,
+- **`sessions_total` at `/metrics`**: a count of MCP `initialize` calls,
   a privacy-safe proxy for client connections. It is **not** a user count:
   a client that reconnects counts again, and automated probes count too. No
-  identity, IP, or request body is stored — the wrapper peeks the small
+  identity, IP, or request body is stored: the wrapper peeks the small
   JSON-RPC body only to read the `method`, then replays it to the inner app
   byte-for-byte. The daily snapshot records it, so day-over-day deltas give
   "connections/day". Privacy posture in SECURITY.md is unchanged.
 
-## [0.2.1] — 2026-06-17
+## [0.2.1] - 2026-06-17
 
 A small quality release: sharper AI-coinage detection and a persistent
-error log at `/metrics`. No breaking changes — drop-in over 0.2.0.
+error log at `/metrics`. No breaking changes: drop-in over 0.2.0.
 
 ### Added
 
@@ -1223,7 +1223,7 @@ error log at `/metrics`. No breaking changes — drop-in over 0.2.0.
   responses (timestamp, path, status, exception type) are kept in a ring
   buffer exposed at `/metrics` and persisted alongside the counters, so
   failures stay inspectable without relying on Fly's short-lived log tail.
-  PII-free — no request bodies, no tokens.
+  PII-free: no request bodies, no tokens.
 
 ### Changed
 
@@ -1237,23 +1237,23 @@ error log at `/metrics`. No breaking changes — drop-in over 0.2.0.
   function (`_familiarity_verdict`), unit-tested against real model output
   without loading the 33 MB model (`tests/test_familiarity.py`).
 - **Guidance against trusting `spell_check` blindly.** Vabamorf accepts any
-  morphologically valid compound — including coined ones — so `spell_check`
+  morphologically valid compound, including coined ones, so `spell_check`
   returning `spelling: true` does not prove a word is real Estonian. The
   `spell_check` docstring and the server instructions now say so and point
   to `check_compound_familiarity` for coined or unusual compounds.
 
-## [0.2.0] — 2026-06-03
+## [0.2.0] - 2026-06-03
 
 21 tools (up from 20), a bigger embedding model, request-count
 persistence, and a round of transport/robustness hardening. No
-breaking changes — drop-in over 0.1.0.
+breaking changes: drop-in over 0.1.0.
 
 ### Added
 
-- **New tool: `check_redundancy`** — pleonasm / semantic-doubling
+- **New tool: `check_redundancy`**. Pleonasm / semantic-doubling
   check (`samuti ka` → "also also", `kõige optimaalsem` → "most
   optimal", plus fixed redundant phrases). Brings the count to **21**.
-- `scripts/build_fasttext.py` — the recipe for the compressed fastText
+- `scripts/build_fasttext.py`: the recipe for the compressed fastText
   artifact, in-repo so the model is reproducible from source.
 - `CONTRIBUTING` section in the README, with a call for native-speaker
   corrections to the linguistic lexicons.
@@ -1262,7 +1262,7 @@ breaking changes — drop-in over 0.1.0.
 ### Changed
 
 - fastText model upgraded from the 20K-vocab `mini` build to a
-  100K-vocab `medium` build (~33 MB) — far fewer calque-detection
+  100K-vocab `medium` build (~33 MB): far fewer calque-detection
   false positives on legitimate-but-uncommon compounds.
 - Public-mode rate limit raised 30 → 300/min per IP, bearer-mode
   60 → 120/min per token (data showed zero throttling at the old caps).
@@ -1275,7 +1275,7 @@ breaking changes — drop-in over 0.1.0.
   returning a cryptic 406; `/sse` returns a helpful pointer to `/mcp`.
 - Unhandled errors in the HTTP wrapper return a clean structured 500
   with a PII-free log breadcrumb, instead of a raw crash.
-- Estonian Wordnet (CC-BY-SA-4.0) attribution added to NOTICE — it was
+- Estonian Wordnet (CC-BY-SA-4.0) attribution added to NOTICE: it was
   bundled and re-hosted but previously undocumented.
 - Security: `idna` 3.13 → 3.16 (CVE-2026-45409).
 
@@ -1285,7 +1285,7 @@ breaking changes — drop-in over 0.1.0.
   MCP inside deliverable copy; reference native-speaker intuition
   neutrally (`emakeele kõneleja`, not gendered framing).
 
-## [0.1.0] — 2026-05-18
+## [0.1.0] - 2026-05-18
 
 Initial public release. 20 MCP tools for Estonian writing and
 analysis, fully offline (no third-party API calls at runtime).
@@ -1295,48 +1295,48 @@ submitted to the Anthropic Connectors Directory.
 
 ### Core NLP tools (EstNLTK + Vabamorf)
 
-- `tokenize` — sentence + word segmentation
-- `analyze_morphology` — lemma, POS, case form, root, ending, clitic,
+- `tokenize`: sentence + word segmentation
+- `analyze_morphology`: lemma, POS, case form, root, ending, clitic,
   compound parts, ambiguity count, usage flags
   (archaic/foreign/interjection/abbreviation/proper-noun)
-- `lemmatize` — dictionary form per word
-- `pos_tag` — part-of-speech tags
-- `spell_check` — Vabamorf spell-check + suggestions
-- `syllabify` — syllables with quantity + accent
-- `named_entities` — PER/LOC/ORG via the bundled CRF model
-- `paradigm` — full Vabamorf-synthesised inflection paradigm for any
+- `lemmatize`: dictionary form per word
+- `pos_tag`: part-of-speech tags
+- `spell_check`: Vabamorf spell-check + suggestions
+- `syllabify`: syllables with quantity + accent
+- `named_entities`: PER/LOC/ORG via the bundled CRF model
+- `paradigm`: full Vabamorf-synthesised inflection paradigm for any
   Estonian word (14 cases × 2 numbers for nominals, ~30 verb forms)
 
 ### Vocabulary tools
 
-- `synonyms` — Estonian WordNet synsets with definitions
-- `find_related_words` — fastText nearest neighbours (subword-aware,
+- `synonyms`: Estonian WordNet synsets with definitions
+- `find_related_words`: fastText nearest neighbours (subword-aware,
   100K-vocab medium model)
 
 ### Style + register
 
-- `classify_register` — formal / colloquial / neutral classifier with
+- `classify_register`: formal / colloquial / neutral classifier with
   matched markers and a `consistency` flag for register-mixed text
-- `check_style` — repetition, passive-voice ratio, sentence-length
+- `check_style`: repetition, passive-voice ratio, sentence-length
   variance, hedging-word density (one tool, four metrics)
-- `check_object_case` — flags wrong direct-object cases under negation
+- `check_object_case`: flags wrong direct-object cases under negation
   and after partitive-only verbs (`armastama`, `vihkama`, …)
-- `check_compound_familiarity` — fastText-based diagnostic flagging
+- `check_compound_familiarity`: fastText-based diagnostic flagging
   out-of-vocab compounds with weak similarity (catches calques like
   `mõtteliin` for "train of thought" → real Estonian `mõttekäik`)
 
 ### EKI Reeglid orthography
 
-- `check_capitalization` — Algustäheortograafia: weekdays, months,
+- `check_capitalization` (Algustäheortograafia): weekdays, months,
   nationalities, and language/culture adjectives wrongly capitalised
-- `check_compounds` — Liitsõnaõigekiri: common compound splits
+- `check_compounds` (Liitsõnaõigekiri): common compound splits
   (`kooli maja` → `koolimaja`)
-- `check_punctuation` — Kirjavahemärgid: missing commas before
+- `check_punctuation` (Kirjavahemärgid): missing commas before
   subordinating conjunctions (`et`, `kuna`, `sest`, `kuigi`, …)
-- `check_hyphenation` — Poolitamine: safe line-break positions
-- `check_numbers` — Decimal (`3.14` → `3,14`) and thousands
+- `check_hyphenation` (Poolitamine): safe line-break positions
+- `check_numbers`: Decimal (`3.14` → `3,14`) and thousands
   (`1,000,000` → `1 000 000`) separator rules
-- `check_abbreviation_hyphenation` — `MCPst` → `MCP-st`,
+- `check_abbreviation_hyphenation`: `MCPst` → `MCP-st`,
   `OÜle` → `OÜ-le` per EKI's lühendiortograafia rule
 
 ### Transport + ops
@@ -1355,7 +1355,7 @@ submitted to the Anthropic Connectors Directory.
 
 ### Skills
 
-- `estonian-writing-assistant` — agent skill that guides Claude through
+- `estonian-writing-assistant`: agent skill that guides Claude through
   proofreading, register-aware rewriting, breaking repetition, and
   morphology study workflows using all 20 tools
 

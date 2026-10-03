@@ -39,7 +39,7 @@ jobs:
 
       # The documented setup path, not a bespoke one. This job used to
       # hand-roll the WordNet + fastText fetches and let EstNLTK silently
-      # auto-download punkt_tab on first use — which is exactly the
+      # auto-download punkt_tab on first use, which is exactly the
       # behaviour the server now refuses, so a divergent CI would have gone
       # green while users hit issues #37/#38.
       - name: Fetch resources (the documented setup step)
@@ -147,7 +147,7 @@ jobs:
           uv run --python 3.13 python - <<'EOF'
           import server
           # Every resource-dependent tool must fail with an ACTIONABLE
-          # message naming the setup script — never a raw NLTK LookupError
+          # message naming the setup script, never a raw NLTK LookupError
           # telling the user to run nltk.download(), which is advice this
           # server deliberately does not follow.
           for call in (
@@ -317,7 +317,7 @@ jobs:
 
           # Actually CALL the resource-backed tools inside the container.
           # These exercise the bundled WordNet (synonyms) and fastText
-          # (find_related_words) under the non-root runtime user — the
+          # (find_related_words) under the non-root runtime user: the
           # exact path that broke in production with EACCES on the
           # root-owned resources dir. initialize alone never caught it.
           call_tool () {

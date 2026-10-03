@@ -6,8 +6,8 @@ the matching skill installed, Claude reads the skill's instructions
 at the start of relevant conversations and uses the tools in the
 recommended patterns.
 
-Skills here are independent of the MCP server code — they're
-just markdown — and can be installed without redeploying anything.
+Skills here are independent of the MCP server code (they're
+just markdown) and can be installed without redeploying anything.
 
 ## Available skills
 

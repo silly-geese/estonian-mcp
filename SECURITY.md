@@ -15,8 +15,8 @@ within 30 days for confirmed issues, sooner for high-severity.
 
 `estonian-mcp` is a small ASGI/MCP server that ships in two modes:
 
-- **stdio** — local subprocess launched by the MCP client.
-- **streamable-http** — bearer-protected HTTP service for remote
+- **stdio**: local subprocess launched by the MCP client.
+- **streamable-http**: bearer-protected HTTP service for remote
   deployments (Smithery, Fly.io, your own container host).
 
 Each mode has a different attack surface; we describe both.
@@ -80,13 +80,13 @@ silly-geese-hosted public Smithery listing. Defences:
   Intentional, so Smithery installs are one-click.
 - **Per-IP rate limit.** Default 300 requests/minute keyed on the
   originator IP, resolved by `_client_ip` from the **rightmost**
-  `X-Forwarded-For` entry — specifically the Nth-from-right, where N is
+  `X-Forwarded-For` entry, specifically the Nth-from-right, where N is
   `ESTNLTK_MCP_TRUSTED_PROXY_HOPS` (default 1, matching Fly's single edge
   proxy). A proxy *appends* to whatever the caller sent, so the leftmost
   entry is caller-controlled and the rightmost is not.
 
   Until 0.5.4 this read `scope["client"][0]`, which uvicorn had rewritten
-  from the leftmost entry — so a caller could mint a fresh bucket per
+  from the leftmost entry, so a caller could mint a fresh bucket per
   request by varying the header and evade the limit entirely. If you run
   this server **directly exposed**, with no proxy in front, set
   `ESTNLTK_MCP_TRUSTED_PROXY_HOPS=0` so `X-Forwarded-For` is not trusted
@@ -107,7 +107,7 @@ defence-in-depth.
 - **No request logging, no token logging.** Uvicorn access logs are
   disabled; only operational events (boot, shutdown) are logged.
 - **HTTPS termination at the edge.** The server itself listens on
-  HTTP — terminate TLS at Fly's load balancer / Smithery's gateway /
+  HTTP. Terminate TLS at Fly's load balancer / Smithery's gateway /
   your reverse proxy. Uvicorn's `proxy_headers` is **off**, and this is
   deliberate: with it on (plus `forwarded_allow_ips="*"`) uvicorn
   rewrites the peer address from the LEFTMOST `X-Forwarded-For` entry,
@@ -144,7 +144,7 @@ defence-in-depth.
   deleting `/data/metrics.json` only affects the displayed counts; it
   doesn't reveal anything about what users sent.
 - **Stateless HTTP.** `mcp.settings.stateless_http = True` so each
-  request is independent — no per-client session state to grow
+  request is independent: no per-client session state to grow
   unbounded.
 
 ### Self-hosting behind nginx (`deploy/`)
@@ -180,7 +180,7 @@ What it adds over exposing the app directly:
   code identifies a connector, never a person, and the access token it
   returns does not expire on its own: revocation is the only expiry.
 - **No request logging by default**, and the error log is held at `crit`
-  because nginx stamps error lines with the full request line — which on
+  because nginx stamps error lines with the full request line, which on
   the Smithery `?config=` path wraps a bearer token. Responses with a 5xx
   status are logged either way, in the same format that carries no query
   string and no credential, so a failing stack is not also a silent one.
@@ -219,7 +219,7 @@ it does not give the server user identity. `tests/test_deploy.py` and
 - **One token per deployment.** If two teams share a deployment,
   they share a token; you cannot revoke one without affecting the
   other. Stand up two deployments with two tokens instead.
-- **Watch your platform's logs** for sustained 401s — that's the
+- **Watch your platform's logs** for sustained 401s: that's the
   signature of a leaked token being probed.
 
 ## Supply chain

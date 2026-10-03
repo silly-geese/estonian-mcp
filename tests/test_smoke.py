@@ -207,7 +207,7 @@ check("numbers every issue has rule_estonian",
 print("check_compound_familiarity")
 # mõtteliin = literal calque from English "train of thought"; real
 # Estonian is mõttekäik. OOV in our 100K-vocab medium model, top
-# similarity ~0.536 — exactly the AI failure mode this tool catches.
+# similarity ~0.536: exactly the AI failure mode this tool catches.
 r = server.check_compound_familiarity(
     "See on mõtteliin, mis viib eesmärgini."
 )
@@ -353,8 +353,8 @@ check("rule_estonian present on each issue",
       all(i.get("rule_estonian") for i in r["issues"]))
 
 print("check_redundancy")
-# The exact case from the field: "Samuti ka suvesärgid" — samuti + ka
-# both mean "also", a tautology.
+# The exact case from the field: "Samuti ka suvesärgid" (samuti + ka
+# both mean "also", a tautology).
 r = server.check_redundancy("Samuti ka suvesärgid.")
 check("flags 'samuti ka' doubling",
       any(i["rule"] == "doubled-also" for i in r["issues"]), str(r["issues"]))
@@ -366,7 +366,7 @@ check("flags 'kõige optimaalsem'",
 r = server.check_redundancy("Pikk ajaline periood möödus.")
 check("flags 'ajaline periood'",
       any(i["rule"] == "fixed-pleonasm" for i in r["issues"]), str(r["issues"]))
-# Idiomatic — must NOT flag. "kõige parem" is the everyday analytic
+# Idiomatic: must NOT flag. "kõige parem" is the everyday analytic
 # superlative (far more common than the synthetic "parim"); both are
 # correct Estonian and neither is a redundancy, so neither should fire.
 for phrase in ("See on kõige parem lahendus. Nüüd ka suvesärgid.",

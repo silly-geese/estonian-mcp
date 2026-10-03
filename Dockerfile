@@ -16,14 +16,14 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.18 /uv /usr/local/bin/uv
 # - curl: fetch the fastText model from Zenodo (+ WordNet zip from our
 #   GH Release mirror if upstream EstNLTK S3 is down).
 # - unzip: extract the GH-mirrored WordNet zip into the resources dir.
-# Builder stage only — discarded; runtime image doesn't get either.
+# Builder stage only (discarded); runtime image doesn't get either.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl unzip \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install deps from the lockfile only — the project itself isn't installed
+# Install deps from the lockfile only: the project itself isn't installed
 # because CMD invokes `python server.py` directly rather than the console
 # script entrypoint. This avoids Hatchling having to read README/LICENSE
 # during the build.
@@ -35,7 +35,7 @@ RUN uv sync --frozen --no-install-project --no-dev
 # first call at runtime. The "y" pipes past the [Y/n] prompt baked into
 # Wordnet's lazy-init path. If EstNLTK's upstream S3 (hpc.ut.ee) is
 # down, fall back to fetching the same zip from our GH Release mirror
-# and unpacking manually — same play as the Zenodo fastText fallback.
+# and unpacking manually (same play as the Zenodo fastText fallback).
 RUN set +e; \
     echo "y" | /opt/venv/bin/python -c "from estnltk.wordnet import Wordnet; Wordnet()"; \
     status=$?; \
@@ -52,7 +52,7 @@ RUN set +e; \
       /opt/venv/bin/python -c "from estnltk.wordnet import Wordnet; assert Wordnet()['kasutama'], 'wordnet still not loadable after mirror fallback'" ; \
     fi
 
-# NLTK punkt_tab — the sentence tokenizer EstNLTK's `sentences` layer
+# NLTK punkt_tab: the sentence tokenizer EstNLTK's `sentences` layer
 # uses. It is NLTK corpus data, not a Python distribution, so `uv sync`
 # cannot install it and it is absent from uv.lock. The image happened to
 # work without an explicit fetch, but "works by accident" is not a
@@ -63,7 +63,7 @@ RUN set +e; \
 # Reported as https://github.com/silly-geese/estonian-mcp/issues/37.
 # download_dir is NOT optional here. This is a multi-stage build and the
 # runtime stage copies only /opt/venv, /opt/models and /app. NLTK's default
-# target for root is /root/nltk_data, which is never copied — the build
+# target for root is /root/nltk_data, which is never copied: the build
 # would pass every assertion below and still ship an image without the
 # data. /opt/venv/nltk_data rides along with the venv and is on NLTK's
 # default search path at runtime (it derives paths from sys.prefix).
@@ -81,7 +81,7 @@ assert len(list(t.sentences)) == 2, 'sentence layer broken after punkt_tab fetch
 # check_domain_terms.
 # Built locally from Facebook's cc.et.300.bin (Grave et al. 2018,
 # CC-BY-SA-3.0) via compress-fasttext (Liebl 2021) and hosted on our
-# GH Release. No Zenodo dependency — Facebook's upstream is the
+# GH Release. No Zenodo dependency: Facebook's upstream is the
 # canonical source for the underlying vectors. MD5 verified after
 # download.
 RUN mkdir -p /opt/models \
@@ -119,8 +119,8 @@ COPY --from=builder /app/data /app/data
 # EstNLTK's WordNet opens its bundled SQLite DB read-write at query time
 # (SQLite must create a journal file alongside the DB), so the resources
 # dir has to be writable by the non-root runtime user. It's root-owned
-# from the build stage, so hand it to `app` before dropping privileges —
-# otherwise the `synonyms` tool fails at runtime with EACCES.
+# from the build stage, so hand it to `app` before dropping privileges.
+# Otherwise the `synonyms` tool fails at runtime with EACCES.
 RUN chown -R app:app /opt/venv/lib/python3.13/site-packages/estnltk/estnltk_resources
 
 # Metrics are persisted to /data/metrics.json. Create the mount point in
