@@ -21,6 +21,7 @@ Run via:
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -29,6 +30,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import jsonschema
 
 import server
+
+# A glossary exported in the developer's shell would change what these
+# tools return; the suite checks the server as it ships. The
+# glossary is read on first use, so this is early enough.
+for _name in ("ESTNLTK_MCP_DOMAIN_GLOSSARY", "ESTNLTK_MCP_DOMAIN_IDENTIFIERS",
+              "ESTNLTK_MCP_DOMAIN_SUGGEST_CUTOFF"):
+    os.environ.pop(_name, None)
 
 failures: list[str] = []
 skipped: list[str] = []
@@ -64,6 +72,8 @@ CALLS: list[tuple[str, dict]] = [
     ("check_style", {"text": "Süsteem kasutab andmeid. Andmed töödeldakse."}),
     ("check_officialese", {"text": "Aruandeperioodil koguti ja valideeriti andmestik."}),
     ("check_term_consistency", {"text": "Andmestik ja teadusandmestik."}),
+    ("check_term_consistency", {"text": "Andmestik ja teadusandmestik.",
+                                "glossary": ["teadusandmestik"]}),  # preferred
     ("check_compounds", {"text": "Kooli maja on suur."}),
     ("check_punctuation", {"text": "Ma tean et see on hea."}),
     ("check_capitalization", {"text": "Olen Eestlane."}),
@@ -72,6 +82,9 @@ CALLS: list[tuple[str, dict]] = [
     ("check_object_case", {"text": "Ma ei näen koera."}),
     ("check_abbreviation_hyphenation", {"text": "MCPst tuleb abi."}),
     ("check_compound_familiarity", {"text": "See on mõtteliin."}),
+    ("check_domain_terms", {"text": "See on mõtteliin."}),
+    ("check_domain_terms", {"text": "Vagunisõit ja vagunireisitabel.",
+                            "glossary": ["vagunireis"]}),  # suggestions
     ("check_hyphenation", {"word": "koerad"}),
     ("check_legalese", {"text": "Käesolev leping."}),
     ("check_defined_terms", {"text": 'Müüja (edaspidi «Müüja») müüb kauba.'}),

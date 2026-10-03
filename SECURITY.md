@@ -33,8 +33,10 @@ the server as a child process and communicates over stdin/stdout.
   still does not initiate outbound calls.)
 - **No shell execution.** No `os.system`, `subprocess`, `eval`,
   `exec`, or `pickle.loads` of untrusted input.
-- **No filesystem writes.** The server only reads code + models that
-  ship inside its own Python wheels.
+- **No filesystem writes.** The server only reads its own code and
+  models, the resources `scripts/fetch_resources.py` fetched, and the
+  domain glossary files an operator names in
+  `ESTNLTK_MCP_DOMAIN_GLOSSARY` and `ESTNLTK_MCP_DOMAIN_IDENTIFIERS`.
 - **No telemetry, no analytics, no phone-home.**
 
 **Inputs treated as untrusted:** tool arguments arriving from the LLM
@@ -42,7 +44,13 @@ client. The LLM may have ingested hostile content (prompt injection
 from an email, web page, etc.) and forwarded a crafted call. Defences:
 
 - **Resource exhaustion**: every tool caps text input at 100,000 chars
-  (200 chars for `syllabify`). Oversized inputs raise `ValueError`
+  (200 chars for `syllabify`). A per-call `glossary`
+  (`check_domain_terms`, `check_term_consistency`) is capped at 1,000
+  terms of up to 200 chars, in the schema the tool advertises and again
+  in code. The cost of comparing compounds with a glossary is bounded by
+  a budget instead: suggestions for the first 200 reported compounds,
+  within 2 seconds a call, and a similarity cutoff of at least 0.4.
+  Oversized inputs raise `ValueError`
   surfaced as a structured tool error rather than hanging the server.
 - **Malformed input**: type checks reject non-string args. EstNLTK
   itself handles malformed Estonian gracefully.
@@ -85,6 +93,12 @@ silly-geese-hosted public Smithery listing. Defences:
   at all and bucketing falls back to the socket peer.
 - **All other hardening preserved.** No shell exec, no fs writes, no
   token logging (no tokens to log), no telemetry, size-bounded inputs.
+- **A domain glossary is public too.** If an operator sets
+  `ESTNLTK_MCP_DOMAIN_GLOSSARY` or `ESTNLTK_MCP_DOMAIN_IDENTIFIERS` on a
+  public instance, any caller can read the glossary through
+  `check_domain_terms`' suggestions and probe the identifier list by
+  what it stops reporting. The server logs a warning at startup when
+  the two are combined. The silly-geese hosted instance sets neither.
 
 In either mode, in-process rate-limit state is restart-reset; with
 multiple replicas behind a load balancer the effective quota scales

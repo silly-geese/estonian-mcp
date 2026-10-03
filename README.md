@@ -93,11 +93,12 @@ of images is not one, however natural it sounds in ML jargon).
 | `classify_register(text)` | Coarse formal/colloquial register hint with matched markers, consistency flag for register-mixed text, plus structural signals (umbisikuline tegumood ratio, noun density) so dense officialese no longer scores "neutral" |
 | `check_style(text)` | Style metrics, lemma-aware repetition, umbisikuline-tegumood ratio, sentence-length variance, hedging-word density |
 | `check_officialese(text)` | Kantseliit check for **non-legal** prose (reports, academic, business), where `check_legalese` stays silent. Nominalisation density (`hindamine` → `hindama`), impersonal-voice ratio, clause stacking (`mille käigus … ning …`), Estonian-calibrated sentence length, and admin filler (`omab` → `on`, `viidi läbi` → `tehti`, `mudeli poolt loodud` → `mudeli loodud`) |
-| `check_term_consistency(text)` | One referent, one term. Flags a document that calls the same thing `andmestik` on page 1 and `teadusandmestik` on page 2, via shared compound head or shared Estonian WordNet synset, with per-variant counts so you can standardise on the dominant one |
+| `check_term_consistency(text, glossary?)` | One referent, one term. Flags a document that calls the same thing `andmestik` on page 1 and `teadusandmestik` on page 2, via shared compound head or shared Estonian WordNet synset, with per-variant counts so you can standardise on the dominant one. With a domain glossary (the server's, or a per-call `glossary`), a variant that is the only one listed in its group is named the group's `preferred` form |
 | `check_redundancy(text)` | Pleonasm check, flags semantic doubling like `samuti ka` (also+also), `kõige optimaalsem` (most+optimal), and fixed redundant phrases |
 | `check_object_case(text)` | Käändeõpetus, flags direct-object case errors under negation and after partitive-only verbs (armastama, vihkama, vajama, …) |
 | `check_abbreviation_hyphenation(text)` | Lühendiortograafia, flags abbreviations with case endings missing the EKI-mandated hyphen (`MCPst` → `MCP-st`, `OÜle` → `OÜ-le`) |
-| `check_compound_familiarity(text)` | Attestation check, for each compound noun, reports whether the lemma is in the corpus vocabulary or Estonian WordNet and returns its top fastText neighbours. Unattested is ordinary for specialist vocabulary and is not a rewrite signal; the narrow `is_suspect` flag needs an unattested lemma whose nearest real neighbour is still under 0.55 (`mõtteliin`-style translationese, literal English "train of thought" → real Estonian is `mõttekäik`) |
+| `check_compound_familiarity(text)` | Attestation check, for each compound noun, reports whether the lemma is in the corpus vocabulary or Estonian WordNet and returns its top fastText neighbours. Unattested is ordinary for specialist vocabulary and is not a rewrite signal; the narrow `is_suspect` flag needs an unattested lemma whose nearest real neighbour is still under 0.55 (`mõtteliin`-style translationese, literal English "train of thought" → real Estonian is `mõttekäik`). With a server glossary, each compound also carries `in_domain_glossary` |
+| `check_domain_terms(text, glossary?, suggest_cutoff?)` | Domain-glossary check, for Estonian written about an organisation's own systems, where a coined compound should be the organisation's term or the thing's identifier. Reports compounds that are unattested AND not on the operator's glossary or identifier list (see [Domain glossary](#domain-glossary-optional)), each with up to three glossary terms *spelled alike* (look-alikes, not synonyms) and the glossary term it is built on, if any (`vagunireisitabel` on `vagunireis`). The hosted server has no glossary of its own: pass your terms in `glossary` (up to 1,000), used for that call only |
 | `check_capitalization(text)` | Algustäheortograafia check, flags wrongly capitalized weekdays, months, nationalities, and language/culture adjectives per EKI's Reeglid |
 | `check_compounds(text)` | Liitsõnaõigekiri, flags common AI-generated splits of words that should be a single compound (`kooli maja` → `koolimaja`) |
 | `check_punctuation(text)` | Kirjavahemärgid, flags missing commas before subordinating conjunctions (`et`, `sest`, `kuna`, `kuid`, `vaid`, `nagu`, …) |
@@ -192,7 +193,7 @@ so follow their current
 for the exact path rather than a menu name written down here.
 
 One limit worth knowing: ChatGPT's *deep research* connectors expect a
-server to expose `search` and `fetch` tools. This server exposes 26
+server to expose `search` and `fetch` tools. This server exposes 27
 Estonian NLP tools and neither of those, so it belongs in the ordinary
 connector slot, not the deep research one.
 
@@ -327,7 +328,7 @@ send to suppress it). You'll especially see it right after adding or
 updating the connector, since the client re-checks tools it hasn't
 seen before.
 
-Good news: **all 26 tools are marked `readOnlyHint: true`** (they only
+Good news: **all 27 tools are marked `readOnlyHint: true`** (they only
 read text, never write or call out), so any well-behaved client can
 safely let you allow them once and stop asking:
 
@@ -436,14 +437,15 @@ fly deploy
 
 **Generic Docker** (any container host):
 ```sh
+docker build -t estonian-mcp .   # no image is published
+
 # Public
-docker run -p 8081:8081 -e ESTNLTK_MCP_PUBLIC_MODE=1 \
-  ghcr.io/silly-geese/estonian-mcp     # or build from source
+docker run -p 8081:8081 -e ESTNLTK_MCP_PUBLIC_MODE=1 estonian-mcp
 
 # Bearer
 docker run -p 8081:8081 \
   -e ESTNLTK_MCP_AUTH_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')" \
-  ghcr.io/silly-geese/estonian-mcp
+  estonian-mcp
 ```
 
 **Behind nginx, with TLS and a token per client** — [`deploy/`](deploy/README.md)
@@ -467,6 +469,55 @@ deploy. The shipped `configSchema` is empty (one-click install)
 because the deployment runs in public mode; flip it back if you fork
 to a bearer-mode setup.
 
+### Domain glossary (optional)
+
+An organisation writing about its own systems has words no general
+corpus contains, and an agent writing for it tends to coin a compound
+where the organisation already has a word. Give the server that
+vocabulary and `check_domain_terms` can tell the two apart.
+
+| Variable | Contents |
+|---|---|
+| `ESTNLTK_MCP_DOMAIN_GLOSSARY` | Path to the organisation's terms: UTF-8, one lemma (base form) per line, `#` starts a comment. Matched case-insensitively, and offered as suggestions |
+| `ESTNLTK_MCP_DOMAIN_IDENTIFIERS` | Path to names `check_domain_terms` never reports and never suggests: table, column or function names written as words. Same format; matched as written as well as by lemma. Only `check_domain_terms` reads this list |
+| `ESTNLTK_MCP_DOMAIN_SUGGEST_CUTOFF` | Spelling similarity, 0.4 to 1, that a glossary term needs to be suggested. Default 0.6 |
+
+The server reads the files once, at startup, so restart it after
+editing them. A file it cannot read, or a cutoff outside 0.4 to 1, stops
+it with exit status 2. With a glossary set, `check_compound_familiarity`
+marks each compound `in_domain_glossary` and `check_term_consistency`
+names a variant as its group's `preferred` form when it is the only one
+listed. Unset, every other tool answers exactly as before.
+
+For stdio, add `"env": {"ESTNLTK_MCP_DOMAIN_GLOSSARY": "/absolute/path/to/terms.txt"}`
+to the server's entry in the client config, or with Claude Code:
+
+```sh
+claude mcp add estnltk -e ESTNLTK_MCP_DOMAIN_GLOSSARY=/absolute/path/to/terms.txt \
+  -- /absolute/path/to/uv --directory /absolute/path/to/estonian-mcp \
+  run python server.py
+```
+
+In a container, mount the file read-only. It must be readable by uid
+1000, the user the image runs as. Bearer mode, so the glossary is not
+handed to anyone who finds the port:
+
+```sh
+docker build -t estonian-mcp .
+docker run -p 8081:8081 \
+  -e ESTNLTK_MCP_AUTH_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')" \
+  -v "$PWD/terms.txt:/etc/estonian-mcp/glossary/terms.txt:ro" \
+  -e ESTNLTK_MCP_DOMAIN_GLOSSARY=/etc/estonian-mcp/glossary/terms.txt \
+  estonian-mcp
+```
+
+The [`deploy/`](deploy/README.md) stack reads them from `deploy/glossary/`.
+
+**Anyone who can call the server can read the glossary**, because the
+suggestions quote it, and can probe the identifier list by what it
+stops reporting. On a public instance, list nothing confidential. The
+server logs a warning at startup when the two are combined.
+
 ---
 
 ## Security
@@ -489,8 +540,9 @@ to a bearer-mode setup.
   for Fly's single edge proxy), because the leftmost entry is
   caller-controlled and letting uvicorn trust it defeated the per-IP
   rate limit (0.5.4).
-- **Inputs**: 100 KB cap per text tool, 200 chars for `syllabify`.
-  Oversized inputs return a structured error rather than hanging.
+- **Inputs**: 100 KB cap per text tool, 200 chars for `syllabify`,
+  1,000 terms of up to 200 chars for a per-call `glossary`. Oversized
+  inputs return a structured error rather than hanging.
 - **Supply chain**: deps pinned + hashed in `uv.lock`. Dependabot
   watches pip + GitHub Actions weekly. CI runs smoke + HTTP tests +
   Docker build/boot on Python 3.11 and 3.13 on every push.
@@ -517,8 +569,8 @@ Terms of service for the hosted endpoint: [TERMS.md](TERMS.md).
   and the fastText model.
 - WordNet is a separate ~26 MB resource (used by `synonyms` and one of
   `check_term_consistency`'s two rules).
-- The fastText model used by `find_related_words` and
-  `check_compound_familiarity` is a ~33 MB compressed resource with a
+- The fastText model used by `find_related_words`,
+  `check_compound_familiarity` and `check_domain_terms` is a ~33 MB compressed resource with a
   100K-word vocabulary (built locally from Facebook's cc.et.300 via
   compress-fasttext, CC-BY-SA-3.0; see [NOTICE](NOTICE)).
 - Heavy neural taggers (`estnltk_neural`, BERT-based NER) are
@@ -582,7 +634,7 @@ Apache-2.0 code:
 - **EstNLTK**, dual-licensed GPL-2.0 OR Apache-2.0 (we use Apache-2.0).
 - **Vabamorf** analyzer, LGPL-2.1 with a separate commercial-use license.
 - **Estonian fastText** model (`find_related_words`,
-  `check_compound_familiarity`), CC-BY-SA-3.0.
+  `check_compound_familiarity`, `check_domain_terms`), CC-BY-SA-3.0.
 - **Estonian Wordnet** (`synonyms`), CC-BY-SA-4.0.
 
 The CC-BY-SA model + Wordnet data carry share-alike obligations on

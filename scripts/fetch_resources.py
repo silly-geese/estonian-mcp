@@ -11,8 +11,8 @@ in `uv.lock`. So a fresh `git clone && uv sync` leaves three gaps:
     uses. Without it, tools that tag that layer raise `LookupError`.
   * Estonian WordNet (~26 MB) — needed by `synonyms`, and by the
     `shared-wordnet-synset` rule in `check_term_consistency`.
-  * fastText embeddings (~33 MB) — needed by `find_related_words` and
-    `check_compound_familiarity`. Served from this project's own GitHub
+  * fastText embeddings (~33 MB), needed by `find_related_words`,
+    `check_compound_familiarity` and `check_domain_terms`. Served from this project's own GitHub
     release, the same artifact the Dockerfile uses, so no new third party
     is involved.
 
@@ -287,8 +287,8 @@ def main() -> int:
         )
     if not ok_fasttext:
         print(
-            "fasttext missing: `find_related_words` and "
-            "`check_compound_familiarity` will raise."
+            "fasttext missing: `find_related_words`, "
+            "`check_compound_familiarity` and `check_domain_terms` will raise."
         )
     return 1
 

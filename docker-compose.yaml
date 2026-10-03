@@ -42,12 +42,22 @@ services:
       ESTNLTK_MCP_RATE_LIMIT_PER_MINUTE: "100000"
       HOST: "0.0.0.0"
       PORT: "8081"
+      # Optional domain glossary for check_domain_terms: container paths
+      # under the read-only mount below, set in .env. Empty means off.
+      # See deploy/README.md section 4.5.
+      ESTNLTK_MCP_DOMAIN_GLOSSARY: ${DOMAIN_GLOSSARY:-}
+      ESTNLTK_MCP_DOMAIN_IDENTIFIERS: ${DOMAIN_IDENTIFIERS:-}
+      ESTNLTK_MCP_DOMAIN_SUGGEST_CUTOFF: ${DOMAIN_SUGGEST_CUTOFF:-}
     # expose, not ports: not published to the host. On Linux the bridge
     # network is still routable from the host itself, which is why the
     # internal token above is not optional.
     expose: ["8081"]
     volumes:
       - metrics:/data
+      # A directory, not a file: the repo ships it (deploy/glossary/.gitkeep),
+      # so Docker never creates it root-owned, and an editor that replaces
+      # a file there is still seen on the next restart.
+      - ./deploy/glossary:/etc/estonian-mcp/glossary:ro
     networks: [edge]
 
   nginx:

@@ -110,6 +110,7 @@ TOOL_CALLS: dict[str, tuple] = {
     "check_object_case": ("Ma ei näen koera.",),
     "check_abbreviation_hyphenation": ("MCPst tuleb abi.",),
     "check_compound_familiarity": ("See on mõtteliin.",),
+    "check_domain_terms": ("See on mõtteliin.",),
     "check_hyphenation": ("koerad",),
     "check_legalese": ("Käesolev leping.",),
     "check_defined_terms": ('Müüja (edaspidi «Müüja») müüb kauba.',),

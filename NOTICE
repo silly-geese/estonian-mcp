@@ -27,7 +27,8 @@ data only, not to estonian-mcp's Apache-2.0 source code.
 
 This product also bundles compressed Estonian fastText word embeddings
 (file: /opt/models/fasttext-et-medium in the Docker image, ~33 MB,
-100K vocab) used by find_related_words and check_compound_familiarity.
+100K vocab) used by find_related_words, check_compound_familiarity and
+check_domain_terms.
 The underlying vectors are licensed under Creative Commons
 Attribution-ShareAlike 3.0 (CC-BY-SA-3.0):
 

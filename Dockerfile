@@ -77,7 +77,8 @@ t.tag_layer(['sentences', 'morph_analysis']); \
 assert len(list(t.sentences)) == 2, 'sentence layer broken after punkt_tab fetch'"
 
 # Estonian fastText word embeddings, compressed to ~33 MB with a 100K
-# vocabulary. Used by find_related_words + check_compound_familiarity.
+# vocabulary. Used by find_related_words, check_compound_familiarity and
+# check_domain_terms.
 # Built locally from Facebook's cc.et.300.bin (Grave et al. 2018,
 # CC-BY-SA-3.0) via compress-fasttext (Liebl 2021) and hosted on our
 # GH Release. No Zenodo dependency — Facebook's upstream is the
