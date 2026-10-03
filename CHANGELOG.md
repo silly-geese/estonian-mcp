@@ -23,7 +23,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 
   Set `ESTNLTK_MCP_DOMAIN_GLOSSARY` to a UTF-8 file, one lemma per line,
   `#` for comments, and optionally `ESTNLTK_MCP_DOMAIN_IDENTIFIERS` for
-  names that are allowed but never suggested (table or column names
+  names the tool never reports and never suggests (table or column names
   written as words). The new tool reports compounds that are unattested
   AND not listed. A compound counts as listed under any of its lemma
   readings or as written, so `ladustamiskohad`, which Vabamorf reads as
@@ -35,7 +35,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   `vagunireis`. The suggestions are look-alikes, not synonyms, and the
   tool says so.
 
-  The similarity a suggestion needs is 0.6, set with
+  The similarity a suggestion needs is 0.6, set from 0.4 to 1 with
   `ESTNLTK_MCP_DOMAIN_SUGGEST_CUTOFF` or per call with `suggest_cutoff`.
   A per-call `glossary` is used alongside the file for that call only,
   which is the way in on the hosted server: it has no glossary of its
@@ -49,24 +49,28 @@ versions follow [Semantic Versioning](https://semver.org/).
   (the server's, or a new per-call `glossary`), each variant carries
   `in_domain_glossary`, and where exactly one variant of a group is
   listed, it is the group's `preferred` form beside the frequency answer
-  in `dominant`.
+  in `dominant`. Identifiers are read by `check_domain_terms` only.
 
   Without a glossary, every existing tool's output is byte for byte what
   it was.
 
 ### Security
 
-- **The glossary files are read at startup, and a bad one stops the
-  server** with exit status 2, as a missing auth token does. Read on the
+- **The glossary files are read at startup, and a bad one, or a cutoff
+  outside 0.4 to 1, stops the server** with exit status 2, as a missing
+  auth token does. Read on the
   first call instead, a mistyped path would have made every
   `check_compound_familiarity` call fail while `/health` said ok, and
   sent the absolute path to the caller.
-- **A per-call `glossary` is capped at 1,000 terms of up to 200
-  characters**, in the schema the tool advertises and again in code.
-  Every reported compound is compared with every term, so an uncapped
-  list let one anonymous request on the public instance run for minutes.
-  Suggestions are computed for the first 200 reported compounds; the
-  rest are still reported, and `suggestions_capped` says so.
+- **Suggestions have a budget: the first 200 reported compounds, and 2
+  seconds a call.** Every reported compound is compared with every
+  glossary term, and the tools run on the event loop, so before this an
+  anonymous request with a long `glossary` and a low cutoff held the
+  public instance for minutes. Past the budget, compounds are still
+  reported, without suggestions, and `suggestions_capped` says so. A
+  per-call `glossary` is also capped at 1,000 terms of up to 200
+  characters, in the schema the tool advertises and again in code,
+  after normalisation as well as before.
 - **Anything in a glossary can be read by anyone who can call the
   server**, since the suggestions quote it. SECURITY.md and the README say
   so, and the server logs a warning when a glossary is configured in

@@ -179,7 +179,15 @@ To add a glossary:
 
 1. Put the file in `deploy/glossary/`, for example
    `deploy/glossary/terms.txt`. Git does not track the files in this
-   directory.
+   directory. The app in the container runs as user 1000 and group
+   1000, and it must be able to read the file. Keep the file readable
+   by all users (mode 644), or give it to group 1000 only:
+
+   ```sh
+   sudo chgrp 1000 deploy/glossary/terms.txt
+   sudo chmod 640 deploy/glossary/terms.txt
+   ```
+
 2. In `.env`, set the variable to the path in the container:
 
    ```sh
@@ -193,11 +201,13 @@ To add a glossary:
    ```
 
 The app reads the files only when it starts. After you change a file,
-do step 3 again. If the app cannot read a file, it does not start. The
-reason is in `docker compose logs app`.
+do step 3 again. If the app cannot read a file, it does not start. If
+`DOMAIN_SUGGEST_CUTOFF` is not a number from 0.4 to 1, the app also
+does not start. Docker tries to start it again until you correct the
+error. The reason is in `docker compose logs app`.
 
 `DOMAIN_SUGGEST_CUTOFF` sets how similar in spelling a glossary term
-must be to a word before the tool suggests it. It is a number from 0
+must be to a word before the tool suggests it. It is a number from 0.4
 to 1. The default is 0.6.
 
 > **CAUTION: Each client that can call the server can read the

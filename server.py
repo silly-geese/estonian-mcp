@@ -25,6 +25,7 @@ import base64
 import collections
 import difflib
 import hashlib
+import heapq
 import json
 import logging
 import os
@@ -53,8 +54,9 @@ MAX_WORD_CHARS = 200
 # document at once, and legal texts run long. Parsing is cheap, so allow more.
 MAX_DOC_CHARS = 500_000
 # A per-call domain glossary (check_domain_terms, check_term_consistency) is
-# bounded like text: by entry count and entry length. Each reported compound
-# is compared with every entry, so the count is what multiplies the cost.
+# bounded like text: by entry count and entry length. What bounds the cost of
+# comparing compounds with it is the time budget on suggestions,
+# _DOMAIN_SUGGEST_SECONDS; these keep the argument itself a sane size.
 MAX_GLOSSARY_TERMS = 1_000
 _GlossaryTerm = Annotated[str, StringConstraints(max_length=MAX_WORD_CHARS)]
 
@@ -3198,9 +3200,10 @@ def _check_compound_familiarity(text: str, *, neighbours: bool = True) -> dict:
             (f"Tuvastati {len(compounds)} liitsõnanimisõna; "
              f"{len(unattested)} neist ei leidu ei sõnavaras ega "
              f"tesauruses (oskus- ja uudissõnade puhul on see tavaline)."
-             + (f" Neist {listed} on valdkonna sõnastikus." if listed else "")
              + (f" {len(suspects)} juhul on ka lähinaaber nõrk ja tasub "
-                f"üle vaadata." if suspects else ""))
+                f"üle vaadata." if suspects else "")
+             + (f" Sõnavarast ja tesaurusest puuduvatest on {listed} "
+                f"valdkonna sõnastikus." if listed else ""))
             if compounds else "Liitsõnanimisõnu analüüsiks ei leitud."
         ),
         "note": (
@@ -3303,8 +3306,8 @@ def check_compound_familiarity(text: Annotated[str, Field(description="Estonian 
 # glossary can. Both files are optional: unset, nothing below changes any
 # output. One lemma per line, UTF-8 (with or without a BOM), `#` starts a
 # comment, matched case-insensitively after NFC normalisation. IDENTIFIERS
-# holds names that are always allowed but are not terms to suggest (table or
-# column names written as words).
+# holds names check_domain_terms never reports and never suggests (table or
+# column names written as words); only that tool reads them.
 #
 # main() reads both files before serving (_load_domain_vocab), so a bad path
 # stops the server at startup instead of failing tool calls.
@@ -3316,14 +3319,21 @@ _DOMAIN_CUTOFF_ENV = "ESTNLTK_MCP_DOMAIN_SUGGEST_CUTOFF"
 # The difflib similarity a glossary term needs to be offered as a
 # suggestion. The operator moves it with ESTNLTK_MCP_DOMAIN_SUGGEST_CUTOFF,
 # a caller with `suggest_cutoff`. Lower finds more look-alikes, and more of
-# them name a different thing.
+# them name a different thing. Under 0.4 a "look-alike" shares little more
+# than its letters, and difflib's cheap filters stop filtering, so 0.4 is
+# the floor.
 _DOMAIN_SUGGEST_CUTOFF = 0.6
+_DOMAIN_SUGGEST_CUTOFF_MIN = 0.4
 
 # Suggestions compare a compound with every glossary term, so they cost
-# (reported compounds) x (glossary size). As with _FAMILIARITY_WORDNET_CAP,
-# compounds past the cap are still reported, only without suggestions
-# (`suggestions: null`), and `suggestions_capped` says so.
+# (reported compounds) x (glossary size) x (term length), and a low cutoff
+# multiplies that again. The tools run on the event loop, so the work is
+# bounded twice: the first 200 reported compounds only, as with
+# _FAMILIARITY_WORDNET_CAP, and 2 seconds a call. Past either, compounds are
+# still reported, only without suggestions (`suggestions: null`), and
+# `suggestions_capped` says so.
 _DOMAIN_SUGGEST_CAP = 200
+_DOMAIN_SUGGEST_SECONDS = 2.0
 
 
 class _DomainVocabUnreadable(RuntimeError):
@@ -3352,7 +3362,9 @@ def _read_domain_env(env: str) -> frozenset[str]:
         return frozenset()
     try:
         return _read_term_file(path)
-    except (OSError, UnicodeError) as e:
+    except (OSError, UnicodeError, RuntimeError, ValueError) as e:
+        # RuntimeError: expanduser on an unknown ~user. ValueError: a NUL
+        # in the path.
         log.error("%s=%s could not be read: %s", env, path, e)
         raise _DomainVocabUnreadable(
             f"{env} is set but its file could not be read; see the server log."
@@ -3388,8 +3400,10 @@ def _domain_suggest_cutoff() -> float:
         value = float(raw)
     except ValueError:
         value = float("nan")
-    if not 0.0 <= value <= 1.0:
-        raise ValueError(f"{_DOMAIN_CUTOFF_ENV} must be a number from 0 to 1, not {raw!r}")
+    if not _DOMAIN_SUGGEST_CUTOFF_MIN <= value <= 1.0:
+        raise ValueError(
+            f"{_DOMAIN_CUTOFF_ENV} must be a number from "
+            f"{_DOMAIN_SUGGEST_CUTOFF_MIN} to 1, not {raw!r}")
     return value
 
 
@@ -3424,7 +3438,13 @@ def _call_glossary(glossary: list[str] | None) -> frozenset[str]:
         )
     for term in glossary:
         _check_text(term, limit=MAX_WORD_CHARS, name="glossary term")
-    return frozenset(n for n in map(_norm_term, glossary) if n)
+    # Checked again after normalising: lower() can lengthen a string
+    # ('İ' becomes 'i' plus a combining dot), and the normalised form is
+    # what gets compared.
+    terms = [_norm_term(term) for term in glossary]
+    for term in terms:
+        _check_text(term, limit=MAX_WORD_CHARS, name="normalised glossary term")
+    return frozenset(t for t in terms if t)
 
 
 def _word_forms(span) -> set[str]:
@@ -3462,45 +3482,69 @@ def _lemmas_of(word: str) -> set[str]:
     }
 
 
-def _domain_part_of(lemma: str, parts: list[str], terms: frozenset[str]) -> str | None:
-    """The glossary term a compound is built on, if any: `vagunireisitabel`
-    is `vagunireis` + `tabel`. That is ordinary Estonian on the
-    organisation's word, and offering `vagunireis` as its replacement would
-    change the meaning. Cuts fall at Vabamorf's part boundaries. A modifier
-    stands in its compounding form (`vagunireisi`), so it is lemmatised
-    before the lookup. The longest term found wins."""
+def _domain_parts_found(lemma: str, parts: list[str], terms: frozenset[str]) -> set[str]:
+    """The glossary terms a compound is built on: `vagunireisitabel` is
+    `vagunireis` + `tabel`. That is ordinary Estonian on the organisation's
+    word, and offering `vagunireis` as its replacement would change the
+    meaning. Cuts fall at Vabamorf's part boundaries, matched without case
+    because a part keeps its capitals (`eID` in `eid-kaardilugeja`). A
+    modifier stands in its compounding form (`vagunireisi`), so it is
+    lemmatised before the lookup."""
     cuts: list[int] = []
     at = 0
     for part in parts[:-1]:
+        part = part.lower()
         at = lemma.find(part, at)
         if at < 0:
-            return None
+            return set()
         at += len(part)
         cuts.append(at)
-    found: list[str] = []
+    found: set[str] = set()
     for cut in cuts:
         head, modifier = lemma[cut:].lstrip("-"), lemma[:cut].rstrip("-")
         if head in terms:
-            found.append(head)
+            found.add(head)
         if modifier in terms:
-            found.append(modifier)
+            found.add(modifier)
         else:
-            found.extend(_lemmas_of(modifier) & terms)
-    return max(sorted(found), key=len) if found else None
+            found |= _lemmas_of(modifier) & terms
+    return found
+
+
+def _look_alikes(lemma: str, ranked: list[str], cutoff: float,
+                 deadline: float) -> list[tuple[float, str]] | None:
+    """Every (similarity, term) at or above `cutoff`: difflib's
+    get_close_matches, with its three filters in its order, but stopping
+    with None once time.monotonic() passes `deadline`."""
+    matcher = difflib.SequenceMatcher()
+    matcher.set_seq2(lemma)
+    hits = []
+    for i, term in enumerate(ranked):
+        if i % 64 == 0 and time.monotonic() > deadline:
+            return None
+        matcher.set_seq1(term)
+        if matcher.real_quick_ratio() >= cutoff and matcher.quick_ratio() >= cutoff:
+            score = matcher.ratio()
+            if score >= cutoff:
+                hits.append((score, term))
+    return hits
 
 
 def _domain_terms_from(compounds: list[dict], terms: frozenset[str],
                        allowed: frozenset[str],
                        cutoff: float = _DOMAIN_SUGGEST_CUTOFF,
-                       cap: int = _DOMAIN_SUGGEST_CAP) -> list[dict]:
+                       cap: int = _DOMAIN_SUGGEST_CAP,
+                       seconds: float = _DOMAIN_SUGGEST_SECONDS) -> list[dict]:
     """The decision behind check_domain_terms: a compound is reported when
     it is unattested AND none of its forms (see _word_forms) is listed.
     Suggestions are the closest glossary lemmas by spelling similarity
     (difflib), not fastText, because a glossary term is usually outside
-    the model vocabulary too. They are look-alikes, not synonyms. Only the
-    first `cap` reported compounds get suggestions and a
+    the model vocabulary too. They are look-alikes, not synonyms, and never
+    a term the compound is built on. Only the first `cap` reported
+    compounds, within `seconds`, get suggestions and a
     `contains_glossary_term`; the rest carry None in both."""
     ranked = sorted(terms)
+    deadline = time.monotonic() + seconds
     unlisted = []
     for c in compounds:
         lemma = c["lemma"]
@@ -3515,15 +3559,14 @@ def _domain_terms_from(compounds: list[dict], terms: frozenset[str],
             "contains_glossary_term": None,
             "suggestions": None,
         }
-        if len(unlisted) < cap:
-            part_of = _domain_part_of(lemma, c.get("parts") or [], terms) if terms else None
-            close = difflib.get_close_matches(lemma, ranked, n=4, cutoff=cutoff)
-            entry["contains_glossary_term"] = part_of
+        hits = _look_alikes(lemma, ranked, cutoff, deadline) if len(unlisted) < cap else None
+        if hits is not None:
+            found = _domain_parts_found(lemma, c.get("parts") or [], terms) if terms else set()
+            entry["contains_glossary_term"] = max(sorted(found), key=len) if found else None
             entry["suggestions"] = [
-                {"term": t,
-                 "similarity": round(difflib.SequenceMatcher(None, t, lemma).ratio(), 3)}
-                for t in close if t != part_of
-            ][:3]
+                {"term": t, "similarity": round(score, 3)}
+                for score, t in heapq.nlargest(3, [h for h in hits if h[1] not in found])
+            ]
         unlisted.append(entry)
     return unlisted
 
@@ -3535,18 +3578,20 @@ def _domain_terms_summary(analysed: int, unlisted: list[dict], lists_given: bool
     if not lists_given:
         return (
             (f"Tuvastati {analysed} liitsõnanimisõna; {k} neist ei leidu ei "
-             f"sõnavaras ega tesauruses (oskus- ja uudissõnade puhul on see "
-             f"tavaline)." if k else
-             "Kõik leitud liitsõnanimisõnad on sõnavaras või tesauruses.")
+             f"sõnavaras, tesauruses ega õigusterminite loendis (oskus- ja "
+             f"uudissõnade puhul on see tavaline)." if k else
+             "Kõik leitud liitsõnanimisõnad on sõnavaras, tesauruses või "
+             "õigusterminite loendis.")
             + " Valdkonna sõnastikku pole antud."
         )
     if not k:
-        return ("Kõik leitud liitsõnanimisõnad on sõnavaras, tesauruses või "
-                "valdkonna loendites.")
+        return ("Kõik leitud liitsõnanimisõnad on sõnavaras, tesauruses, "
+                "õigusterminite loendis või valdkonna loendites.")
     s = sum(1 for u in unlisted if u["suggestions"])
     return (
         f"Tuvastati {analysed} liitsõnanimisõna; {k} neist ei leidu ei "
-        f"sõnavaras, tesauruses ega valdkonna loendites."
+        f"sõnavaras, tesauruses, õigusterminite loendis ega valdkonna "
+        f"loendites."
         + (f" Neist {s} jaoks leidub sõnastikus sarnase kirjapildiga termin."
            if s else "")
     )
@@ -3560,10 +3605,12 @@ def _check_domain_terms(text: str, glossary: list[str] | None = None,
     allowed = terms | identifiers
     if suggest_cutoff is None:
         cutoff = _domain_suggest_cutoff()
-    elif 0.0 <= suggest_cutoff <= 1.0:
+    elif _DOMAIN_SUGGEST_CUTOFF_MIN <= suggest_cutoff <= 1.0:
         cutoff = suggest_cutoff
     else:
-        raise ValueError(f"suggest_cutoff must be from 0 to 1, not {suggest_cutoff}")
+        raise ValueError(
+            f"suggest_cutoff must be from {_DOMAIN_SUGGEST_CUTOFF_MIN} to 1, "
+            f"not {suggest_cutoff}")
     fam = _check_compound_familiarity(text, neighbours=False)
     unlisted = _domain_terms_from(fam["all_compounds"], terms, allowed, cutoff)
     return {
@@ -3574,7 +3621,7 @@ def _check_domain_terms(text: str, glossary: list[str] | None = None,
         "compounds_analysed": fam["compounds_analysed"],
         "wordnet_checked": fam["wordnet_checked"],
         "unlisted_compounds": unlisted,
-        "suggestions_capped": len(unlisted) > _DOMAIN_SUGGEST_CAP,
+        "suggestions_capped": any(u["suggestions"] is None for u in unlisted),
         "summary_estonian": _domain_terms_summary(
             fam["compounds_analysed"], unlisted, bool(allowed)),
         "note": (
@@ -3596,7 +3643,8 @@ def _check_domain_terms(text: str, glossary: list[str] | None = None,
             "That is ordinary Estonian on the organisation's word, so ask "
             "only whether the thing it names has its own term or "
             "identifier. Suggestions are computed for the first "
-            f"{_DOMAIN_SUGGEST_CAP} reported compounds; past that both "
+            f"{_DOMAIN_SUGGEST_CAP} reported compounds, within "
+            f"{_DOMAIN_SUGGEST_SECONDS:g} seconds a call; past either, both "
             "fields are null and `suggestions_capped` is true. With no "
             "glossary and no identifier list (`glossary_size` 0, as on the "
             "hosted server unless you pass `glossary`) this is simply the "
@@ -3620,7 +3668,7 @@ def _check_domain_terms(text: str, glossary: list[str] | None = None,
 def check_domain_terms(
     text: Annotated[str, Field(description="Estonian text whose compound nouns are checked against the corpus, WordNet and the domain glossary.")],
     glossary: Annotated[list[_GlossaryTerm] | None, Field(max_length=MAX_GLOSSARY_TERMS, description="Optional domain lemmas (base forms), used for this call only alongside the server's ESTNLTK_MCP_DOMAIN_GLOSSARY file. Nothing is stored. Up to 1,000 terms of up to 200 characters each.")] = None,
-    suggest_cutoff: Annotated[float | None, Field(ge=0.0, le=1.0, description="Spelling similarity, 0 to 1, that a glossary term needs to be suggested. Defaults to the server's ESTNLTK_MCP_DOMAIN_SUGGEST_CUTOFF, else 0.6.")] = None,
+    suggest_cutoff: Annotated[float | None, Field(ge=_DOMAIN_SUGGEST_CUTOFF_MIN, le=1.0, description="Spelling similarity, 0.4 to 1, that a glossary term needs to be suggested. Defaults to the server's ESTNLTK_MCP_DOMAIN_SUGGEST_CUTOFF, else 0.6.")] = None,
 ) -> _DomainTermsResult:
     """Flags compounds that no lexicon and no domain glossary vouches for.
 
@@ -4876,7 +4924,7 @@ def _domain_prefer(group: dict, readings: dict[str, set[str]],
         term = next(iter(listed.values()))
         group["preferred"] = term
         group["explanation"] += (
-            f" Valdkonna sõnastikus on neist '{term}', eelista seda.")
+            f" Kui valid ühe, eelista valdkonna sõnastiku terminit '{term}'.")
     return group
 
 
@@ -4909,8 +4957,8 @@ def _check_term_consistency(text: str, glossary: list[str] | None = None) -> dic
     defence-in-depth budget the public per-IP rate limit is sized against.
 
     With a domain glossary (the server's file, or `glossary` for this
-    call), a listed variant becomes its group's `preferred` form; see
-    _domain_prefer. Without one, the output is as it always was.
+    call), a variant that is the only one listed in its group becomes the
+    group's `preferred` form; see _domain_prefer. Without one, the output is as it always was.
     """
     _check_text(text, limit=MAX_TEXT_CHARS)
     terms = _domain_glossary_or_empty() | _call_glossary(glossary)

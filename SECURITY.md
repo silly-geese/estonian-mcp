@@ -47,8 +47,10 @@ from an email, web page, etc.) and forwarded a crafted call. Defences:
   (200 chars for `syllabify`). A per-call `glossary`
   (`check_domain_terms`, `check_term_consistency`) is capped at 1,000
   terms of up to 200 chars, in the schema the tool advertises and again
-  in code, and glossary suggestions are computed for the first 200
-  reported compounds only. Oversized inputs raise `ValueError`
+  in code. The cost of comparing compounds with a glossary is bounded by
+  a budget instead: suggestions for the first 200 reported compounds,
+  within 2 seconds a call, and a similarity cutoff of at least 0.4.
+  Oversized inputs raise `ValueError`
   surfaced as a structured tool error rather than hanging the server.
 - **Malformed input**: type checks reject non-string args. EstNLTK
   itself handles malformed Estonian gracefully.

@@ -21,6 +21,7 @@ Run via:
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -29,6 +30,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import jsonschema
 
 import server
+
+# A glossary exported in the developer's shell would change what these
+# tools return; the suite checks the server as it ships. The
+# glossary is read on first use, so this is early enough.
+for _name in ("ESTNLTK_MCP_DOMAIN_GLOSSARY", "ESTNLTK_MCP_DOMAIN_IDENTIFIERS",
+              "ESTNLTK_MCP_DOMAIN_SUGGEST_CUTOFF"):
+    os.environ.pop(_name, None)
 
 failures: list[str] = []
 skipped: list[str] = []
