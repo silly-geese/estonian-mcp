@@ -7,9 +7,9 @@
 or EstNLTK resources, because those are not Python distributions and are not
 in `uv.lock`. So a fresh `git clone && uv sync` leaves three gaps:
 
-  * NLTK `punkt_tab` — the sentence tokenizer EstNLTK's `sentences` layer
+  * NLTK `punkt_tab`, the sentence tokenizer EstNLTK's `sentences` layer
     uses. Without it, tools that tag that layer raise `LookupError`.
-  * Estonian WordNet (~26 MB) — needed by `synonyms`, and by the
+  * Estonian WordNet (~26 MB), needed by `synonyms`, and by the
     `shared-wordnet-synset` rule in `check_term_consistency`.
   * fastText embeddings (~33 MB), needed by `find_related_words`,
     `check_compound_familiarity` and `check_domain_terms`. Served from this project's own GitHub
@@ -21,7 +21,7 @@ WHY THIS IS A SCRIPT AND NOT LAZY AUTO-DOWNLOAD
 PRIVACY.md promises the running server makes **no outbound HTTP calls** and
 uses no third-party processors. Fetching resources on demand from inside a
 tool call would break that promise, and under stdio transport the download
-prompt would be written to stdout — which is the MCP protocol channel — and
+prompt would be written to stdout (which is the MCP protocol channel) and
 corrupt the stream.
 
 So fetching is deliberately a separate, explicit step that you run: the
@@ -68,7 +68,7 @@ def _fasttext_target() -> Path:
 def _md5(path: Path) -> str:
     """Streaming MD5. `usedforsecurity=False` because this guards against
     truncation and corruption over TLS from our own release asset, not
-    against a chosen-prefix attacker — and without it this raises on
+    against a chosen-prefix attacker, and without it this raises on
     FIPS-enabled builds (RHEL/UBI)."""
     import hashlib
 
@@ -133,7 +133,7 @@ def _use_certifi_trust_store() -> str | None:
 
     Returns the path used, or None if certifi is unavailable (in which case
     we leave the environment alone and let the download fail loudly rather
-    than silently disabling verification — we never set a permissive TLS
+    than silently disabling verification: we never set a permissive TLS
     mode)."""
     if os.environ.get("SSL_CERT_FILE"):
         return os.environ["SSL_CERT_FILE"]
@@ -150,9 +150,9 @@ def _use_certifi_trust_store() -> str | None:
 def _punkt_usable() -> bool:
     """Validate by USE: the data is only good if it actually tokenises.
 
-    A directory-exists check accepts a partially-extracted tree — the zip
+    A directory-exists check accepts a partially-extracted tree (the zip
     can fail after creating `punkt_tab/estonian/` but before writing all
-    its tables — and that partial state would then be skipped as
+    its tables), and that partial state would then be skipped as
     "already present" on every subsequent run.
     """
     try:
@@ -173,13 +173,13 @@ def fetch_punkt_tab() -> bool:
     same branch as the data, fetched at download time, and installs via a
     temp file + `os.replace`. That check cannot go stale, whereas a checksum
     hardcoded here would break every user the moment NLTK republishes the
-    archive in place — which it does: `nltk_data` carries no tags or
+    archive in place, which it does: `nltk_data` carries no tags or
     releases, and punkt_tab has already been rewritten under the same URL
     (2024-07-09, then 2025-02-17 to add Malayalam). Pin what you control or
     what is immutable; verify dynamically what rolls.
 
     `download_dir` is not optional. NLTK's default picks the first existing
-    writable dir on `nltk.data.path`, which is `~/nltk_data` — that
+    writable dir on `nltk.data.path`, which is `~/nltk_data`. That
     pollutes the user's home and detaches the data from the checkout it
     belongs to. `<sys.prefix>/nltk_data` is on NLTK's default search path,
     so the server finds it with no configuration.
@@ -218,7 +218,7 @@ def fetch_punkt_tab() -> bool:
         return False
 
     # Validate by use. The checksum proves we received upstream's bytes;
-    # this proves those bytes actually tokenise Estonian — a class of
+    # this proves those bytes actually tokenise Estonian, a class of
     # failure no checksum can catch.
     if not _punkt_usable():
         print("  punkt_tab: downloaded but does not tokenise Estonian")
@@ -275,7 +275,7 @@ def main() -> int:
     if ok_punkt and ok_wordnet and ok_fasttext:
         print("All resources present. estonian-mcp will run at full strength.")
         return 0
-    # Partial success is still useful — say precisely what is degraded so the
+    # Partial success is still useful: say precisely what is degraded so the
     # operator knows which tools are affected rather than guessing.
     if not ok_punkt:
         print("punkt_tab missing: tools tagging the `sentences` layer will raise.")

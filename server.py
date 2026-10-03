@@ -6,9 +6,9 @@ LLM client can write better Estonian in real time.
 
 Two transports:
 
-* `stdio` (default) — subprocess wired by Claude Desktop / Claude Code /
+* `stdio` (default): subprocess wired by Claude Desktop / Claude Code /
   Cursor / Cowork local mode / etc. Pure local, no network.
-* `streamable-http` — ASGI server on `$PORT` exposing `/mcp` for remote
+* `streamable-http`: ASGI server on `$PORT` exposing `/mcp` for remote
   clients (claude.ai web Custom Connectors, Smithery hosting, Cowork
   remote, self-hosted Fly.io). Bearer-token auth required; per-token
   rate limit.
@@ -81,7 +81,7 @@ DEFAULT_STATIC_RATE_LIMIT_PER_MINUTE = 60
 
 # How many reverse proxies sit in front of this server. Used to pick the
 # trustworthy entry out of X-Forwarded-For for the public-mode per-IP rate
-# limiter — see _client_ip. Fly.io puts exactly one proxy in front, which
+# limiter (see _client_ip). Fly.io puts exactly one proxy in front, which
 # is the default. Set to 0 if the server is directly internet-exposed, so
 # that a caller-supplied XFF is never trusted.
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
@@ -93,7 +93,7 @@ SERVER_VERSION = "0.7.0"
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
 # can fetch our icon when probing estonian-mcp.fly.dev.
 #
-# Google's pipeline only accepts raster (PNG/ICO/JPG) — it rejects SVG,
+# Google's pipeline only accepts raster (PNG/ICO/JPG): it rejects SVG,
 # so /favicon.ico must serve the PNG bytes to be picked up. We keep
 # /favicon.svg for modern user agents that prefer scalable.
 FAVICON_SVG = (
@@ -111,7 +111,7 @@ FAVICON_SVG = (
 # Pre-rasterised PNG of logo.svg (64x64, transparent corners). Generated
 # at build/dev time via `rsvg-convert -w 64 -h 64 logo.svg -o logo.png`
 # and shipped in the Docker image. If it's missing for any reason, we
-# fall back to serving the SVG at the .ico path — which Google still
+# fall back to serving the SVG at the .ico path, which Google still
 # can't read, but at least browsers will get something.
 _LOGO_PNG_PATH = Path(__file__).resolve().parent / "logo.png"
 try:
@@ -181,10 +181,10 @@ SERVER_INSTRUCTIONS = (
     "common_legal_usage returns canonical legal collocations for a term so "
     "you use real legalese instead of inventing phrasings. "
     "Use these tools as ground truth rather than guessing Estonian spelling, "
-    "case forms, or inflections — language models routinely hallucinate "
+    "case forms, or inflections: language models routinely hallucinate "
     "plausible-but-wrong Estonian morphology. When you call paradigm and the "
     "word has several inflection types (paradigm_count > 1, e.g. kott, which "
-    "inflects as either koti or kota — two different words sharing a "
+    "inflects as either koti or kota, two different words sharing a "
     "nominative), read ambiguity_estonian before quoting a form, and prefer "
     "passing an INFLECTED form (koti) over the bare lemma, which selects the "
     "type you mean. Note that spell_check passing "
@@ -209,7 +209,7 @@ SERVER_INSTRUCTIONS = (
     "umbisikuline tegumood and rhythm. 'Keep the terminology "
     "consistent across this document' → check_term_consistency. A word "
     "can be correctly spelled, morphologically valid and still the wrong "
-    "register or the wrong term for its domain — the mechanical checks "
+    "register or the wrong term for its domain. The mechanical checks "
     "will not tell you that. All tools are read-only and "
     "operate on Estonian text; results are returned in UTF-8 (preserve "
     "õ/ä/ö/ü/š/ž)."
@@ -255,7 +255,7 @@ def _vabamorf():
 
 _RESOURCE_FETCH_HINT = (
     "Fetch it from a checkout with: uv run python scripts/fetch_resources.py "
-    "(the server never downloads resources by itself — see PRIVACY.md)."
+    "(the server never downloads resources by itself; see PRIVACY.md)."
 )
 
 
@@ -270,7 +270,7 @@ def _forbid_resource_downloads() -> None:
        from RESOURCES_INDEX_URL whenever the local copy is missing OR older
        than INDEX_TIMEOUT (2 h). On a long-lived server that is a periodic
        outbound request, and when it fails the caller sees "resource
-       missing" rather than "lookup failed" — a false negative on top of a
+       missing" rather than "lookup failed": a false negative on top of a
        broken promise. Setting the timeout to effectively infinite pins us
        to the on-disk index.
     2. `estnltk`'s sentence tokenizer catches `LookupError` for NLTK's
@@ -313,14 +313,14 @@ def _wordnet_available() -> bool:
 
     Checks the resources directory directly rather than calling
     `get_resource_paths()`, which consults EstNLTK's resource *index* and
-    re-fetches that index over HTTPS when it is more than two hours old —
+    re-fetches that index over HTTPS when it is more than two hours old:
     an outbound call from inside a tool, and a false "missing" verdict
     whenever it fails. See _forbid_resource_downloads.
 
     Deliberately NOT cached, unlike `_wordnet()` below. Caching the probe
     would reintroduce the very confusion issue #38 was about: an operator
     sees `degraded: true`, runs `scripts/fetch_resources.py` as the message
-    tells them to, calls the tool again — and a cached `False` still says
+    tells them to, calls the tool again, and a cached `False` still says
     degraded until they restart the process. The probe is a directory
     listing; there is nothing to buy here. `_wordnet()` stays cached
     because it loads a heavy object, and is only reached once this is True.
@@ -349,7 +349,7 @@ def _wordnet():
 # scripts/fetch_resources.py puts it on a source install. Having only the
 # container default meant a source install could follow the documented
 # setup, be told "All resources present", and still fail every fastText
-# tool — the script cannot export a variable into the server process, and
+# tool: the script cannot export a variable into the server process, and
 # JSON-configured MCP clients cannot run a shell `export` at all.
 _FASTTEXT_CANDIDATES: tuple[str, ...] = (
     "/opt/models/fasttext-et-medium",
@@ -423,7 +423,7 @@ _FORMAL_MARKERS: frozenset[str] = frozenset({
 # check_capitalization. Names that should be lowercase mid-sentence in
 # Estonian: weekday names, month names, nationalities, and adjectives
 # derived from country/language names when used attributively before a
-# culture/language noun. Hand-curated; not exhaustive — covers the
+# culture/language noun. Hand-curated; not exhaustive, covers the
 # most common AI-generated mistakes per EKI's Reeglid.
 
 _WEEKDAYS_ET: frozenset[str] = frozenset({
@@ -466,8 +466,8 @@ _CULTURE_NOUNS_ET: frozenset[str] = frozenset({
     "ortograafia", "õigekiri", "haridus", "kool",
 })
 
-# Bigram lexicon for check_compounds. Each (word_a, word_b) — keys are
-# lowercased surface tokens — represents a common AI mis-split that
+# Bigram lexicon for check_compounds. Keys are lowercased surface
+# tokens. Each (word_a, word_b) represents a common AI mis-split that
 # should be a single compound word. The value is the joined form.
 # Hand-curated; phase-1 coverage.
 _COMPOUND_BIGRAMS: dict[tuple[str, str], str] = {
@@ -517,7 +517,7 @@ _COMPOUND_BIGRAMS = {k: v for k, v in _COMPOUND_BIGRAMS.items() if len(k) == 2}
 # Each entry is a lemma that is technically correct but stylistically
 # marked (archaic, foreign, or otherwise non-neutral). The flag tells
 # Claude this lemma is unusual without it having to guess. Curated and
-# small on purpose — phase-1 coverage.
+# small on purpose (phase-1 coverage).
 
 _MARKED_LEMMAS_ET: dict[str, tuple[str, str]] = {
     # archaic-formal alternatives to neutral words
@@ -623,7 +623,7 @@ _VERB_FORMS: tuple[str, ...] = (
 
 # Passive-voice form codes from Vabamorf. When analyze_morphology
 # returns one of these as the `form` for a V-pos word, the verb is in
-# passive voice — Estonian's -takse / -ti / -tud / -tav family.
+# passive voice: Estonian's -takse / -ti / -tud / -tav family.
 _PASSIVE_FORMS_ET: frozenset[str] = frozenset({
     "takse", "dakse",   # present passive
     "ti", "di",         # past passive (e.g. tehti, kasutati)
@@ -633,11 +633,11 @@ _PASSIVE_FORMS_ET: frozenset[str] = frozenset({
     "taks", "daks",     # passive conditional
 })
 
-# Hedging / wishy-washy markers — counted to gauge how confident the
+# Hedging / wishy-washy markers, counted to gauge how confident the
 # prose reads. Higher density = more uncertain / less assertive copy.
 # Hand-curated; single-word entries only (multi-word hedging phrases
 # left for a later round).
-# Lexicons for check_object_case — Estonian's object-case-government
+# Lexicons for check_object_case, Estonian's object-case-government
 # checker. Negation markers (lemma forms) and a small curated set of
 # verbs whose direct objects are always partitive. Conservative scope:
 # better to miss real errors than to flag a lot of false positives,
@@ -681,7 +681,7 @@ _HEDGING_WORDS_ET: frozenset[str] = frozenset({
     "veidi", "üpris", "tundub", "näiliselt", "ligilähedaselt",
 })
 
-# POS tags whose lemmas we IGNORE when counting repetition — function
+# POS tags whose lemmas we IGNORE when counting repetition: function
 # words and connectives that naturally repeat in any prose and would
 # drown out real content-word repetition signal.
 _REPETITION_SKIP_POS: frozenset[str] = frozenset({
@@ -743,8 +743,8 @@ _ANALYSIS_FORM_LABELS_ET: dict[str, str] = {
 # A `neg` code belongs to one of three words, and the same code means
 # different things in each: `neg o` is `ära`, the imperative negator,
 # but it is also `pole` and `lähe`, neither of which is an imperative.
-# The lemma separates them — every other `neg` code belongs to one word
-# — so the label is looked up by lemma rather than composed by prefixing
+# The lemma separates them (every other `neg` code belongs to one word),
+# so the label is looked up by lemma rather than composed by prefixing
 # "eitav" to the suffix's ordinary label, which called `pole` a command,
 # `polnud` a participle and `ärme` an indicative.
 _NEG_LEMMA_FAMILY: dict[str, str] = {
@@ -781,7 +781,7 @@ _NEG_LABELS_ET: dict[str, dict[str, str]] = {
 
 # Subordinating / coordinating conjunctions where Estonian comma rules
 # require a comma immediately before. `kui`, `mis`, `kes` deliberately
-# excluded — they're highly context-dependent (kui = "when/if" needs
+# excluded: they're highly context-dependent (kui = "when/if" needs
 # comma but kui = "than/as" doesn't; mis can be relative or
 # interrogative; kes similar) and the false-positive cost outweighs
 # the catch rate for v1.
@@ -791,19 +791,19 @@ _COMMA_BEFORE: frozenset[str] = frozenset({
 })
 
 
-# Lexicons for check_redundancy — semantic doubling that's
+# Lexicons for check_redundancy: semantic doubling that's
 # grammatically fine but reads redundant to a native speaker. Kept
 # deliberately high-precision: better to miss than to flag legitimate
 # phrasing, since each flag costs the user attention.
 
 # Sets of adverbs/particles that all mean roughly the same thing
 # ("also / too / likewise"). Two DIFFERENT members appearing adjacent
-# is the classic pleonasm — e.g. "samuti ka", "ka samuti".
+# is the classic pleonasm, e.g. "samuti ka", "ka samuti".
 _ALSO_PARTICLES_ET: frozenset[str] = frozenset({"samuti", "ka", "ühtlasi"})
 
 # Adjectives that are already absolute / non-gradable: putting "kõige"
-# (most) in front is a double superlative — "kõige optimaalsem" is
-# wrong the way "most optimal" is. Matched by STEM PREFIX rather than
+# (most) in front is a double superlative ("kõige optimaalsem" is
+# wrong the way "most optimal" is). Matched by STEM PREFIX rather than
 # lemma, because Vabamorf lemmatizes the comparative form to itself
 # (optimaalsem → lemma 'optimaalsem', POS C) instead of to the base
 # adjective, so the comparative/superlative forms that actually follow
@@ -831,12 +831,12 @@ _PLEONASM_PHRASES_ET: dict[tuple[str, ...], str] = {
 
 # --- Legal / legalese support --------------------------------------------
 # Curated STARTER lexicons for Estonian legal text. Native speakers are
-# invited to expand these (see CONTRIBUTING) — they are precision-first,
+# invited to expand these (see CONTRIBUTING). They are precision-first,
 # not exhaustive.
 
 # Archaic "kantseliit" filler whose plain equivalent does NOT change legal
 # meaning. Matched by surface-prefix so inflected forms are caught. Terms
-# of ART (below) are deliberately NOT here — those must survive simplification.
+# of ART (below) are deliberately NOT here: those must survive simplification.
 _LEGALESE_STEMS_ET: dict[str, tuple[str, str]] = {
     "käesolev": ("see", "ametlik täitesõna; igapäevakeeles piisab 'see'"),
     "alljärgnev": ("järgnev", "kantseliit; piisab 'järgnev'"),
@@ -856,14 +856,14 @@ _LEGALESE_PHRASES_ET: dict[tuple[str, str], tuple[str, str]] = {
 }
 
 # ---------------------------------------------------------------------------
-# Officialese (kantseliit) lexicons — the NON-legal sibling of the legalese
+# Officialese (kantseliit) lexicons, the NON-legal sibling of the legalese
 # set above. Aimed at reports, academic prose, grant/R&D paperwork and
 # business writing, where check_legalese finds nothing because its lexicon
 # is legal-specific and its length gate is tuned for statutes.
 #
 # Matched on LEMMA (exact), not surface prefix: prefix matching would fire
 # on 'oma'/'omadus' for the 'omama' entry. Precision-first, per repo
-# convention — a missed flag costs less than a wrong one.
+# convention: a missed flag costs less than a wrong one.
 # ---------------------------------------------------------------------------
 
 _OFFICIALESE_LEMMAS_ET: dict[str, tuple[str, str]] = {
@@ -912,7 +912,7 @@ _SUBORDINATORS_ET: frozenset[str] = frozenset({
 
 # Academic / report-register markers. classify_register's original
 # _FORMAL_MARKERS covers legal-administrative vocabulary but scored dense
-# R&D-report officialese as 'neutraalne', score 0.0, zero markers — these
+# R&D-report officialese as 'neutraalne', score 0.0, zero markers. These
 # fill that hole.
 _ACADEMIC_MARKERS_ET: frozenset[str] = frozenset({
     "aruandeperiood", "aruandlus", "aruandeperioodil", "ettevõttesiseselt",
@@ -925,7 +925,7 @@ _ACADEMIC_MARKERS_ET: frozenset[str] = frozenset({
     "arvestades", "tulenevalt", "olemasolev", "asjaomane",
 })
 
-# Below this word count classify_register scores on the lexicon alone —
+# Below this word count classify_register scores on the lexicon alone:
 # impersonal-voice and noun-density ratios are too noisy on a sentence or
 # two to move a register verdict.
 _REGISTER_STRUCTURE_MIN_WORDS = 25
@@ -950,7 +950,7 @@ _LEGAL_TERMS_OF_ART_ET: frozenset[str] = frozenset({
 
 
 def _is_legal_term(word: str) -> bool:
-    """True if a token is a specialised Estonian legal term of art — matched
+    """True if a token is a specialised Estonian legal term of art, matched
     by exact membership or as the head of a legal compound (e.g. hagiavaldus,
     kohtuistung). Used to protect terms of art and de-noise other tools."""
     w = word.lower().strip(".,;:()«»„“”\"'")
@@ -994,10 +994,10 @@ _OLEMA_FORMS_ET: frozenset[str] = frozenset({
 
 # Impersonal present NEGATIVE form codes ('ei esitata', 'ei kasutata').
 # Kept separate from _PASSIVE_FORMS_ET because bare 'da' is also the
-# da-infinitive code — these only count when a negation precedes.
+# da-infinitive code. These only count when a negation precedes.
 _IMPERSONAL_NEG_FORMS_ET: frozenset[str] = frozenset({"ta", "da"})
 
-# VERBAL negation only — the subset of _NEGATION_LEMMAS_ET that actually
+# VERBAL negation only: the subset of _NEGATION_LEMMAS_ET that actually
 # turns a following participle into a predicate. `mitte` negates a noun
 # phrase, not a verb ('mitte inimeste antud märgenditega'), and `ära` /
 # `ärge` negate imperatives, which are personal forms; including either
@@ -1022,7 +1022,7 @@ def _impersonal_voice(spans: list) -> dict:
 
     1. `ei` / `ära` are tagged `pos=V form=neg`, so each negation inflated
        `total_verbs` and DEFLATED the impersonal ratio. Now excluded.
-    2. `ta`/`da` (impersonal present negative — `ei esitata`) is a form
+    2. `ta`/`da` (impersonal present negative: `ei esitata`) is a form
        code the -takse/-ti/-tud/-tav set never covered, so negated
        impersonals were missed outright. Now counted, but only after a
        negation, because bare `da` is also the da-infinitive.
@@ -1079,7 +1079,7 @@ def _impersonal_voice(spans: list) -> dict:
                 attributive_excluded.append(span.text)
             continue
 
-        # (2) impersonal present negative — only after a negation.
+        # (2) impersonal present negative, only after a negation.
         if form in _IMPERSONAL_NEG_FORMS_ET:
             if _preceded_by(i, _VERBAL_NEGATION_ET):
                 impersonal += 1
@@ -1102,7 +1102,7 @@ def _impersonal_voice(spans: list) -> dict:
 
 
 # Per-tool invocation counters. Incremented only when a tool function
-# actually runs — NOT on initialize / tools/list / SSE stream opens, so
+# actually runs, NOT on initialize / tools/list / SSE stream opens, so
 # this counts real tool calls rather than all /mcp protocol traffic.
 # Records tool NAME + count only; never arguments (the Estonian text),
 # so the no-request-content privacy posture is preserved. Surfaced at
@@ -1123,7 +1123,7 @@ def _counted(fn):
             return fn(*args, **kwargs)
         except LookupError as e:
             # NLTK raises a LookupError with a wall of text telling the
-            # caller to run nltk.download() — advice this server
+            # caller to run nltk.download(), advice this server
             # deliberately does not follow (see _forbid_resource_downloads).
             # Translate it once, here, into the instruction that actually
             # applies. Costs nothing on the success path, and catching at
@@ -1143,7 +1143,7 @@ def _counted(fn):
 
 
 # ---------------------------------------------------------------------------
-# Output-schema types. total=False so every field is optional — this
+# Output-schema types. total=False so every field is optional: this
 # advertises a structured output schema to clients (Smithery quality
 # score) without FastMCP rejecting a return that conditionally omits a
 # key. Inner shapes stay loose (list[dict]/dict) on purpose; the
@@ -1327,7 +1327,7 @@ def _usage_note(lemma: str | None, pos: str | None) -> tuple[str | None, str | N
     return None, None
 
 
-# A small set of lexically indeclinable (muutumatu) Estonian adjectives —
+# A small set of lexically indeclinable (muutumatu) Estonian adjectives:
 # they keep one form regardless of the noun's case/number. Conservative
 # and high-confidence; extend as real cases turn up.
 _INDECLINABLE_ADJ_ET: frozenset[str] = frozenset({
@@ -1487,15 +1487,15 @@ def analyze_morphology(text: Annotated[str, Field(description="Estonian text to 
         ambiguous)
       - is_ambiguous: shorthand for analyses_count > 1
       - usage_note: machine code (None if neutral)
-        — "archaic" / "foreign" / "abbreviation" / "interjection" /
-          "proper-noun"
+        ("archaic" / "foreign" / "abbreviation" / "interjection" /
+          "proper-noun")
       - usage_note_estonian: human-readable Estonian rendering of the
         same flag (quote this verbatim in Estonian replies; do NOT
         translate the English usage_note yourself)
       - indeclinable: True for words that stay in base form when used
         attributively (lexical indeclinables like `täis`, -tud/-nud past
-        participles like `tuntud`, and the -mata form like `täitmata`)
-        — i.e. they do NOT take the noun's case ending in agreement. Use this before inflecting a
+        participles like `tuntud`, and the -mata form like `täitmata`),
+        i.e. they do NOT take the noun's case ending in agreement. Use this before inflecting a
         noun phrase so you don't wrongly decline an invariant adjective.
 
     Input is capped at 100,000 characters.
@@ -1977,7 +1977,7 @@ def _paradigm(word: str) -> dict:
         ),
         "note": (
             "Generated via Vabamorf.synthesize. Some forms may be marked, "
-            "rare, or stylistically odd — Vabamorf produces what's "
+            "rare, or stylistically odd: Vabamorf produces what's "
             "morphologically possible, not what a native speaker would "
             "necessarily use. Passing an INFLECTED form (e.g. 'koti') is "
             "better than the bare lemma when a word has several paradigms: "
@@ -2059,7 +2059,7 @@ def paradigm(word: Annotated[str, Field(description="A single Estonian word (lem
     Each form entry has the Vabamorf form code (e.g. `sg p`, `ksin`),
     its Estonian label (e.g. `ainsuse osastav`, `tingiv 1.p ainsus`),
     and the surface form Vabamorf generated. Use `form_estonian` verbatim
-    in Estonian replies — don't translate the English `form` code.
+    in Estonian replies. Don't translate the English `form` code.
 
     AMBIGUOUS LEMMAS. Some lemmas belong to more than one inflection type
     (`kott` inflects as either `koti` or `kota`, two different words that
@@ -2139,7 +2139,7 @@ def spell_check(text: Annotated[str, Field(description="Estonian text to spell-c
     Input is capped at 100,000 characters.
 
     CAVEAT: Vabamorf accepts ANY morphologically well-formed word,
-    including compounds you just invented (e.g. `toortõlkeoht`) — it
+    including compounds you just invented (e.g. `toortõlkeoht`). It
     splits them into valid roots and reports `spelling: true`. So passing
     spell_check does NOT mean a word is real, attested Estonian. For a
     compound you coined yourself, ask `check_compound_familiarity` whether
@@ -2219,7 +2219,7 @@ def find_related_words(word: Annotated[str, Field(description="A single Estonian
     expanding vocabulary when WordNet's exact-meaning synonyms aren't
     enough.
 
-    Distinct from `synonyms`: that one returns WordNet synsets — words
+    Distinct from `synonyms`: that one returns WordNet synsets, words
     with the same meaning. This one returns words that *pattern* with
     the input in real Estonian text, which can include near-synonyms,
     related concepts, and (sometimes) antonyms.
@@ -2271,14 +2271,14 @@ def synonyms(word: Annotated[str, Field(description="A single Estonian word to l
 
     WORD-FIT CHECK: when the question is "is this the right word here?"
     rather than "give me an alternative", READ EACH `definition` and test
-    it against the user's actual context — do not just harvest `lemmas`.
+    it against the user's actual context. Do not just harvest `lemmas`.
     Estonian glosses routinely carry a domain constraint that decides the
     answer: `korpus` returns the sense "kirjaliku või suulise teksti
     elektrooniline kogu", so calling a set of IMAGES a `korpus` is wrong
     however natural it sounds in ML jargon; `andmestik` carries no such
     constraint. A gloss naming a medium, field, or material is a
     constraint on where the word may be used. Note also that a word can
-    be well-formed, correctly spelled and still the wrong register — for
+    be well-formed, correctly spelled and still the wrong register. For
     that, check_officialese and classify_register, not this tool.
     """
     _check_text(word, limit=MAX_WORD_CHARS, name="word")
@@ -2291,7 +2291,7 @@ def synonyms(word: Annotated[str, Field(description="A single Estonian word to l
         raise RuntimeError(
             "Estonian WordNet is not installed, so synonyms cannot run. "
             "Fetch it with: uv run python scripts/fetch_resources.py "
-            "(the server never downloads resources by itself — see "
+            "(the server never downloads resources by itself; see "
             "PRIVACY.md)."
         )
     wn = _wordnet()
@@ -2352,7 +2352,7 @@ def _classify_register(text: str) -> dict:
         score = max(-1.0, min(1.0, raw * 4.0 / word_count))
 
     # Structural signals. The tool's own note always conceded that real
-    # register lives in syntax as much as vocabulary — and a dense R&D
+    # register lives in syntax as much as vocabulary, and a dense R&D
     # report scored 'neutraalne', 0.0, with zero markers, while 87.5% of
     # its verbs were umbisikuline tegumood. Impersonal voice and noun
     # density now contribute, bounded and additive-only:
@@ -2446,21 +2446,21 @@ def _classify_register(text: str) -> dict:
         },
         "word_count": word_count,
         "note": (
-            "Heuristic classifier — lexicon-based and lemma-aware, plus "
+            "Heuristic classifier: lexicon-based and lemma-aware, plus "
             "two structural signals. The lexicon covers legal-"
             "administrative AND academic/report vocabulary. `structure` "
             "adds umbisikuline tegumood ratio and noun/verb density, "
             "bounded at +0.4 and applied only from 25 words up and only "
-            "when the lexicon is not net-colloquial — without them a dense "
+            "when the lexicon is not net-colloquial. Without them a dense "
             "R&D report scored 'neutraalne' at 0.0 while 87.5% of its "
             "verbs were impersonal. The `consistency` field flags texts "
-            "that carry BOTH formal AND colloquial markers — useful for "
+            "that carry BOTH formal AND colloquial markers, useful for "
             "catching jarring register-mixing even when the overall "
             "tier rounds to 'neutral'. Treat as a directional hint, not "
             "a verdict; for a full kantseliit breakdown use "
             "check_officialese. When composing an Estonian-language reply, "
             "USE THE tier_estonian AND consistency.summary_estonian "
-            "FIELDS VERBATIM rather than translating yourself — common "
+            "FIELDS VERBATIM rather than translating yourself: common "
             "mistranslations include 'formalne' (wrong) vs 'formaalne' "
             "(correct)."
         ),
@@ -2531,7 +2531,7 @@ def _check_capitalization(text: str) -> dict:
             # capitalized form is a valid proper-noun usage on its own
             # (Eesti, Eestit, Eestis = the country).
             #
-            # NOTE: match the surface form, not the lemma — Vabamorf
+            # NOTE: match the surface form, not the lemma. Vabamorf
             # lemmatizes some adjectives to a stem (e.g. Inglise -> Inglis),
             # which would miss the rule. Language adjectives don't inflect
             # in attributive position, so the surface form is reliable.
@@ -2570,7 +2570,7 @@ def _check_capitalization(text: str) -> dict:
             else "Algustäheortograafia probleeme ei leitud."
         ),
         "note": (
-            "Heuristic Algustäheortograafia checker — covers the four most "
+            "Heuristic Algustäheortograafia checker: covers the four most "
             "common AI-generated mistakes (weekdays, months, nationalities, "
             "and language/culture adjectives before related nouns). Not a "
             "full EÕS substitute; edge cases like proper-noun brand names "
@@ -2583,7 +2583,7 @@ def _check_capitalization(text: str) -> dict:
 
 
 def _check_compounds(text: str) -> dict:
-    """Phase-1 liitsõnaõigekiri checker — scans for common AI splits."""
+    """Phase-1 liitsõnaõigekiri checker: scans for common AI splits."""
     _check_text(text)
     Text = _Text()
     t = Text(text)
@@ -2622,7 +2622,7 @@ def _check_compounds(text: str) -> dict:
             else "Liitsõnaõigekirja probleeme ei leitud."
         ),
         "note": (
-            "Heuristic liitsõnaõigekiri checker — flags ~30 common "
+            "Heuristic liitsõnaõigekiri checker: flags ~30 common "
             "AI-generated compound-splits per a hand-curated bigram "
             "lexicon. NOT exhaustive: Estonian compounding is productive "
             "and many valid compounds aren't in the lexicon. Treat hits "
@@ -2645,7 +2645,7 @@ def check_compounds(text: Annotated[str, Field(description="Estonian text to che
     """Heuristic Estonian compound-word check (liitsõnaõigekiri).
 
     Scans for common AI-generated splits of words that should be written
-    as a single compound — `kooli maja` (wrong) → `koolimaja` (right),
+    as a single compound: `kooli maja` (wrong) → `koolimaja` (right),
     `nädala vahetus` (wrong) → `nädalavahetus` (right), etc. Uses a
     curated bigram lexicon (~30 entries covering the highest-frequency
     AI mistakes); not a full liitsõnaõigekiri solver.
@@ -2660,7 +2660,7 @@ def check_compounds(text: Annotated[str, Field(description="Estonian text to che
 
 
 def _check_punctuation(text: str) -> dict:
-    """Phase-1 punctuation checker — comma before subordinating words."""
+    """Phase-1 punctuation checker: comma before subordinating words."""
     _check_text(text)
     Text = _Text()
     t = Text(text)
@@ -2668,7 +2668,7 @@ def _check_punctuation(text: str) -> dict:
     spans = list(t.morph_analysis)
 
     issues: list[dict] = []
-    skip_prev = {",", ";", ":", "(", "—", "–", "-", ".", "!", "?", "...", "…"}
+    skip_prev = {",", ";", ":", "(", "\u2014", "\u2013", "-", ".", "!", "?", "...", "…"}
     for i, span in enumerate(spans):
         word_lower = span.text.lower()
         if word_lower not in _COMMA_BEFORE:
@@ -2700,13 +2700,13 @@ def _check_punctuation(text: str) -> dict:
             else "Kirjavahemärgivigu ei leitud."
         ),
         "note": (
-            "Heuristic comma checker — catches missing commas before "
+            "Heuristic comma checker: catches missing commas before "
             "the most common subordinating conjunctions (et, kuna, sest, "
             "kuigi, kuid, vaid, nagu, mistõttu, millepärast, kuhu). "
             "Excludes `kui` / `mis` / `kes` because their function is "
             "context-dependent (kui = than/when, mis = which/what) and "
             "naive flagging produces too many false positives. NOT a full "
-            "Estonian punctuation rule engine — listing comma, "
+            "Estonian punctuation rule engine: listing comma, "
             "apposition comma, and dash/colon rules are out of scope for "
             "phase 1. Quote `rule_estonian` verbatim in Estonian replies."
         ),
@@ -2721,7 +2721,7 @@ def _check_punctuation(text: str) -> dict:
 ))
 @_counted
 def check_punctuation(text: Annotated[str, Field(description="Estonian text to check for missing commas before subordinating conjunctions.")]) -> _CheckResult:
-    """Heuristic Estonian punctuation check — comma-before-clause rule.
+    """Heuristic Estonian punctuation check: comma-before-clause rule.
 
     Flags missing commas before subordinating conjunctions where Estonian
     rules require one: et (that/in order to), kuna (because), sest
@@ -2732,7 +2732,7 @@ def check_punctuation(text: Annotated[str, Field(description="Estonian text to c
     is covered. `kui`, `mis`, `kes` are deliberately excluded because
     their function is contextual (kui = than/as in comparisons doesn't
     need a comma). Listing commas, apposition commas, dash and colon
-    rules — all out of scope for phase 1. Input capped at 100,000
+    rules: all out of scope for phase 1. Input capped at 100,000
     characters.
     """
     return _check_punctuation(text)
@@ -2820,7 +2820,7 @@ def check_hyphenation(word: Annotated[str, Field(description="A single Estonian 
 
 
 def _check_numbers(text: str) -> dict:
-    """Phase-1 number-writing checker — separator rules only."""
+    """Phase-1 number-writing checker: separator rules only."""
     _check_text(text)
     import re
     issues: list[dict] = []
@@ -2875,7 +2875,7 @@ def _check_numbers(text: str) -> dict:
             else "Numbrite õigekirjutuse vigu ei leitud."
         ),
         "note": (
-            "Heuristic number-writing checker — covers decimal-separator "
+            "Heuristic number-writing checker: covers decimal-separator "
             "(period vs comma) and thousands-separator (comma vs space) "
             "rules. Spell-out-vs-digits guidance (Estonian convention: "
             "spell out 1-10 in running text) is out of scope for phase 1 "
@@ -2902,8 +2902,8 @@ def check_numbers(text: Annotated[str, Field(description="Estonian text to check
       comma (1,000,000).
 
     Phase-1 limitations: spell-out-vs-digits guidance (the
-    one-to-ten-spelled-out convention) is intentionally not implemented
-    — it requires distinguishing measurements, dates, years, and lists
+    one-to-ten-spelled-out convention) is intentionally not implemented.
+    It requires distinguishing measurements, dates, years, and lists
     from running prose, and naive flagging produces too many false
     positives. Input capped at 100,000 characters.
     """
@@ -2933,7 +2933,7 @@ def check_capitalization(text: Annotated[str, Field(description="Estonian text t
 
     Sentence-initial capitalization is always allowed. All-caps
     acronyms are ignored. Returns each issue with rule code, an
-    Estonian rule label (`rule_estonian` — quote this verbatim in
+    Estonian rule label (`rule_estonian`: quote this verbatim in
     Estonian replies, don't translate the English `rule`), a
     user-facing explanation, and a suggested correction. Input capped
     at 100,000 characters.
@@ -3765,7 +3765,7 @@ def _check_abbreviation_hyphenation(text: str) -> dict:
             "analysis, so we only flag tokens Vabamorf actually "
             "recognised as abbreviations carrying a case ending. "
             "Single-letter endings on short capital sequences are not "
-            "specially filtered — relies on Vabamorf to know whether "
+            "specially filtered: relies on Vabamorf to know whether "
             "'APIs' is an abbreviation plus inessive ending or just "
             "an English plural. Quote rule_estonian verbatim in "
             "Estonian replies."
@@ -3801,10 +3801,10 @@ def _check_object_case(text: str) -> dict:
     """Heuristic Estonian object-case-government checker.
 
     Two rules:
-    1. Negation triggers partitive — any noun in nominative or
+    1. Negation triggers partitive: any noun in nominative or
        genitive in a sentence containing 'ei'/'pole'/'ära'/etc. is a
        likely error.
-    2. Partitive-only verbs — a curated set of verbs always take
+    2. Partitive-only verbs: a curated set of verbs always take
        partitive direct objects; any noun in nominative or genitive
        in the same sentence is suspicious.
 
@@ -3850,7 +3850,7 @@ def _check_object_case(text: str) -> dict:
                     trigger_index = idx
 
         # Predicative after a negated copula stays NOMINATIVE, not
-        # partitive ("see EI OLE raamat", not *raamatut) — so a negated
+        # partitive ("see EI OLE raamat", not *raamatut), so a negated
         # `olema` clause is not an object-case context. We can't reliably
         # tell the copula use ("X ei ole Y") from the existential/
         # possessive use ("mul ei ole raamatut", which IS partitive)
@@ -3932,7 +3932,7 @@ def _check_object_case(text: str) -> dict:
             else "Käändevigade kahtlust ei leitud."
         ),
         "note": (
-            "Heuristic phase-1 object-case checker — no syntactic parser, "
+            "Heuristic phase-1 object-case checker: no syntactic parser, "
             "so we can't distinguish subjects from objects. Flags nouns "
             "in nominative/genitive in sentences with negation or "
             "partitive-only verbs. Subjects of those sentences may be "
@@ -3977,7 +3977,7 @@ def check_object_case(text: Annotated[str, Field(description="Estonian text to c
 
 def _check_redundancy(text: str) -> dict:
     """Heuristic pleonasm / semantic-doubling checker. Flags phrasing
-    that is grammatically valid but redundant to a native speaker —
+    that is grammatically valid but redundant to a native speaker,
     e.g. 'samuti ka' (also also), 'kõige optimaalsem' (most optimal)."""
     _check_text(text)
     Text = _Text()
@@ -4008,7 +4008,7 @@ def _check_redundancy(text: str) -> dict:
                     "rule_estonian": "topeldatud rõhumäärsõna",
                     "explanation": (
                         f"'{lower}' ja '{nxt_lower}' tähendavad mõlemad "
-                        f"'samuti / ka' — koos on tautoloogia. Vali üks."
+                        f"'samuti / ka'. Koos on tautoloogia. Vali üks."
                     ),
                     "suggestion": f"jäta alles kas '{lower}' VÕI '{nxt_lower}', mitte mõlemad",
                 })
@@ -4027,7 +4027,7 @@ def _check_redundancy(text: str) -> dict:
                     "rule": "double-superlative",
                     "rule_estonian": "topeltülivõrre",
                     "explanation": (
-                        f"'{nxt.text}' on juba absoluutne omadus — 'kõige' "
+                        f"'{nxt.text}' on juba absoluutne omadus, 'kõige' "
                         f"ette ei sobi (nagu inglise 'most optimal'). "
                         f"Piisab sõnast '{nxt.text}'."
                     ),
@@ -4057,7 +4057,7 @@ def _check_redundancy(text: str) -> dict:
             if issues else "Liiasust ei tuvastatud."
         ),
         "note": (
-            "Heuristic pleonasm checker — flags high-confidence semantic "
+            "Heuristic pleonasm checker. Flags high-confidence semantic "
             "doubling: adjacent 'also' particles (samuti ka), double "
             "superlatives (kõige optimaalsem), and a small set of fixed "
             "redundant phrases. Deliberately conservative; it does NOT "
@@ -4079,20 +4079,20 @@ def check_redundancy(text: Annotated[str, Field(description="Estonian text to ch
     """Heuristic Estonian pleonasm / semantic-doubling check.
 
     Flags phrasing that is grammatically valid but reads redundant to a
-    native speaker — the class of error AI agents produce when they
+    native speaker, the class of error AI agents produce when they
     stack synonyms. Phase-1 rules, all high-precision:
 
     - **Doubled 'also' particles**: `samuti ka`, `ka samuti`,
-      `ühtlasi ka` — both words mean "also/too", so together they're a
+      `ühtlasi ka`. Both words mean "also/too", so together they're a
       tautology. (This is the exact `samuti ka suvesärgid` case.)
     - **Double superlative**: `kõige` before an already-absolute
       adjective (`optimaalne`, `ideaalne`, `maksimaalne`, `täiuslik`,
-      `ainus`, …) — like English "most optimal". Lemma-matched, so all
+      `ainus`, …), like English "most optimal". Lemma-matched, so all
       inflected forms count.
     - **Fixed pleonasm phrases**: a small curated set (`ajaline
       periood`, `väike nüanss`, `üldine konsensus`, …).
 
-    Conservative by design — it catches the obvious, high-confidence
+    Conservative by design: it catches the obvious, high-confidence
     cases, not every redundancy. Absence of flags is not proof the
     prose is tight. Input capped at 100,000 characters.
     """
@@ -4102,7 +4102,7 @@ def check_redundancy(text: Annotated[str, Field(description="Estonian text to ch
 def _check_legalese(text: str) -> dict:
     """Heuristic Estonian legalese-simplification aid. Flags archaic
     'kantseliit' filler with plain equivalents, flags over-long/over-nested
-    sentences, and — crucially — lists the legal TERMS OF ART that must be
+    sentences, and, crucially, lists the legal TERMS OF ART that must be
     preserved verbatim when simplifying (a general synonym would change the
     legal meaning)."""
     _check_text(text)
@@ -4168,7 +4168,7 @@ def _check_legalese(text: str) -> dict:
                 "rule": "complex-sentence",
                 "rule_estonian": "liiga pikk/keeruline lause",
                 "explanation": (
-                    f"Lause on {n_words} sõna ja {n_commas} koma — kaalu "
+                    f"Lause on {n_words} sõna ja {n_commas} koma. Kaalu "
                     f"jagamist lühemateks lauseteks, termineid muutmata."
                 ),
                 "suggestion": "jaga lause lühemateks osadeks",
@@ -4186,12 +4186,12 @@ def _check_legalese(text: str) -> dict:
         "note": (
             "Heuristic legalese-simplification aid. `issues` flags archaic "
             "'kantseliit' filler (käesolev → see, juhul kui → kui) and "
-            "over-long / over-nested sentences that can be split — WITHOUT "
+            "over-long / over-nested sentences that can be split, WITHOUT "
             "changing legal meaning. `terms_of_art` lists specialised legal "
             "terms detected that MUST be preserved verbatim when simplifying: "
             "replacing e.g. 'vastutus' or 'hagi' with a general synonym would "
             "change the legal meaning. STARTER lexicons, precision-first and "
-            "not exhaustive — absence of flags is not proof the text is plain, "
+            "not exhaustive: absence of flags is not proof the text is plain, "
             "and terms_of_art will miss terms not yet in the list. Quote "
             "rule_estonian verbatim in Estonian replies."
         ),
@@ -4301,7 +4301,7 @@ def check_legalese(text: Annotated[str, Field(description="Estonian legal text t
       (`käesolev` → `see`, `juhul kui` → `kui`), plus over-long / heavily
       subordinated sentences worth splitting.
     - `terms_of_art`: specialised legal terms detected in the text that
-      MUST be kept verbatim when rewriting — swapping `hagi` or `vastutus`
+      MUST be kept verbatim when rewriting. Swapping `hagi` or `vastutus`
       for a general synonym changes the legal meaning. Use this as a
       do-not-touch list while you simplify.
 
@@ -4323,7 +4323,7 @@ def check_defined_terms(text: Annotated[str, Field(description="A long Estonian 
 
     Extracts every term defined with `(edaspidi «X»)`, counts how often each
     is actually used, lists `§` / `lõige` / `punkt` / `artikkel`
-    cross-references, and flags defined-but-unused or doubly-defined terms —
+    cross-references, and flags defined-but-unused or doubly-defined terms:
     the consistency errors that creep into long contracts and statutes.
 
     Regex-based and PII-free (nothing is stored). Input cap is raised to
@@ -4335,7 +4335,7 @@ def check_defined_terms(text: Annotated[str, Field(description="A long Estonian 
 
 def _common_legal_usage(word: str) -> dict:
     """Look up the canonical legal collocations for a word from the offline
-    legal-corpus index — the 'what's the standard legal phrasing' answer.
+    legal-corpus index: the 'what's the standard legal phrasing' answer.
     common_before / common_after are the words most frequently seen directly
     before / after the term in real legislation (e.g. `hagi` → before
     `esitama`, i.e. 'esitama hagi'; `kohustus` → after `täitmine`)."""
@@ -4389,11 +4389,11 @@ _LEGAL_USAGE_NOTE = (
     "from Estonian legal corpora (see scripts/build_legal_collocations.py). "
     "common_before / common_after are the content words most often seen "
     "immediately before / after the term's lemma in real legislation, with "
-    "raw counts — use them to pick idiomatic legal phrasing (e.g. 'esitama "
+    "raw counts. Use them to pick idiomatic legal phrasing (e.g. 'esitama "
     "hagi', 'kohustuse täitmine') instead of inventing collocations. It is a "
     "frequency signal, NOT prescriptive: rare-but-correct phrasings exist, and "
     "coverage is bounded by the corpus. The bundled index is built from "
-    "public-domain Riigi Teataja legislation — five core codes (obligations, "
+    "public-domain Riigi Teataja legislation: five core codes (obligations, "
     "general civil, civil procedure, property, penal), ~2,000 legal terms; "
     "broaden coverage by adding more acts and supplying the index via "
     "ESTNLTK_MCP_LEGAL_INDEX. Deterministic and offline; no text is stored."
@@ -4410,7 +4410,7 @@ _LEGAL_USAGE_NOTE = (
 def common_legal_usage(word: Annotated[str, Field(description="A single Estonian (legal) word to look up canonical collocations for, e.g. 'hagi', 'kohustus', 'taotlus'.")]) -> _LegalUsageResult:
     """Canonical legal collocations for a term, from an offline corpus index.
 
-    Answers "what's the standard legal phrasing" — returns how often the
+    Answers "what's the standard legal phrasing": returns how often the
     term occurs in Estonian legal text and the words most frequently seen
     directly before/after it (`hagi` → `esitama` before it = 'esitama hagi';
     `kohustus` → `täitmine` after it = 'kohustuse täitmine'). Use it so the
@@ -4434,7 +4434,7 @@ def _check_style(text: str) -> dict:
     spans = list(t.morph_analysis)
     sentences = list(t.sentences)
 
-    # 1. Repetition — lemma-aware, skip function-word POS classes.
+    # 1. Repetition: lemma-aware, skip function-word POS classes.
     from collections import Counter, defaultdict
     lemma_counts: Counter = Counter()
     lemma_positions: dict[str, list[int]] = defaultdict(list)
@@ -4446,7 +4446,7 @@ def _check_style(text: str) -> dict:
         pos = _first(list(span.partofspeech))
         if not lemma or pos in _REPETITION_SKIP_POS:
             continue
-        # Skip very short lemmas (1-2 char) — usually function-y.
+        # Skip very short lemmas (1-2 char): usually function-y.
         if len(lemma) <= 2:
             continue
         key = lemma.lower()
@@ -4473,7 +4473,7 @@ def _check_style(text: str) -> dict:
             "positions": lemma_positions[lemma],
         })
 
-    # 2. Umbisikuline tegumood — see _impersonal_voice for the four
+    # 2. Umbisikuline tegumood: see _impersonal_voice for the four
     # counting corrections over raw Vabamorf form codes.
     imp = _impersonal_voice(spans)
     passive_count = imp["passive_count"]
@@ -4577,7 +4577,7 @@ def _check_style(text: str) -> dict:
             "`attributive_excluded` instead. ~15% is a healthy ceiling for "
             "marketing copy and <5% may read too forceful; for reports and "
             "academic prose anything above ~40% is the single clearest "
-            "kantseliit signal — pair this with check_officialese. "
+            "kantseliit signal. Pair this with check_officialese. "
             "Hedging density >5% reads wishy-washy. Sentence length "
             "stddev should typically be at least 30% of the mean for "
             "natural rhythm. Quote *_estonian fields verbatim in "
@@ -4620,10 +4620,10 @@ def check_style(text: Annotated[str, Field(description="Estonian text to compute
 # against the plain-language rewrite a native speaker produced from it.
 # Measured across that edit:
 #
-#   impersonal ratio   0.875 → 0.308   (gate 0.4  — separates cleanly)
-#   -mine per 100 wds  7.89  → 2.33    (gate 4.0  — separates cleanly)
-#   longest sentence   30    → 21 wds  (gate 25   — separates cleanly)
-#   noun/verb ratio    2.50  → 2.23    (gate 2.5  — barely separates)
+#   impersonal ratio   0.875 → 0.308   (gate 0.4,  separates cleanly)
+#   -mine per 100 wds  7.89  → 2.33    (gate 4.0,  separates cleanly)
+#   longest sentence   30    → 21 wds  (gate 25,   separates cleanly)
+#   noun/verb ratio    2.50  → 2.23    (gate 2.5,  barely separates)
 #
 # Noun/verb is deliberately the loosest gate: one document pair is thin
 # calibration and the two texts sit close together on it, so it is
@@ -4640,7 +4640,7 @@ def _check_officialese(text: str) -> dict:
     """Kantseliit diagnostic for NON-legal Estonian: reports, academic
     prose, R&D/grant paperwork, business writing.
 
-    check_legalese exists but is scoped to statutes — on a real Estonian
+    check_legalese exists but is scoped to statutes: on a real Estonian
     R&D report paragraph it returned zero issues, because its filler
     lexicon is legal-specific and its length gate (34 words) sits above
     where Estonian prose actually becomes unreadable. This tool measures
@@ -4649,7 +4649,7 @@ def _check_officialese(text: str) -> dict:
     - nominalisation (-mine verbal nouns) and overall noun/verb density,
       the classic 'nimisõnastiil'
     - umbisikuline tegumood, correctly counted (see _impersonal_voice)
-    - clause stacking per sentence — the 'mille käigus … ning …' pile-up
+    - clause stacking per sentence, the 'mille käigus … ning …' pile-up
       a raw word count misses
     - long sentences, on an Estonian-calibrated gate
     - administrative filler with plain equivalents
@@ -4694,7 +4694,7 @@ def _check_officialese(text: str) -> dict:
             "explanation": (
                 f"Tekstis on {len(nominalisations)} mine-tuletist "
                 f"{word_count} sõna kohta. Tegevust väljendav nimisõna "
-                f"muudab lause raskeks — kasuta tegusõna."
+                f"muudab lause raskeks. Kasuta tegusõna."
             ),
             "suggestion": ", ".join(
                 f"{n['lemma']} → {n['verb']}" for n in nominalisations[:5]
@@ -4723,7 +4723,7 @@ def _check_officialese(text: str) -> dict:
                 f"Umbisikulises tegumoes on {imp['passive_count']}/"
                 f"{verb_count} tegusõna "
                 f"({round(imp['ratio'] * 100, 1)}%). Aruandekeeles on see "
-                f"kõige selgem kantseliidi tunnus — nimeta tegija."
+                f"kõige selgem kantseliidi tunnus. Nimeta tegija."
             ),
             "suggestion": "kirjuta isikulises tegumoes, nt 'koguti' → 'kogusime'",
         })
@@ -4794,7 +4794,7 @@ def _check_officialese(text: str) -> dict:
                     "suggestion": plain,
                 })
 
-        # 'X-i poolt tehtud' — the passive-agent calque. Only when a
+        # 'X-i poolt tehtud': the passive-agent calque. Only when a
         # genitive noun precedes, so 'hääletas poolt' (in favour) is safe.
         if low == "poolt" and i > 0:
             prev_pos, prev_form, _prev_lemma = _span_bits(spans[i - 1])
@@ -4835,7 +4835,7 @@ def _check_officialese(text: str) -> dict:
         ),
         "note": (
             "Heuristic kantseliit diagnostic for NON-legal Estonian "
-            "(reports, academic prose, business writing) — the sibling of "
+            "(reports, academic prose, business writing), the sibling of "
             "check_legalese, which is scoped to statutes and stays silent "
             "on report officialese. Thresholds are calibrated against a "
             "native speaker's plain-language rewrite of a real Estonian R&D "
@@ -4844,10 +4844,10 @@ def _check_officialese(text: str) -> dict:
             "sentence 30 → 21 content words, so those three gates (0.4, "
             "4.0, 25) separate bureaucratic from plain cleanly. Noun/verb "
             "moved only 2.50 → 2.23, so its gate (2.5) is deliberately "
-            "loose and that signal is the weakest of the four — weigh it "
+            "loose and that signal is the weakest of the four. Weigh it "
             "last. `metrics.nominalisations` gives each "
             "-mine noun with the verb to swap in. STARTER lexicons, "
-            "precision-first and not exhaustive — absence of flags is not "
+            "precision-first and not exhaustive: absence of flags is not "
             "proof the text is plain. For legal text use check_legalese "
             "instead: it protects terms of art, which this tool does not. "
             "Quote rule_estonian and summary_estonian verbatim in Estonian "
@@ -4894,7 +4894,7 @@ def check_officialese(text: Annotated[str, Field(description="Estonian non-legal
     - officialese filler: `omama` → `olema`, `kujutab endast` → `on`,
       `viidi läbi` → `tehti`, `X-i poolt tehtud` → `X-i tehtud`
 
-    Heuristic and precision-first — no flags does not prove the text is
+    Heuristic and precision-first: no flags does not prove the text is
     plain. Input capped at 100,000 characters.
     """
     return _check_officialese(text)
@@ -4929,7 +4929,7 @@ def _domain_prefer(group: dict, readings: dict[str, set[str]],
 
 
 def _check_term_consistency(text: str, glossary: list[str] | None = None) -> dict:
-    """One referent, one term — flag a document that names the same thing
+    """One referent, one term: flag a document that names the same thing
     several ways.
 
     This is the failure mode a human editor catches instantly and a model
@@ -4940,14 +4940,14 @@ def _check_term_consistency(text: str, glossary: list[str] | None = None) -> dic
     A. Shared compound head. The text uses a bare noun X *and* a compound
        ending in X (`andmestik` + `teadusandmestik`), or three or more
        distinct lemmas share one head. Two compounds sharing a head is NOT
-       enough on its own — `tegevusvaldkond` and `märgendusvaldkond` are
+       enough on its own: `tegevusvaldkond` and `märgendusvaldkond` are
        usually genuinely different things.
     B. Shared WordNet synset. Two distinct lemmas in the text sit in the
        same synset, i.e. Estonian WordNet considers them synonyms
        (`andmestik` / `andmebaas`).
 
     Reports counts per variant so the caller can pick the dominant term,
-    and never decides which variant is right — that needs context the tool
+    and never decides which variant is right: that needs context the tool
     does not have.
 
     Capped at MAX_TEXT_CHARS, NOT MAX_DOC_CHARS. check_defined_terms may
@@ -5026,8 +5026,8 @@ def _check_term_consistency(text: str, glossary: list[str] | None = None) -> dic
     # Check the resource is on disk FIRST (_wordnet_available is a pure
     # filesystem lookup). The old code called Wordnet() and caught the
     # fallout, which meant that on a machine without the resource EstNLTK
-    # would attempt a download — breaching the no-outbound-HTTP promise in
-    # PRIVACY.md — and print its prompt to stdout, which under stdio
+    # would attempt a download (breaching the no-outbound-HTTP promise in
+    # PRIVACY.md) and print its prompt to stdout, which under stdio
     # transport is the MCP protocol channel. Checking first means the
     # running server never attempts either, and Rule B just reports itself
     # as not run.
@@ -5093,7 +5093,7 @@ def _check_term_consistency(text: str, glossary: list[str] | None = None) -> dic
         },
         # Top-level so a caller cannot miss it. A partial run that reports
         # "nothing found" reads as a clean bill of health, which is exactly
-        # how a half-strength checker misleads someone — so say it here AND
+        # how a half-strength checker misleads someone, so say it here AND
         # in summary_estonian, not only in rules_run.
         "degraded": not wordnet_ok,
         "summary_estonian": (
@@ -5121,19 +5121,19 @@ def _check_term_consistency(text: str, glossary: list[str] | None = None) -> dic
             "compounds sharing a head is deliberately NOT enough, since "
             "those are usually distinct things. Rule "
             "`shared-wordnet-synset` fires when two lemmas sit in the same "
-            "Estonian WordNet synset — and does not run at all when that "
+            "Estonian WordNet synset, and does not run at all when that "
             "resource is missing, in which case `degraded` is true and an "
             "empty `groups` list means only that the compound-head rule "
             "found nothing. The tool does NOT decide which "
-            "variant is correct — that needs domain context it cannot see; "
+            "variant is correct (that needs domain context it cannot see); "
             "it reports counts so you can pick the dominant term, and some "
             "groups are legitimately distinct concepts. KNOWN GAP: "
             "synonym pairs that share neither a head nor a synset "
-            "(korpus / andmestik) are not caught — for those, read each "
+            "(korpus / andmestik) are not caught. For those, read each "
             "candidate's `synonyms` definition and check whether its "
             "domain fits the text. WordNet lookups are capped at the "
             f"{_TERM_CONSISTENCY_WORDNET_CAP} most frequent nouns, and "
-            "`rules_run` reports whether the WordNet rule actually ran — "
+            "`rules_run` reports whether the WordNet rule actually ran: "
             "if the resource is unavailable it degrades to the "
             "compound-head rule alone rather than failing. Input "
             "capped at 100,000 characters."
@@ -5184,7 +5184,7 @@ def check_term_consistency(
 
     Each group lists its variants with occurrence counts and the dominant
     one, so you can standardise on the most-used term. The tool does not
-    decide which variant is right — some groups are genuinely distinct
+    decide which variant is right: some groups are genuinely distinct
     concepts, so read them before rewriting.
 
     CHECK `degraded` BEFORE TRUSTING AN EMPTY RESULT. When Estonian WordNet
@@ -5217,7 +5217,7 @@ def classify_register(text: Annotated[str, Field(description="Estonian text to c
     """Heuristic register classifier for Estonian (formal vs colloquial).
 
     Returns a tier label (English in `tier`, correct Estonian in
-    `tier_estonian` — quote that field verbatim when composing an
+    `tier_estonian`: quote that field verbatim when composing an
     Estonian-language reply rather than translating `tier` yourself, to
     avoid mistranslations like "formalne" instead of the correct
     "formaalne"), a normalised score in [-1, 1] (positive = formal,
@@ -5227,8 +5227,8 @@ def classify_register(text: Annotated[str, Field(description="Estonian text to c
     slipped into chat tone.
 
     The lexicon covers legal-administrative AND academic/report
-    vocabulary. `structure` adds two syntactic signals — umbisikuline
-    tegumood ratio and noun/verb density — bounded at +0.4, applied only
+    vocabulary. `structure` adds two syntactic signals (umbisikuline
+    tegumood ratio and noun/verb density), bounded at +0.4, applied only
     from 25 words up and only when the lexicon is not net-colloquial.
 
     LIMITATION: still a heuristic, not a trained model. Address forms and
@@ -5246,22 +5246,22 @@ def classify_register(text: Annotated[str, Field(description="Estonian text to c
 
 # Aggregate request counters surfaced at /metrics. Optionally persisted
 # to a Fly volume so machine restarts don't reset the cumulative total.
-# Only counts — never request bodies or tokens — so the "no request
+# Only counts (never request bodies or tokens), so the "no request
 # logging" property in SECURITY.md stays intact.
 _STATS_START_TS: float = time.time()
 _STATS: dict[str, Any] = {
     "total": 0,
     "by_status": {},
     "by_path": {},
-    # Count of MCP `initialize` calls — a privacy-safe proxy for client
+    # Count of MCP `initialize` calls, a privacy-safe proxy for client
     # connections / session-starts. NOT a user count: a client that
     # reconnects counts again, and automated probes count too. No identity,
-    # no IP, no body is stored — only the fact that an initialize occurred.
+    # no IP, no body is stored: only the fact that an initialize occurred.
     "sessions": 0,
     # JSON-RPC method mix on POST /mcp, bucketed to a FIXED allowlist (see
     # _MCP_METHODS). Stateless HTTP means an `initialize` cannot be tied to
     # the tool calls that follow it, so "sessions that made >=1 tool call"
-    # is not computable without inventing a client identifier — which would
+    # is not computable without inventing a client identifier, which would
     # be a privacy step backwards. This breakdown answers the same question
     # from the other side: `initialize` vs `notifications/initialized` shows
     # how many handshakes were actually completed rather than abandoned by a
@@ -5286,12 +5286,12 @@ _STATS: dict[str, Any] = {
 
 # Ring buffer of recent 5xx errors so they're inspectable at /metrics
 # without depending on Fly's short-lived log tail. PII-free: only
-# timestamp, path, status, and (when known) the exception type — never
+# timestamp, path, status, and (when known) the exception type, never
 # request bodies. Persisted with the counters so they survive restarts.
 _recent_errors: collections.deque = collections.deque(maxlen=20)
 
 # Persistence: if ESTNLTK_MCP_METRICS_PATH is set (default
-# /data/metrics.json — matches the Fly volume mount), counters survive
+# /data/metrics.json, matches the Fly volume mount), counters survive
 # machine restarts. Locally, the path's parent dir doesn't exist and
 # we silently stay in-memory.
 _METRICS_PATH = Path(
@@ -5365,7 +5365,7 @@ def _save_persistent_stats() -> None:
 
 # Fixed allowlist of JSON-RPC methods we bucket into `mcp_methods`.
 # The method name comes from a request body, i.e. it is caller-controlled,
-# so it is NEVER stored verbatim — anything outside this set is counted as
+# so it is NEVER stored verbatim: anything outside this set is counted as
 # "other". That keeps the metrics dict bounded (no unbounded key growth
 # from a hostile client) and keeps arbitrary caller strings off /metrics.
 _MCP_METHODS: frozenset[str] = frozenset({
@@ -5385,7 +5385,7 @@ def _classify_mcp_method(body: bytes) -> str | None:
 
     Returns an allowlisted method name, "other" for anything unrecognised,
     or None if the body is not parseable JSON-RPC. Only the `method` field
-    is read — never params, arguments, or clientInfo — and nothing from the
+    is read (never params, arguments, or clientInfo), and nothing from the
     body is stored.
 
     Cost note: this parses every POST /mcp body, where the old
@@ -5401,7 +5401,7 @@ def _classify_mcp_method(body: bytes) -> str | None:
         msg = json.loads(body)
     except (ValueError, UnicodeDecodeError):
         return None
-    if isinstance(msg, list):  # JSON-RPC batch — classify by its first method
+    if isinstance(msg, list):  # JSON-RPC batch: classify by its first method
         msg = next((m for m in msg if isinstance(m, dict) and m.get("method")), None)
     if not isinstance(msg, dict):
         return None
@@ -5504,7 +5504,7 @@ def _replay_receive(messages, receive):
 
 
 # When the MCP SDK hits an unhandled error in POST-request handling it logs
-# it via logger.exception(...) and returns its OWN HTTP 500 — the exception
+# it via logger.exception(...) and returns its OWN HTTP 500: the exception
 # never propagates to our wrapper's except block, so those 500s landed in
 # the ring buffer with error=None (a blind spot). We attach a handler to the
 # SDK's logger that stashes ONLY the exception type name (never the message
@@ -5519,7 +5519,7 @@ _INNER_EXC_FRESH_SECONDS = 5.0
 
 class _InnerExcCapture(logging.Handler):
     """Records the exception type name from any log record carrying exc_info.
-    Type name only — PII-free, no message, no stack."""
+    Type name only: PII-free, no message, no stack."""
 
     def emit(self, record: logging.LogRecord) -> None:
         exc_info = record.exc_info
@@ -5531,7 +5531,7 @@ class _InnerExcCapture(logging.Handler):
 def _install_inner_exc_capture() -> None:
     """Attach the capture handler to the `mcp` logger once (idempotent).
     Hooks the parent `mcp` logger so it keeps working if the SDK renames
-    the streamable_http submodule. Additive — does not suppress the SDK's
+    the streamable_http submodule. Additive: does not suppress the SDK's
     own logging."""
     lg = logging.getLogger("mcp")
     if not any(isinstance(h, _InnerExcCapture) for h in lg.handlers):
@@ -5680,7 +5680,7 @@ async def _serve_static_icon(send, scope, body: bytes, content_type: bytes, etag
     """Serve a static icon with a 1-year immutable cache + ETag. If the
     client already holds this version (If-None-Match), answer 304 with no
     body. Cheap defence against clients that re-fetch the favicon in a loop
-    (e.g. connector-directory icon rendering) — anything honouring either
+    (e.g. connector-directory icon rendering): anything honouring either
     caching or conditional requests stops re-downloading."""
     if_none_match = ""
     for k, v in scope.get("headers", []):
@@ -5731,7 +5731,7 @@ def _client_ip(scope: dict) -> str:
 
     Reads X-Forwarded-For from the RIGHT, not the left. uvicorn runs with
     `forwarded_allow_ips="*"` and rewrites `scope["client"]` from the
-    LEFTMOST XFF entry — which is fully caller-controlled, because a proxy
+    LEFTMOST XFF entry, which is fully caller-controlled, because a proxy
     appends to whatever the client sent. Bucketing on that let any caller
     mint a fresh rate-limit bucket per request simply by varying the
     header, defeating the limiter entirely. Reproduced against a local
@@ -5739,7 +5739,7 @@ def _client_ip(scope: dict) -> str:
     after five requests, while rotating the value stays 200 indefinitely.
 
     The Nth-from-right entry is the one written by the Nth proxy in front
-    of us, and a caller cannot append after a proxy — so it is correct
+    of us, and a caller cannot append after a proxy, so it is correct
     whether the edge APPENDS to a client-supplied header or REPLACES it.
     `_TRUSTED_PROXY_HOPS` is how many proxies we sit behind (Fly = 1).
     Set it to 0 when the server is directly exposed, which makes XFF
@@ -5838,7 +5838,7 @@ def _build_http_app(
             await send_raw(message)
 
         try:
-            # Public health endpoint — no auth, no rate limit. Used by Fly
+            # Public health endpoint: no auth, no rate limit. Used by Fly
             # probes, uptime monitoring, and quick "is the latest deploy
             # live?" eyeballing (version + tool count surfaced here).
             if path == "/health":
@@ -5980,7 +5980,7 @@ def _build_http_app(
                 await _send_status(send, 200, payload)
                 return
 
-            # Landing page at / — public, no auth. Tells humans what they
+            # Landing page at / (public, no auth). Tells humans what they
             # hit and gives Google's favicon scraper the <link rel="icon">
             # tags it needs to find our PNG.
             if path == "/":
@@ -5996,7 +5996,7 @@ def _build_http_app(
                 await send({"type": "http.response.body", "body": INDEX_HTML})
                 return
 
-            # Favicons — public, no auth. Google's s2/favicons service
+            # Favicons: public, no auth. Google's s2/favicons service
             # rejects SVG, so /favicon.ico and /favicon.png must serve
             # PNG bytes for the icon to appear in Anthropic's Directory
             # + Claude tool-call UI. /favicon.svg keeps SVG for modern
@@ -6049,7 +6049,7 @@ def _build_http_app(
             # Bucket MCP traffic by JSON-RPC method. Only an authorized,
             # non-rate-limited POST /mcp gets here; for those we buffer the
             # JSON-RPC body to peek at the `method`, then replay it to the
-            # inner app byte-for-byte. Nothing from the body is stored — we
+            # inner app byte-for-byte. Nothing from the body is stored: we
             # bump _STATS["sessions"] on the fact of an initialize, and
             # bucket the method into a FIXED allowlist so a caller-supplied
             # string can never become a metrics key. All other traffic (GET
@@ -6074,8 +6074,8 @@ def _build_http_app(
             # means something failed OUTSIDE normal dispatch (transport,
             # a pre-dispatch parse failure, or this wrapper itself).
             #
-            # Log a minimal, PII-free breadcrumb — exception type + path
-            # only, never the request body or token — so a recurrence is
+            # Log a minimal, PII-free breadcrumb (exception type + path
+            # only, never the request body or token) so a recurrence is
             # greppable in `fly logs` without weakening the privacy
             # posture. Then, if the response hasn't started yet, return a
             # clean 500 instead of letting it surface as a raw crash.
@@ -6126,7 +6126,7 @@ def _run_http(host: str, port: int, token: str | None, rate_limit: int, public_m
         access_log=False,  # keep tokens out of logs
         # proxy_headers is OFF on purpose. With it on (and
         # forwarded_allow_ips="*") uvicorn rewrites scope["client"] from the
-        # LEFTMOST X-Forwarded-For entry, which is fully caller-controlled —
+        # LEFTMOST X-Forwarded-For entry, which is fully caller-controlled:
         # that is what let a caller defeat the per-IP rate limiter by
         # varying the header. We interpret XFF ourselves in _client_ip,
         # counting from the right, and we need scope["client"] to stay the

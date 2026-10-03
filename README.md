@@ -5,7 +5,7 @@
 [![CI](https://github.com/silly-geese/estonian-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/silly-geese/estonian-mcp/actions/workflows/ci.yml)
 [![Smithery](https://img.shields.io/badge/Smithery-one--click%20install-000000.svg)](https://smithery.ai/servers/silly-geese/estonian-mcp)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue.svg)](pyproject.toml)
+[![Python 3.10-3.13](https://img.shields.io/badge/python-3.10--3.13-blue.svg)](pyproject.toml)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7c3aed.svg)](https://modelcontextprotocol.io)
 
 A small **Model Context Protocol** server that exposes
@@ -30,7 +30,7 @@ It also covers the **editorial** layer, where a word can be correctly
 spelled, morphologically valid and still wrong: `check_officialese` for
 bureaucratic Estonian in reports and academic prose, `check_term_consistency`
 for a document that names one thing three ways, and `synonyms` read as a
-word-fit check — its glosses carry domain constraints (`korpus` is
+word-fit check: its glosses carry domain constraints (`korpus` is
 specifically "kirjaliku või suulise teksti elektrooniline kogu", so a set
 of images is not one, however natural it sounds in ML jargon).
 
@@ -223,7 +223,7 @@ system prompt to get this right:
 - **Pin the dialect / region.** *"I'm from Tartu, prefer southern
   Estonian phrasings where there's a choice (e.g. 'kus sa lähed'
   rather than 'kuhu sa lähed' for casual speech)."*
-- **Show your tone with examples.** Paste 3–4 short paragraphs of
+- **Show your tone with examples.** Paste 3-4 short paragraphs of
   your own writing into the project instructions and ask Claude to
   match that voice. Real examples beat any abstract description.
 - **Anchor common mistakes.** *"You always confuse `kasutama` (to use)
@@ -353,7 +353,7 @@ server works locally and as a container.
 
 ### Run locally as stdio (zero network)
 
-EstNLTK requires Python 3.10–3.13.
+EstNLTK requires Python 3.10-3.13.
 
 ```sh
 git clone https://github.com/silly-geese/estonian-mcp.git
@@ -371,7 +371,7 @@ tokenizer, Estonian WordNet (~26 MB), and the fastText embeddings
 raise, `synonyms` refuses to run, and `check_term_consistency` reports
 `degraded: true`. The script is idempotent, so re-running it is free.
 
-The server **never downloads anything itself** — not at import, not on a
+The server **never downloads anything itself**: not at import, not on a
 tool call. That's the [privacy promise](PRIVACY.md): no outbound HTTP from
 the running process. Fetching is a separate step *you* run knowingly, and
 the Docker image does the equivalent at build time.
@@ -448,7 +448,7 @@ docker run -p 8081:8081 \
   estonian-mcp
 ```
 
-**Behind nginx, with TLS and a token per client** — [`deploy/`](deploy/README.md)
+**Behind nginx, with TLS and a token per client**: [`deploy/`](deploy/README.md)
 is a Docker Compose stack (app + nginx + certbot) for running this on
 your own host. nginx terminates TLS with Let's Encrypt certificates,
 holds one bearer token per client with per-client rate limits and
@@ -559,7 +559,7 @@ Terms of service for the hosted endpoint: [TERMS.md](TERMS.md).
   on a tool call, not to fill a gap it notices. That's the
   [privacy promise](PRIVACY.md). Resources are fetched at Docker build
   time, or by you running `scripts/fetch_resources.py` on a source
-  install. If a resource is missing, tools say so — `synonyms` raises an
+  install. If a resource is missing, tools say so: `synonyms` raises an
   actionable error, and `check_term_consistency` returns
   `degraded: true` with the reason in its Estonian summary rather than a
   confident-looking partial answer.
@@ -576,7 +576,7 @@ Terms of service for the hosted endpoint: [TERMS.md](TERMS.md).
 - Heavy neural taggers (`estnltk_neural`, BERT-based NER) are
   intentionally not pulled in; this server stays lean and fast.
 - First call after server start incurs a one-time tag-layer load
-  (~1–2 s). Subsequent calls are millisecond-scale.
+  (~1-2 s). Subsequent calls are millisecond-scale.
 - The hosted Fly instance scales to zero when idle; the first request
   after a quiet period takes ~5 s, then everything is fast again.
 
@@ -586,10 +586,10 @@ Contributions are welcome, especially from Estonian speakers who can
 sharpen the linguistic rules. Here's how to get started:
 
 1. **Fork** the repo and clone your fork.
-2. **Set up** the environment (Python 3.10–3.13):
+2. **Set up** the environment (Python 3.10-3.13):
    ```sh
    uv sync
-   # punkt_tab + WordNet + fastText — none can come from uv.lock:
+   # punkt_tab + WordNet + fastText (none can come from uv.lock):
    uv run python scripts/fetch_resources.py
    export ESTNLTK_MCP_FASTTEXT_PATH=~/.cache/estnltk-mcp/fasttext-et-medium
    ```

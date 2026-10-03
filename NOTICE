@@ -45,7 +45,7 @@ The compressed model file shipped here was built from cc.et.300.bin
 (downloaded 2026-05-18) via compress-fasttext.prune_ft_freq with
 new_vocab_size=100_000 and new_ngrams_size=200_000.
 
-The bundled model file remains under CC-BY-SA-3.0 — anyone
+The bundled model file remains under CC-BY-SA-3.0: anyone
 redistributing this Docker image or any derivative model file must
 preserve attribution and apply share-alike to derivative model files.
 The rest of estonian-mcp (source code, server.py, etc.) stays under
@@ -56,7 +56,7 @@ This product bundles a legal-Estonian collocation index
 (data/legal_collocations.json.gz) used by the common_legal_usage tool.
 The SHIPPED index contains only aggregate collocation/frequency
 statistics (facts) distilled from PUBLIC-DOMAIN Riigi Teataja
-legislation — the five core codes (obligations, general civil, civil procedure, property, penal) —
+legislation, the five core codes (obligations, general civil, civil procedure, property, penal),
 fetched via scripts/fetch_riigiteataja.py and built with
 scripts/build_legal_collocations.py. Estonian legislation is freely
 reusable; the index is offered under Apache-2.0 with the rest of the
@@ -65,5 +65,5 @@ Coverage is broadened by adding more act ids.
 
 The build script also supports a `--source hf` research mode over the
 `paulpall/legalese-sentences_estonian` dataset (Estonian National
-Corpus), which is licensed for NON-COMMERCIAL use only — an index
+Corpus), which is licensed for NON-COMMERCIAL use only: an index
 derived from it must NOT be shipped and is not distributed here.

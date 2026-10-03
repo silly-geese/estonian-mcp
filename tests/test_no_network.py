@@ -8,13 +8,13 @@ outbound connection fails loudly and names the tool that tried.
 Why this exists: issues #37 and #38 were both symptoms of resource
 handling that reached for the network when something was missing. The old
 `check_term_consistency` called `Wordnet()` and caught the fallout, which
-meant EstNLTK would try to FETCH the resource — and print an interactive
+meant EstNLTK would try to FETCH the resource, and print an interactive
 prompt to stdout, which under stdio transport is the MCP protocol channel.
 A promise in a markdown file did not stop that; a test does.
 
 Two scenarios are covered for the availability probe specifically:
   A. EstNLTK's local resources index is present (the normal case).
-  B. The index is absent — EstNLTK would want to fetch it from
+  B. The index is absent: EstNLTK would want to fetch it from
      RESOURCES_INDEX_URL. The probe must still answer locally and return
      False rather than reaching out.
 
@@ -148,7 +148,7 @@ def every_tool_is_offline() -> None:
                 attempted.append(f"{name}: {e}")
             except Exception:
                 # Any other failure (missing resource, bad input) is out of
-                # scope here — only network behaviour is under test.
+                # scope here: only network behaviour is under test.
                 pass
     finally:
         _disarm()
@@ -174,7 +174,7 @@ def availability_probe_never_reaches_out() -> None:
     """The probe must answer from disk in the two states where EstNLTK
     would otherwise fetch its resources index over HTTPS:
 
-      A. index STALE — the production steady state. EstNLTK refreshes any
+      A. index STALE (the production steady state). EstNLTK refreshes any
          index older than INDEX_TIMEOUT (2 h), so a server up longer than
          that made an outbound call on the next lookup. This is the case
          the previous version of this file never covered.

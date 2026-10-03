@@ -1,7 +1,7 @@
 # scripts
 
 One-off build / maintenance scripts. Nothing in here runs at request
-time — the MCP server is `server.py` at the repo root.
+time: the MCP server is `server.py` at the repo root.
 
 ## `build_fasttext.py`
 
@@ -28,7 +28,7 @@ uv run python scripts/build_fasttext.py
 ```
 
 Total runtime: ~5 min if the upstream `cc.et.300.bin.gz` is already
-cached locally, ~15–25 min on a fresh download.
+cached locally, ~15-25 min on a fresh download.
 
 Disk: ~12 GB free required (cc.et.300.bin unpacks to ~7 GB). The
 intermediate files live in `.context/models/`; delete them after a
@@ -67,27 +67,27 @@ Then bump the MD5 in `Dockerfile` and `.github/workflows/ci.yml`.
 ## `build_legal_collocations.py`
 
 Builds the legal-Estonian collocation / frequency index behind the
-`common_legal_usage` tool — the "what's the canonical legal phrasing"
+`common_legal_usage` tool, the "what's the canonical legal phrasing"
 engine (`hagi` → `esitama hagi`, `kohustus` → `kohustuse täitmine`).
 
 **The data, the smart way:** the pipeline never stores the corpus. It
 streams source text sentence-by-sentence, lemmatises with Vabamorf,
-counts adjacent content-word collocations, and *discards the text* —
+counts adjacent content-word collocations, and *discards the text*:
 only the pruned ~KB/MB index is written. Memory stays bounded no matter
 how big the corpus is.
 
 Sources (mind the licence):
 
 ```sh
-# POC (default) — small, license-clean authored sample; this is what
+# POC (default): small, license-clean authored sample; this is what
 # ships in data/legal_collocations.json.gz and is used by the tests.
 uv run python scripts/build_legal_collocations.py
 
-# Production, license-clean — point at .txt files of PUBLIC-DOMAIN
+# Production, license-clean: point at .txt files of PUBLIC-DOMAIN
 # Riigi Teataja legislation (Estonian law is freely reusable).
 uv run python scripts/build_legal_collocations.py --source dir --corpus-dir rt_txt/
 
-# Research/eval ONLY — streams paulpall/legalese-sentences_estonian, which
+# Research/eval ONLY: streams paulpall/legalese-sentences_estonian, which
 # is NON-COMMERCIAL (Estonian National Corpus). Do NOT ship the result.
 uv run --with datasets python scripts/build_legal_collocations.py --source hf --limit 8000
 ```
@@ -120,7 +120,7 @@ URL; a few core codes are wired as defaults and coverage scales by adding ids.
 Benchmarks estonian-mcp's morphology engine (Vabamorf, the synthesizer
 behind the `paradigm` tool) against TalTechNLP's
 [`inflection_et`](https://huggingface.co/datasets/TalTechNLP/inflection_et)
-dataset — a noun-phrase inflection benchmark (Lillepalu & Alumäe,
+dataset, a noun-phrase inflection benchmark (Lillepalu & Alumäe,
 [arXiv:2510.21193](https://arxiv.org/abs/2510.21193v2)).
 
 estonian-mcp is a tool server, not an LLM, so it can't be ranked on the
@@ -150,22 +150,22 @@ upstream.
 
 ## `eval_coverage.py`
 
-Coverage probes for two TalTechNLP datasets that — unlike
-`inflection_et` — don't map to a clean accuracy score, because they're
+Coverage probes for two TalTechNLP datasets that (unlike
+`inflection_et`) don't map to a clean accuracy score, because they're
 generation/comprehension tasks while our tools are detectors/lookups:
 
 ```sh
 uv run python scripts/eval_coverage.py 500   # sample size
 ```
 
-- **grammar_et** (sentence correction): we report *detection recall* —
-  on what fraction of erroneous sentences does any `check_*`/`spell_check`
-  tool flag something. Latest: **~26%** on a 500 sample. Low by design —
+- **grammar_et** (sentence correction): we report *detection recall*
+  (on what fraction of erroneous sentences does any `check_*`/`spell_check`
+  tool flag something). Latest: **~26%** on a 500 sample. Low by design:
   our lexicons are small and precision-oriented, not a broad grammar
   checker; read it as a floor, not a ceiling.
 - **word_meanings_et** (word→definition): we report *WordNet vocabulary
-  coverage* — fraction of target words with an Estonian WordNet entry
-  via `synonyms`. Latest: **~65%** on a 500 sample.
+  coverage* (fraction of target words with an Estonian WordNet entry
+  via `synonyms`). Latest: **~65%** on a 500 sample.
 
 The honest takeaway: deterministic morphology (`inflection_et`,
 99.1%/99.1% raw, 100% EKI-adjudicated) is our home turf; full-sentence
