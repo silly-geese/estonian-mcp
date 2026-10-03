@@ -162,6 +162,47 @@ claude mcp add --transport http estonian https://$DOMAIN/mcp \
   --header "Authorization: Bearer $TOKEN"
 ```
 
+### 4.5 Domain glossary (optional)
+
+The `check_domain_terms` tool compares a text with the words of your
+organisation. The app reads these words from two files:
+
+| File | Content | Variable in `.env` |
+| --- | --- | --- |
+| Glossary | The terms of the organisation. The tool suggests them. | `DOMAIN_GLOSSARY` |
+| Identifiers | Names of tables, columns or functions, written as words. The tool accepts them, but does not suggest them. | `DOMAIN_IDENTIFIERS` |
+
+Each file is UTF-8 text with one lemma (base form) on each line. A `#`
+starts a comment.
+
+To add a glossary:
+
+1. Put the file in `deploy/glossary/`, for example
+   `deploy/glossary/terms.txt`. Git does not track the files in this
+   directory.
+2. In `.env`, set the variable to the path in the container:
+
+   ```sh
+   DOMAIN_GLOSSARY=/etc/estonian-mcp/glossary/terms.txt
+   ```
+
+3. Make the app container again:
+
+   ```sh
+   docker compose up -d --force-recreate app
+   ```
+
+The app reads the files only when it starts. After you change a file,
+do step 3 again. If the app cannot read a file, it does not start. The
+reason is in `docker compose logs app`.
+
+`DOMAIN_SUGGEST_CUTOFF` sets how similar in spelling a glossary term
+must be to a word before the tool suggests it. It is a number from 0
+to 1. The default is 0.6.
+
+> **CAUTION: Each client that can call the server can read the
+> glossary. Do not put confidential names in these files.**
+
 ## 5 Ports and local tests
 
 ### 5.1 Ports

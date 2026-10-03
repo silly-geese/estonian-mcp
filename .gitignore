@@ -13,3 +13,7 @@ build/
 .env
 deploy/nginx/secrets/*.map
 deploy/letsencrypt/
+# An organisation's vocabulary can be confidential. The directory itself
+# is tracked so the compose mount never has to create it.
+deploy/glossary/*
+!deploy/glossary/.gitkeep

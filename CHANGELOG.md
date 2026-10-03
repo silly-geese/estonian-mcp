@@ -7,24 +7,70 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-03
+
 ### Added
 
-- **`check_domain_terms(text, glossary?)`, and an optional domain
-  glossary.** An organisation writing about its own systems has words the
-  general corpus never saw, and an agent writing for it tends to coin a
-  compound to name a thing instead of using the word the organisation
-  already has. `check_compound_familiarity` cannot tell the two apart, on
-  purpose: unattested is the normal state of specialist vocabulary. A
-  glossary can. Set `ESTNLTK_MCP_DOMAIN_GLOSSARY` to a UTF-8 file, one
-  lemma per line, `#` for comments, and optionally
-  `ESTNLTK_MCP_DOMAIN_IDENTIFIERS` for names that are allowed but never
-  suggested. The new tool reports compounds that are unattested AND not
-  listed, each with up to three nearest glossary terms by spelling
-  similarity. A per-call `glossary` extends the file, for clients that
-  cannot configure the server.
+- **`check_domain_terms(text, glossary?, suggest_cutoff?)`, and an optional
+  domain glossary** ([#68](https://github.com/silly-geese/estonian-mcp/pull/68),
+  contributed by @mitselek, for
+  [#67](https://github.com/silly-geese/estonian-mcp/issues/67)). An
+  organisation writing about its own systems has words the general corpus
+  never saw, and an agent writing for it tends to coin a compound to name a
+  thing instead of using the word the organisation already has.
+  `check_compound_familiarity` cannot tell the two apart, on purpose:
+  unattested is the normal state of specialist vocabulary. A glossary can.
+
+  Set `ESTNLTK_MCP_DOMAIN_GLOSSARY` to a UTF-8 file, one lemma per line,
+  `#` for comments, and optionally `ESTNLTK_MCP_DOMAIN_IDENTIFIERS` for
+  names that are allowed but never suggested (table or column names
+  written as words). The new tool reports compounds that are unattested
+  AND not listed. A compound counts as listed under any of its lemma
+  readings or as written, so `ladustamiskohad`, which Vabamorf reads as
+  `ladustamiskoha` first, still matches a listed `ladustamiskoht`, and an
+  identifier matches the way it is named. Each reported compound carries
+  up to three glossary terms spelled alike, with their similarity, and the
+  glossary term it is built on, if any: `vagunireisitabel` is
+  `vagunireis` + `tabel`, ordinary Estonian, and is not to be shortened to
+  `vagunireis`. The suggestions are look-alikes, not synonyms, and the
+  tool says so.
+
+  The similarity a suggestion needs is 0.6, set with
+  `ESTNLTK_MCP_DOMAIN_SUGGEST_CUTOFF` or per call with `suggest_cutoff`.
+  A per-call `glossary` is used alongside the file for that call only,
+  which is the way in on the hosted server: it has no glossary of its
+  own. 27 tools now, up from 26. Like `check_compound_familiarity`, the
+  tool needs the fastText model; it skips that tool's neighbour search,
+  which it does not need, so it runs in a fraction of the time.
 - **`in_domain_glossary` on `check_compound_familiarity` compounds**, only
-  when a glossary is loaded. Without one, every output is exactly as
-  before.
+  when the server has a glossary. A listed compound is the organisation's
+  own word, so it is never `is_suspect`.
+- **`preferred` on `check_term_consistency` groups.** With a glossary
+  (the server's, or a new per-call `glossary`), each variant carries
+  `in_domain_glossary`, and where exactly one variant of a group is
+  listed, it is the group's `preferred` form beside the frequency answer
+  in `dominant`.
+
+  Without a glossary, every existing tool's output is byte for byte what
+  it was.
+
+### Security
+
+- **The glossary files are read at startup, and a bad one stops the
+  server** with exit status 2, as a missing auth token does. Read on the
+  first call instead, a mistyped path would have made every
+  `check_compound_familiarity` call fail while `/health` said ok, and
+  sent the absolute path to the caller.
+- **A per-call `glossary` is capped at 1,000 terms of up to 200
+  characters**, in the schema the tool advertises and again in code.
+  Every reported compound is compared with every term, so an uncapped
+  list let one anonymous request on the public instance run for minutes.
+  Suggestions are computed for the first 200 reported compounds; the
+  rest are still reported, and `suggestions_capped` says so.
+- **Anything in a glossary can be read by anyone who can call the
+  server**, since the suggestions quote it. SECURITY.md and the README say
+  so, and the server logs a warning when a glossary is configured in
+  public mode. The hosted instance has none.
 
 ## [0.6.4] - 2026-09-22
 

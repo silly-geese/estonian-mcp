@@ -6,7 +6,8 @@ time — the MCP server is `server.py` at the repo root.
 ## `build_fasttext.py`
 
 Builds the 100K-vocab compressed Estonian fastText model that the
-`find_related_words` and `check_compound_familiarity` tools depend on.
+`find_related_words`, `check_compound_familiarity` and `check_domain_terms`
+tools depend on.
 
 The pre-built artifact (~33 MB, MD5 `3690ee9983fc95740a61125fd58ed385`)
 is mirrored at the project's

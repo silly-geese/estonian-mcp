@@ -80,6 +80,11 @@ jobs:
       - name: Run familiarity-verdict tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_familiarity.py
 
+      # Mostly pure decisions; the last section drives the real tools, so
+      # it runs here, after the resources are fetched.
+      - name: Run domain-glossary tests (issue #67)
+        run: uv run --python ${{ matrix.python-version }} python tests/test_domain_terms.py
+
       - name: Run legal-tool tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_legal.py
 

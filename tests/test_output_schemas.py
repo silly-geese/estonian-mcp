@@ -64,6 +64,8 @@ CALLS: list[tuple[str, dict]] = [
     ("check_style", {"text": "Süsteem kasutab andmeid. Andmed töödeldakse."}),
     ("check_officialese", {"text": "Aruandeperioodil koguti ja valideeriti andmestik."}),
     ("check_term_consistency", {"text": "Andmestik ja teadusandmestik."}),
+    ("check_term_consistency", {"text": "Andmestik ja teadusandmestik.",
+                                "glossary": ["teadusandmestik"]}),  # preferred
     ("check_compounds", {"text": "Kooli maja on suur."}),
     ("check_punctuation", {"text": "Ma tean et see on hea."}),
     ("check_capitalization", {"text": "Olen Eestlane."}),
@@ -73,6 +75,8 @@ CALLS: list[tuple[str, dict]] = [
     ("check_abbreviation_hyphenation", {"text": "MCPst tuleb abi."}),
     ("check_compound_familiarity", {"text": "See on mõtteliin."}),
     ("check_domain_terms", {"text": "See on mõtteliin."}),
+    ("check_domain_terms", {"text": "Vagunisõit ja vagunireisitabel.",
+                            "glossary": ["vagunireis"]}),  # suggestions
     ("check_hyphenation", {"word": "koerad"}),
     ("check_legalese", {"text": "Käesolev leping."}),
     ("check_defined_terms", {"text": 'Müüja (edaspidi «Müüja») müüb kauba.'}),

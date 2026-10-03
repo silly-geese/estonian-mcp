@@ -93,12 +93,12 @@ of images is not one, however natural it sounds in ML jargon).
 | `classify_register(text)` | Coarse formal/colloquial register hint with matched markers, consistency flag for register-mixed text, plus structural signals (umbisikuline tegumood ratio, noun density) so dense officialese no longer scores "neutral" |
 | `check_style(text)` | Style metrics, lemma-aware repetition, umbisikuline-tegumood ratio, sentence-length variance, hedging-word density |
 | `check_officialese(text)` | Kantseliit check for **non-legal** prose (reports, academic, business), where `check_legalese` stays silent. Nominalisation density (`hindamine` → `hindama`), impersonal-voice ratio, clause stacking (`mille käigus … ning …`), Estonian-calibrated sentence length, and admin filler (`omab` → `on`, `viidi läbi` → `tehti`, `mudeli poolt loodud` → `mudeli loodud`) |
-| `check_term_consistency(text)` | One referent, one term. Flags a document that calls the same thing `andmestik` on page 1 and `teadusandmestik` on page 2, via shared compound head or shared Estonian WordNet synset, with per-variant counts so you can standardise on the dominant one |
+| `check_term_consistency(text)` | One referent, one term. Flags a document that calls the same thing `andmestik` on page 1 and `teadusandmestik` on page 2, via shared compound head or shared Estonian WordNet synset, with per-variant counts so you can standardise on the dominant one. With a domain glossary (the server's, or a per-call `glossary`), a listed variant is named the group's `preferred` form |
 | `check_redundancy(text)` | Pleonasm check, flags semantic doubling like `samuti ka` (also+also), `kõige optimaalsem` (most+optimal), and fixed redundant phrases |
 | `check_object_case(text)` | Käändeõpetus, flags direct-object case errors under negation and after partitive-only verbs (armastama, vihkama, vajama, …) |
 | `check_abbreviation_hyphenation(text)` | Lühendiortograafia, flags abbreviations with case endings missing the EKI-mandated hyphen (`MCPst` → `MCP-st`, `OÜle` → `OÜ-le`) |
-| `check_compound_familiarity(text)` | Attestation check, for each compound noun, reports whether the lemma is in the corpus vocabulary or Estonian WordNet and returns its top fastText neighbours. Unattested is ordinary for specialist vocabulary and is not a rewrite signal; the narrow `is_suspect` flag needs an unattested lemma whose nearest real neighbour is still under 0.55 (`mõtteliin`-style translationese, literal English "train of thought" → real Estonian is `mõttekäik`) |
-| `check_domain_terms(text, glossary?)` | Domain-glossary check, reports compounds that are unattested AND absent from the operator's glossary (`ESTNLTK_MCP_DOMAIN_GLOSSARY`, one lemma per line) and identifier list (`ESTNLTK_MCP_DOMAIN_IDENTIFIERS`), with the nearest glossary terms as suggestions. For Estonian written about an organisation's own systems, where a coined compound should be the organisation's term or the thing's identifier. A per-call `glossary` extends the file |
+| `check_compound_familiarity(text)` | Attestation check, for each compound noun, reports whether the lemma is in the corpus vocabulary or Estonian WordNet and returns its top fastText neighbours. Unattested is ordinary for specialist vocabulary and is not a rewrite signal; the narrow `is_suspect` flag needs an unattested lemma whose nearest real neighbour is still under 0.55 (`mõtteliin`-style translationese, literal English "train of thought" → real Estonian is `mõttekäik`). With a server glossary, each compound also carries `in_domain_glossary` |
+| `check_domain_terms(text, glossary?, suggest_cutoff?)` | Domain-glossary check, for Estonian written about an organisation's own systems, where a coined compound should be the organisation's term or the thing's identifier. Reports compounds that are unattested AND not on the operator's glossary or identifier list (see [Domain glossary](#domain-glossary-optional)), each with up to three glossary terms *spelled alike* (look-alikes, not synonyms) and the glossary term it is built on, if any (`vagunireisitabel` on `vagunireis`). The hosted server has no glossary of its own: pass your terms in `glossary` (up to 1,000), used for that call only |
 | `check_capitalization(text)` | Algustäheortograafia check, flags wrongly capitalized weekdays, months, nationalities, and language/culture adjectives per EKI's Reeglid |
 | `check_compounds(text)` | Liitsõnaõigekiri, flags common AI-generated splits of words that should be a single compound (`kooli maja` → `koolimaja`) |
 | `check_punctuation(text)` | Kirjavahemärgid, flags missing commas before subordinating conjunctions (`et`, `sest`, `kuna`, `kuid`, `vaid`, `nagu`, …) |
@@ -468,6 +468,52 @@ deploy. The shipped `configSchema` is empty (one-click install)
 because the deployment runs in public mode; flip it back if you fork
 to a bearer-mode setup.
 
+### Domain glossary (optional)
+
+An organisation writing about its own systems has words no general
+corpus contains, and an agent writing for it tends to coin a compound
+where the organisation already has a word. Give the server that
+vocabulary and `check_domain_terms` can tell the two apart.
+
+| Variable | Contents |
+|---|---|
+| `ESTNLTK_MCP_DOMAIN_GLOSSARY` | Path to the organisation's terms: UTF-8, one lemma (base form) per line, `#` starts a comment. Matched case-insensitively, and offered as suggestions |
+| `ESTNLTK_MCP_DOMAIN_IDENTIFIERS` | Path to names that are always allowed but never suggested: table, column or function names written as words. Same format; matched as written as well as by lemma |
+| `ESTNLTK_MCP_DOMAIN_SUGGEST_CUTOFF` | Spelling similarity, 0 to 1, that a glossary term needs to be suggested. Default 0.6 |
+
+The server reads the files once, at startup, so restart it after
+editing them. A file it cannot read, or a cutoff outside 0 to 1, stops
+it with exit status 2. With a glossary set, `check_compound_familiarity`
+marks each compound `in_domain_glossary` and `check_term_consistency`
+names a listed variant as its group's `preferred` form. Unset, every
+other tool answers exactly as before.
+
+For stdio, add `"env": {"ESTNLTK_MCP_DOMAIN_GLOSSARY": "/absolute/path/to/terms.txt"}`
+to the server's entry in the client config, or with Claude Code:
+
+```sh
+claude mcp add -e ESTNLTK_MCP_DOMAIN_GLOSSARY=/absolute/path/to/terms.txt \
+  estnltk -- /absolute/path/to/uv --directory /absolute/path/to/estonian-mcp \
+  run python server.py
+```
+
+In a container, mount the file read-only. It must be readable by uid
+1000, the user the image runs as:
+
+```sh
+docker run -p 8081:8081 -e ESTNLTK_MCP_PUBLIC_MODE=1 \
+  -v "$PWD/terms.txt:/etc/estonian-mcp/glossary/terms.txt:ro" \
+  -e ESTNLTK_MCP_DOMAIN_GLOSSARY=/etc/estonian-mcp/glossary/terms.txt \
+  ghcr.io/silly-geese/estonian-mcp
+```
+
+The [`deploy/`](deploy/README.md) stack reads them from `deploy/glossary/`.
+
+**Anyone who can call the server can read the glossary**, because the
+suggestions quote it, and can probe the identifier list by what it
+stops reporting. On a public instance, list nothing confidential. The
+server logs a warning at startup when the two are combined.
+
 ---
 
 ## Security
@@ -490,8 +536,9 @@ to a bearer-mode setup.
   for Fly's single edge proxy), because the leftmost entry is
   caller-controlled and letting uvicorn trust it defeated the per-IP
   rate limit (0.5.4).
-- **Inputs**: 100 KB cap per text tool, 200 chars for `syllabify`.
-  Oversized inputs return a structured error rather than hanging.
+- **Inputs**: 100 KB cap per text tool, 200 chars for `syllabify`,
+  1,000 terms of up to 200 chars for a per-call `glossary`. Oversized
+  inputs return a structured error rather than hanging.
 - **Supply chain**: deps pinned + hashed in `uv.lock`. Dependabot
   watches pip + GitHub Actions weekly. CI runs smoke + HTTP tests +
   Docker build/boot on Python 3.11 and 3.13 on every push.
@@ -518,8 +565,8 @@ Terms of service for the hosted endpoint: [TERMS.md](TERMS.md).
   and the fastText model.
 - WordNet is a separate ~26 MB resource (used by `synonyms` and one of
   `check_term_consistency`'s two rules).
-- The fastText model used by `find_related_words` and
-  `check_compound_familiarity` is a ~33 MB compressed resource with a
+- The fastText model used by `find_related_words`,
+  `check_compound_familiarity` and `check_domain_terms` is a ~33 MB compressed resource with a
   100K-word vocabulary (built locally from Facebook's cc.et.300 via
   compress-fasttext, CC-BY-SA-3.0; see [NOTICE](NOTICE)).
 - Heavy neural taggers (`estnltk_neural`, BERT-based NER) are
