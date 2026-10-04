@@ -107,7 +107,7 @@ def the_decision() -> None:
     check("attested passes", out == [], str(out))
 
     out = server._domain_terms_from([compound("vagunisõit", False)], GLOSSARY, GLOSSARY)
-    check("a coinage is reported", len(out) == 1, str(out))
+    check("an unlisted compound is reported", len(out) == 1, str(out))
     sugg = out[0]["suggestions"] if out else []
     check("with the glossary term as a suggestion (acceptance c)",
           [s["term"] for s in sugg][:1] == ["vagunireis"], str(sugg))
@@ -375,9 +375,9 @@ def the_call_glossary() -> None:
                 check(f"a cutoff of {bad} is refused", True)
 
         print("the cutoff reaches the decision")
-        coined = {"compounds_analysed": 1, "wordnet_checked": True,
+        unlisted = {"compounds_analysed": 1, "wordnet_checked": True,
                   "all_compounds": [compound("vagunisõit", False)]}
-        server._check_compound_familiarity = lambda text, *, neighbours=True: coined
+        server._check_compound_familiarity = lambda text, *, neighbours=True: unlisted
         out = server._check_domain_terms("x", ["vagunireis"], suggest_cutoff=0.75)
         check("per call: 0.75 drops a 0.70 look-alike",
               out["suggest_cutoff"] == 0.75 and out["unlisted_compounds"][0]["suggestions"] == [], str(out))
@@ -487,7 +487,7 @@ def end_to_end() -> None:
               not any(w.startswith("ladustamiskoh") for w in lemmas), str(lemmas))
         check("nor an identifier written as named", "tellimusrida" not in lemmas, str(lemmas))
         hit = [u for u in out["unlisted_compounds"] if u["lemma"] == "vagunisõit"]
-        check("a coinage is reported with the term as a suggestion",
+        check("an unlisted compound is reported with the term as a suggestion",
               hit and hit[0]["suggestions"][:1] and hit[0]["suggestions"][0]["term"] == "vagunireis",
               str(out["unlisted_compounds"]))
         fam = server.check_compound_familiarity("Vagunireisi andmed.")

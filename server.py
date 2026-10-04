@@ -87,7 +87,7 @@ DEFAULT_STATIC_RATE_LIMIT_PER_MINUTE = 60
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.7.0"
+SERVER_VERSION = "0.7.1"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -3631,10 +3631,13 @@ def _check_domain_terms(text: str, glossary: list[str] | None = None,
             "plus any `glossary` passed with this call) and not in the "
             "identifier list (ESTNLTK_MCP_DOMAIN_IDENTIFIERS). A compound is "
             "listed when any lemma reading of it, or the word as written, "
-            "is on a list. In text written for an organisation, a reported "
-            "compound is often a coined name for something the "
-            "organisation already has a word for, or for something that "
-            "should be named by its identifier. `suggestions` are glossary "
+            "is on a list. A reported compound is not necessarily coined: "
+            "unattested is the normal state of much ordinary Estonian "
+            "(`vagunisõit` is common, and outside the 100K vocabulary). "
+            "What the report says is only that it is not the "
+            "organisation's word. Where it names something the "
+            "organisation has a term for, or something with an "
+            "identifier, use theirs; otherwise leave it. `suggestions` are glossary "
             "terms SPELLED alike (difflib similarity of at least "
             "`suggest_cutoff`), not synonyms: replace the compound only "
             "when a suggestion names the same thing, and otherwise leave "
@@ -3678,9 +3681,11 @@ def check_domain_terms(
     (ESTNLTK_MCP_DOMAIN_IDENTIFIERS) and the per-call `glossary`. Any
     lemma reading of the word, or the word as written, counts as listed.
 
-    Use it on Estonian you wrote about an organisation's own systems: a
-    reported compound is often a coinage where the organisation already
-    has a word, or where the thing should be named by its identifier.
+    Use it on Estonian you wrote about an organisation's own systems. A
+    reported compound is not the organisation's word, which is all the
+    report says: it may be a coinage, or ordinary Estonian the lexicons
+    lack (`vagunisõit` is common). Where it names something the
+    organisation has a term or an identifier for, use theirs.
 
     Each reported compound carries up to three `suggestions`: glossary
     terms spelled alike, with their similarity. They are look-alikes, not
