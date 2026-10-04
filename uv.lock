@@ -546,7 +546,7 @@ wheels = [
 
 [[package]]
 name = "estonian-mcp"
-version = "0.7.0"
+version = "0.7.1"
 source = { editable = "." }
 dependencies = [
     { name = "compress-fasttext" },

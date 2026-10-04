@@ -7,6 +7,21 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-04
+
+### Fixed
+
+- **`check_domain_terms` called a reported compound a likely coinage.**
+  It is not: the tool reports compounds outside the corpus vocabulary,
+  WordNet and the legal list, and that is the normal state of much
+  ordinary Estonian. `vagunisõit`, the example the 0.7.0 tests and
+  review used for a word to replace with the glossary's `vagunireis`, is
+  common Estonian (a native speaker's correction), and an agent told it
+  was coined would treat it as invented. The note, the docstring, the README and the skill now say
+  what the report establishes: the word is not the organisation's. Where
+  it names something the organisation has a term or an identifier for,
+  use theirs; otherwise leave it.
+
 ## [0.7.0] - 2026-10-03
 
 ### Added
