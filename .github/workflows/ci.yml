@@ -120,6 +120,11 @@ jobs:
       - name: Run no-outbound-network tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_no_network.py
 
+      # Under stdio transport stdout is the JSON-RPC channel. Runs the real
+      # server as a subprocess and fails on any line there that isn't JSON.
+      - name: Run stdio-channel tests
+        run: uv run --python ${{ matrix.python-version }} python tests/test_stdio_channel.py
+
       - name: Run client-IP bucketing tests (rate-limit evasion)
         run: uv run --python ${{ matrix.python-version }} python tests/test_client_ip.py
 

@@ -420,6 +420,39 @@ def _forbid_resource_downloads() -> None:
 _forbid_resource_downloads()
 
 
+def _keep_logs_off_stdout() -> None:
+    """Remove the logging handler `import estnltk` puts on the root logger.
+
+    estnltk/helpers/logger.py adds a TqdmLoggingHandler to the ROOT logger
+    and sets it to INFO; the handler prints through tqdm.write(), which
+    writes to sys.stdout. Under stdio transport stdout is the JSON-RPC
+    channel, so every INFO record from any library went into it: the SDK's
+    "Processing request of type CallToolRequest" on each call, gensim's
+    three lines while loading the fastText model. sys.stdout buffers apart
+    from the wrapper the SDK writes responses through, so once 8 KB piled
+    up a flush could put half a log line in front of a response. The
+    client skipped that line as non-JSON and waited for an answer already
+    sent: check_compound_familiarity hung until the client's 30-minute
+    idle timeout. FastMCP's RichHandler already logs to stderr, so nothing
+    is lost. tests/test_stdio_channel.py is what proves stdout stays clean.
+
+    Runs after _forbid_resource_downloads(), whose import of
+    estnltk.resource_utils is what installs the handler. Best-effort, like
+    that guard: if EstNLTK renames the class, the test goes red.
+    """
+    try:
+        from estnltk.helpers.logger import TqdmLoggingHandler
+    except Exception:
+        return
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        if isinstance(handler, TqdmLoggingHandler):
+            root.removeHandler(handler)
+
+
+_keep_logs_off_stdout()
+
+
 def _wordnet_available() -> bool:
     """True if Estonian WordNet is unpacked on disk, WITHOUT any network.
 
