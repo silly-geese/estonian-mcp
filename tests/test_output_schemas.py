@@ -12,9 +12,10 @@ this file also checks that wire format: one compact text block that says
 what structuredContent says, and no null a tool did not write.
 
 Calling the python function proves nothing about that, and neither does
-`mcp.call_tool`, which does not validate. So this test does what a client
-does: read the advertised schema, run the tool, and check the structured
-payload against it.
+`mcp.call_tool` on its own. So this test does what a client does: read the
+advertised schema, run the tool, and check the structured payload against
+it, then does it again through a real client session, which validates
+structuredContent against the advertised schema itself.
 
 Run via:
 
@@ -31,7 +32,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import jsonschema
-from mcp.shared.memory import create_connected_server_and_client_session as connect
+from mcp import Client
+from mcp.types.version import LATEST_MODERN_VERSION
 
 import server
 
@@ -107,7 +109,7 @@ CALLS: list[tuple[str, dict]] = [
     ("find_related_words", {"word": "xqzzyv", "n": 3}),
 ]
 
-# These need a downloaded resource. Absent, the tool raises on purpose and
+# These need a downloaded resource. Absent, the tool fails on purpose and
 # that is the resource tests' business, not this file's.
 NEEDS_RESOURCES = {"synonyms", "find_related_words"}
 
@@ -117,7 +119,7 @@ async def run() -> None:
 
     print("every registered tool has an output schema")
     for name, tool in sorted(tools.items()):
-        check(f"{name} advertises one", tool.outputSchema is not None)
+        check(f"{name} advertises one", tool.output_schema is not None)
 
     print("and the structured payload a client receives satisfies it")
     for name, args in CALLS:
@@ -126,17 +128,17 @@ async def run() -> None:
             check(f"{name} is registered", False, "not in list_tools()")
             continue
         label = f"{name}({next(iter(args.values()))!r})"
-        try:
-            _content, structured = await server.mcp.call_tool(name, args)
-        except Exception as e:
+        r = await server.mcp.call_tool(name, args)
+        if r.is_error:
+            text = r.content[0].text if r.content else ""
             if name in NEEDS_RESOURCES:
-                skipped.append(f"{label}: {type(e).__name__}")
+                skipped.append(f"{label}: {text[:60]}")
                 print(f"  SKIP {label} (needs a downloaded resource)")
                 continue
-            check(label, False, f"raised {type(e).__name__}: {str(e)[:90]}")
+            check(label, False, f"answered an error: {text[:90]}")
             continue
         try:
-            jsonschema.validate(structured, tool.outputSchema)
+            jsonschema.validate(r.structured_content, tool.output_schema)
             print(f"  PASS {label}")
         except jsonschema.ValidationError as e:
             path = "/".join(str(p) for p in e.absolute_path) or "(root)"
@@ -149,71 +151,93 @@ async def run() -> None:
     for name, args in CALLS:
         if name in NEEDS_RESOURCES:
             continue
-        content, _structured = await server.mcp.call_tool(name, args)
+        r = await server.mcp.call_tool(name, args)
         text = ""
-        if content and getattr(content[0], "text", None):
-            text = content[0].text
+        if r.content and getattr(r.content[0], "text", None):
+            text = r.content[0].text
         check(f"{name} returns a result, not an error string",
-              "Output validation error" not in text, text[:100])
+              not r.is_error and "Output validation error" not in text, text[:100])
 
     print("the wire format is lean")
     # Every caller pays for these bytes in tokens; see _EstonianMCP. One
     # compact block, saying exactly what structuredContent says, checked
-    # through a real client session so the lowlevel server's own output
-    # validation runs too.
+    # through a real client session, which also validates structuredContent
+    # against the advertised outputSchema. Both eras: the initialize
+    # handshake, and 2026-07-28, which has none.
     def strict(text):
         # json.loads accepts a bare NaN; a strict client does not.
         return json.loads(text, parse_constant=lambda c: (_ for _ in ()).throw(ValueError(c)))
 
-    async with connect(server.mcp._mcp_server) as client:
-        for name, args in CALLS:
-            label = f"{name}({next(iter(args.values()))!r})"
-            if any(s.startswith(label) for s in skipped):
-                continue
-            r = await client.call_tool(name, args)
-            check(f"{label} is not an error", not r.isError, str(r.content)[:100])
-            text = r.content[0].text if r.content else ""
-            check(f"{label} answers in one text block", len(r.content) == 1, str(len(r.content)))
-            try:
-                payload = strict(text)
-            except ValueError as e:
-                check(f"{label} text is strict JSON", False, f"{e}: {text[:80]}")
-                continue
-            check(f"{label} text is compact JSON",
-                  text == json.dumps(payload, ensure_ascii=False, separators=(",", ":")), text[:80])
-            # List tools are wrapped as {"result": [...]} in structuredContent,
-            # which the outputSchema requires; the text is the bare list.
-            structured = r.structuredContent
-            expected = structured["result"] if isinstance(payload, list) else structured
-            check(f"{label} text equals structuredContent", payload == expected, text[:80])
+    for mode in ("legacy", LATEST_MODERN_VERSION):
+        print(f"  over a {mode} client session")
+        async with Client(server.mcp, mode=mode) as client:
+            for name, args in CALLS:
+                label = f"{name}({next(iter(args.values()))!r})"
+                if any(s.startswith(label) for s in skipped):
+                    continue
+                try:
+                    r = await client.call_tool(name, args)
+                except RuntimeError as e:  # the client's own schema check
+                    check(f"{label} satisfies its outputSchema", False, str(e)[:120])
+                    continue
+                check(f"{label} is not an error", not r.is_error, str(r.content)[:100])
+                text = r.content[0].text if r.content else ""
+                check(f"{label} answers in one text block", len(r.content) == 1, str(len(r.content)))
+                try:
+                    payload = strict(text)
+                except ValueError as e:
+                    check(f"{label} text is strict JSON", False, f"{e}: {text[:80]}")
+                    continue
+                check(f"{label} text is compact JSON",
+                      text == json.dumps(payload, ensure_ascii=False, separators=(",", ":")), text[:80])
+                # List tools are wrapped as {"result": [...]} in structuredContent,
+                # which the outputSchema requires; the text is the bare list.
+                structured = r.structured_content
+                expected = structured["result"] if isinstance(payload, list) else structured
+                check(f"{label} text equals structuredContent", payload == expected, text[:80])
 
-        print("argument errors are short and do not echo the input")
-        r = await client.call_tool("tokenize", {"text": 5})
-        msg = r.content[0].text if r.content else ""
-        check("a wrong type is one short clause",
-              r.isError and msg == "Input validation error: text: Input should be a valid string",
-              msg[:160])
-        r = await client.call_tool("check_domain_terms",
-                                   {"text": "x", "glossary": ["a" * 201] * 40})
-        msg = r.content[0].text if r.content else ""
-        check("forty bad glossary terms name five and count the rest",
-              r.isError and msg.count("glossary.") == server._MAX_ARG_ERRORS
-              and msg.endswith(f"and {40 - server._MAX_ARG_ERRORS} more") and "aaaa" not in msg,
-              msg[:200])
+            print("argument errors are short and do not echo the input")
+            r = await client.call_tool("tokenize", {"text": 5})
+            msg = r.content[0].text if r.content else ""
+            check("a wrong type is one short clause",
+                  r.is_error and msg == "Input validation error: text: Input should be a valid string",
+                  msg[:160])
+            r = await client.call_tool("check_domain_terms",
+                                       {"text": "x", "glossary": ["a" * 201] * 40})
+            msg = r.content[0].text if r.content else ""
+            check("forty bad glossary terms name five and count the rest",
+                  r.is_error and msg.count("glossary.") == server._MAX_ARG_ERRORS
+                  and msg.endswith(f"and {40 - server._MAX_ARG_ERRORS} more") and "aaaa" not in msg,
+                  msg[:200])
+
+    print("other failures keep the reason, as under mcp 1.x")
+    # 2.x answers an exception the tool did not raise as "Error executing
+    # tool <name>" alone; the limit and the missing resource are the part
+    # the caller can act on.
+    r = await server.mcp.call_tool("spell_check", {"text": "a" * (server.MAX_TEXT_CHARS + 1)})
+    msg = r.content[0].text if r.content else ""
+    check("an over-long text names the limit",
+          r.is_error and msg == f"Error executing tool spell_check: text length "
+          f"{server.MAX_TEXT_CHARS + 1} exceeds limit {server.MAX_TEXT_CHARS}; "
+          "split the input into smaller chunks", msg[:160])
+    r = await server.mcp.call_tool("no_such_tool", {})
+    msg = r.content[0].text if r.content else ""
+    check("an unknown tool is named", r.is_error and msg == "Unknown tool: no_such_tool", msg[:160])
+
     # The SDK default filled each declared-but-absent key with null, which
     # Claude Code shows the model. paradigm('maja') omits several keys.
-    _content, structured = await server.mcp.call_tool("paradigm", {"word": "maja"})
+    structured = (await server.mcp.call_tool("paradigm", {"word": "maja"})).structured_content
     raw = server.paradigm("maja")
     check("structuredContent carries only the keys the tool returned",
           set(structured) == set(raw), str(sorted(set(structured) ^ set(raw))))
     # spell_check lists only misspelled words, so clean text, its most
     # common result, is an empty list. A client that reads only the text
     # must still get an answer, not a blank result.
-    content, structured = await server.mcp.call_tool("spell_check", {"text": "Tere maailm."})
+    r = await server.mcp.call_tool("spell_check", {"text": "Tere maailm."})
     check("clean spell_check text answers one '[]' block",
-          [c.text for c in content] == ["[]"] and structured == {"result": []},
-          f"{[c.text for c in content]} {structured}")
-    content, structured = await server.mcp.call_tool("spell_check", {"text": "Tere maailmm"})
+          [c.text for c in r.content] == ["[]"] and r.structured_content == {"result": []},
+          f"{[c.text for c in r.content]} {r.structured_content}")
+    structured = (await server.mcp.call_tool("spell_check", {"text": "Tere maailmm"})).structured_content
     check("a misspelling comes back as one populated row",
           [r["text"] for r in structured["result"]] == ["maailmm"]
           and structured["result"][0]["spelling"] is False, str(structured))
@@ -224,7 +248,7 @@ async def run() -> None:
     for name in ("check_compounds", "check_punctuation", "check_capitalization",
                  "check_numbers", "check_redundancy", "check_object_case",
                  "check_abbreviation_hyphenation", "check_translationese"):
-        props = set((tools[name].outputSchema or {}).get("properties", {}))
+        props = set((tools[name].output_schema or {}).get("properties", {}))
         check(f"{name} outputSchema is issues and summary_estonian",
               props == {"issues", "summary_estonian"}, str(sorted(props)))
 
@@ -245,8 +269,12 @@ async def run() -> None:
         return found
 
     for name, tool in sorted(tools.items()):
-        left = titles(tool.inputSchema) + titles(tool.outputSchema or {})
+        left = titles(tool.input_schema) + titles(tool.output_schema or {})
         check(f"{name} schemas have no title", not left, str(left[:3]))
+        # pydantic makes a TypedDict's docstring the schema's description;
+        # those are notes for maintainers, not for the model.
+        check(f"{name} outputSchema has no description",
+              "description" not in (tool.output_schema or {}))
 
     print("descriptions arrive unwrapped and dedented")
     # Hard wrapping and docstring indentation cost tokens and say nothing.

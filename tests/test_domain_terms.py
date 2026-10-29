@@ -501,18 +501,16 @@ def the_schema() -> None:
     async def run() -> None:
         tools = {t.name: t for t in await server.mcp.list_tools()}
         for name in ("check_domain_terms", "check_term_consistency"):
-            props = tools[name].inputSchema["properties"]
+            props = tools[name].input_schema["properties"]
             schema = str(props["glossary"])
             check(f"{name}: maxItems advertised", f"'maxItems': {server.MAX_GLOSSARY_TERMS}" in schema, schema)
             check(f"{name}: maxLength advertised", f"'maxLength': {server.MAX_WORD_CHARS}" in schema, schema)
-            try:
-                await server.mcp.call_tool(name, {
-                    "text": "x", "glossary": ["a"] * (server.MAX_GLOSSARY_TERMS + 1)})
-                check(f"{name}: too many terms rejected before the body runs", False, "accepted")
-            except Exception as e:
-                check(f"{name}: too many terms rejected before the body runs",
-                      "validation error" in str(e).lower(), str(e)[:120])
-        cutoff = str(tools["check_domain_terms"].inputSchema["properties"]["suggest_cutoff"])
+            r = await server.mcp.call_tool(name, {
+                "text": "x", "glossary": ["a"] * (server.MAX_GLOSSARY_TERMS + 1)})
+            msg = r.content[0].text if r.content else ""
+            check(f"{name}: too many terms rejected before the body runs",
+                  r.is_error and "validation error" in msg.lower(), msg[:120])
+        cutoff = str(tools["check_domain_terms"].input_schema["properties"]["suggest_cutoff"])
         check("suggest_cutoff is bounded 0.4 to 1",
               "'minimum': 0.4" in cutoff and "'maximum': 1.0" in cutoff, cutoff)
 

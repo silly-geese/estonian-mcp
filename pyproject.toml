@@ -1,6 +1,6 @@
 [project]
 name = "estonian-mcp"
-version = "1.0.2"
+version = "1.1.0"
 description = "Offline MCP server wrapping EstNLTK, EKI Reeglid, and Riigi Teataja so AI agents write better Estonian. 28 tools: spell-check, morphology, paradigm, synonyms, related-words, register, style, redundancy, orthography (capitalisation, compounds, commas, numbers), case-government, compound attestation, domain-glossary term check, an English-structure (translationese) check, kantseliit/officialese and terminology-consistency checks for reports and academic prose, plus legalese simplification and defined-term tracking for legal texts, and canonical legal-usage collocations."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -22,7 +22,7 @@ classifiers = [
     "Natural Language :: Estonian",
 ]
 dependencies = [
-    "mcp[cli]>=1.28,<2",
+    "mcp[cli,rich]>=2.3,<3",
     "estnltk>=1.7.3",
     "compress-fasttext>=0.1.5",
     "scikit-learn>=1.0",

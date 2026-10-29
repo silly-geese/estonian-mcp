@@ -835,10 +835,10 @@ _tools = _asyncio.run(server.mcp.list_tools())
 _missing_desc = [
     f"{t.name}.{p}"
     for t in _tools
-    for p, sch in t.inputSchema.get("properties", {}).items()
+    for p, sch in t.input_schema.get("properties", {}).items()
     if not sch.get("description")
 ]
-_missing_out = [t.name for t in _tools if not getattr(t, "outputSchema", None)]
+_missing_out = [t.name for t in _tools if not t.output_schema]
 check("every tool parameter has a description", not _missing_desc, str(_missing_desc))
 check("every tool has an output schema", not _missing_out, str(_missing_out))
 

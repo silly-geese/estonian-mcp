@@ -7,6 +7,55 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-29
+
+The server now runs on version 2 of the MCP Python SDK (`mcp` 2.3), and
+so also speaks protocol revision 2026-07-28. Nothing changes for a
+client: `tools/list` is the same JSON as 1.0.2's (names, descriptions,
+annotations, schemas), and so is every `tools/call` answer we compared,
+results and error messages alike, over stdio and HTTP; only the order of
+keys in the envelope differs. Clients on `mcp` 1.30 and 2.3 both
+connect, and the hosted server still answers protocol 2025-03-26.
+
+### Added
+
+- **Protocol 2026-07-28.** A client that speaks it, as the 2.x SDK does
+  by default, sends no `initialize`: it opens with `server/discover` and
+  carries the protocol version in each request. The results are the
+  same one compact JSON text block and `structuredContent`, plus the
+  fields that revision requires (`resultType`, and the server's name and
+  version in `_meta`). Revisions 2024-11-05 to 2025-11-25 are served as
+  before, through the `initialize` handshake.
+- `/metrics` counts `server/discover` in `mcp_methods`, and in
+  `sessions_total`, since a 2026-07-28 client has no `initialize` to
+  count.
+
+### Changed
+
+- **`mcp[cli,rich]>=2.3,<3`**, from `mcp[cli]>=1.28,<2`. The SDK now
+  ships its protocol types as `mcp-types` and brings `opentelemetry-api`
+  and `httpx2`; `httpx`, `httpx-sse` and `pydantic-settings` leave the
+  lock. `rich` is named because the server's logs go through its
+  handler, which until now arrived only by way of `typer`.
+- The `initialize` result no longer lists an empty `experimental`
+  capability.
+- For self-hosters: `subscriptions/listen` is not served, as there are no
+  resources to subscribe to. The SDK's OpenTelemetry spans run on the
+  API's no-op tracer: no OpenTelemetry SDK or exporter is installed, so
+  nothing leaves the process. `tools/list` sets no cache hint and changes
+  only with a release.
+
+### Notes
+
+- A tool failure the SDK did not expect is answered, as in 1.x, with
+  `Error executing tool <name>: <reason>`. The 2.x SDK would drop the
+  reason, and the server's own refusals (an input over the size limit, a
+  word with a space, a missing resource) are ordinary exceptions whose
+  reason says what to do.
+- Tool failures are still kept out of the log. The 2.x SDK logs each one
+  with its reason, which can quote the caller's text; the server answers
+  them itself instead (see PRIVACY.md).
+
 ## [1.0.2] - 2026-10-29
 
 ### Security

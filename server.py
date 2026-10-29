@@ -41,9 +41,9 @@ from pathlib import Path
 from typing import Annotated, Any, TypedDict
 
 import pydantic_core
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.types import TextContent, ToolAnnotations
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from mcp.types import Tool as MCPTool
 from pydantic import Field, StringConstraints, ValidationError
 
@@ -92,7 +92,7 @@ DEFAULT_STATIC_RATE_LIMIT_PER_MINUTE = 60
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "1.0.2"
+SERVER_VERSION = "1.1.0"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -268,8 +268,24 @@ def _reflow(doc: str) -> str:
     return "\n\n".join(paragraphs)
 
 
-class _EstonianMCP(FastMCP):
-    """FastMCP with a leaner wire format. Tools and validation are unchanged.
+def _brief(err: ValidationError) -> str:
+    """One clause per field, at most _MAX_ARG_ERRORS of them, without
+    pydantic's docs URL or a repr of the value."""
+    errors = err.errors(include_url=False, include_input=False)
+    shown = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}"
+                      for e in errors[:_MAX_ARG_ERRORS])
+    more = len(errors) - _MAX_ARG_ERRORS
+    if more > 0:
+        shown += f"; and {more} more"
+    return shown
+
+
+def _tool_error(text: str) -> CallToolResult:
+    return CallToolResult(content=[TextContent(type="text", text=text)], is_error=True)
+
+
+class _EstonianMCP(MCPServer):
+    """MCPServer with a leaner wire format. Tools and validation are unchanged.
 
     Every caller pays for what crosses the wire in tokens: the tool list on
     every turn, each result once it is read. Claude Code, Codex and VS Code
@@ -281,11 +297,16 @@ class _EstonianMCP(FastMCP):
     * tools/call: ONE text block of compact JSON built from the tool's own
       return value. The SDK default is one indent=2 block per list item,
       so a 100-word spell_check came back as 97 blocks. structuredContent
-      keeps exactly the keys the tool returned; the SDK default fills every
-      declared-but-absent key with null. The lowlevel server still
-      validates structuredContent against the advertised outputSchema.
+      keeps exactly the keys the tool returned, checked against the
+      tool's return type.
     * argument errors: one clause per field (at most _MAX_ARG_ERRORS),
       without pydantic's docs URL or a repr of the caller's input.
+
+    MCPServer answers tools/list and tools/call through list_tools() and
+    call_tool(), so these two overrides are the whole hook. A failure is
+    answered as an error result rather than raised: raised, the SDK logs
+    it, and the log line would carry the reason, which can quote the
+    caller's text (PRIVACY.md promises the log holds none).
     """
 
     async def list_tools(self) -> list[MCPTool]:
@@ -293,50 +314,65 @@ class _EstonianMCP(FastMCP):
         for t in tools:
             if t.description:
                 t.description = _reflow(t.description)
-            t.inputSchema = _lean_schema(t.inputSchema, output=False)
-            if t.outputSchema is not None:
-                t.outputSchema = _lean_schema(t.outputSchema, output=True)
+            t.input_schema = _lean_schema(t.input_schema, output=False)
+            if t.output_schema is not None:
+                t.output_schema = _lean_schema(t.output_schema, output=True)
+                # mcp 2.x hands pydantic the TypedDict itself, and pydantic
+                # makes its docstring the schema's description. Those
+                # docstrings are notes for maintainers; 1.x never sent them.
+                t.output_schema.pop("description", None)
         return tools
 
-    async def call_tool(self, name: str, arguments: dict[str, Any]):
+    async def call_tool(self, name: str, arguments: dict[str, Any],
+                        context: Context | None = None) -> CallToolResult:
         tool = self._tool_manager.get_tool(name)
         if tool is None:
-            raise ToolError(f"Unknown tool: {name}")
+            return _tool_error(f"Unknown tool: {name}")
         meta = tool.fn_metadata
+        if context is None:
+            context = Context(mcp_server=self)
         try:
-            raw = await tool.run(arguments, context=self.get_context(), convert_result=False)
+            raw = await tool.run(arguments, context)
+        except UnexpectedToolError as e:
+            # Anything but a ToolError. mcp 2.x would answer it with "Error
+            # executing tool <name>" alone, but this server's own refusals
+            # are plain ValueError and RuntimeError (an input over its limit,
+            # a missing resource), and their reason is what the caller acts
+            # on. So the answer stays the 1.x one, reason included.
+            return _tool_error(f"{e}: {e.__cause__}")
         except ToolError as e:
             cause = e.__cause__
             if isinstance(cause, ValidationError) and cause.title == meta.arg_model.__name__:
-                errors = cause.errors(include_url=False, include_input=False)
-                shown = "; ".join(f"{'.'.join(map(str, err['loc']))}: {err['msg']}"
-                                  for err in errors[:_MAX_ARG_ERRORS])
-                more = len(errors) - _MAX_ARG_ERRORS
-                if more > 0:
-                    shown += f"; and {more} more"
-                raise ToolError(f"Input validation error: {shown}") from cause
-            raise
+                return _tool_error(f"Input validation error: {_brief(cause)}")
+            return _tool_error(str(e))
         if meta.output_model is None or not isinstance(raw, (dict, list)):
             return meta.convert_result(raw)  # not this server's shape: SDK default
+        try:
+            # Checked against the tool's return type as the SDK default
+            # does; only its text blocks are replaced.
+            structured = meta.convert_result(raw).structured_content
+        except ValidationError as e:
+            return _tool_error(f"Output validation error: {_brief(e)}")
         # Compact, keeps õäöü, and NaN/inf become null as in structuredContent
         # (a bare NaN is not JSON, and a strict client would reject the block).
         text = pydantic_core.to_json(raw, fallback=str, inf_nan_mode="null").decode()
-        payload = {"result": raw} if meta.wrap_output else raw
-        structured = meta.output_model.model_validate(payload).model_dump(
-            mode="json", by_alias=True, exclude_unset=True)
-        return [TextContent(type="text", text=text)], structured
+        return CallToolResult(content=[TextContent(type="text", text=text)],
+                              structured_content=structured)
 
 
-mcp = _EstonianMCP("estonian-mcp", instructions=SERVER_INSTRUCTIONS)
-# FastMCP's constructor doesn't accept a server-version kwarg, so reach
-# into the underlying MCPServer to override the SDK-default version that
-# would otherwise show up in `initialize` responses (and Smithery's UI).
-mcp._mcp_server.version = SERVER_VERSION
+mcp = _EstonianMCP(
+    "estonian-mcp",
+    instructions=SERVER_INSTRUCTIONS,
+    version=SERVER_VERSION,
+    # No resources, so nothing to subscribe to: subscriptions/listen
+    # (2026-07-28) stays unserved.
+    subscriptions=False,
+)
 
 
 def _count_registered_tools() -> int:
-    """Count tools registered on the FastMCP instance. Computed once at
-    import time so /health doesn't pay the cost per request."""
+    """Count tools registered on the server. Cheap enough that /health
+    calls it per request."""
     try:
         return len(mcp._tool_manager.list_tools())
     except Exception:
@@ -433,8 +469,11 @@ def _keep_logs_off_stdout() -> None:
     up a flush could put half a log line in front of a response. The
     client skipped that line as non-JSON and waited for an answer already
     sent: check_compound_familiarity hung until the client's 30-minute
-    idle timeout. FastMCP's RichHandler already logs to stderr, so nothing
-    is lost. tests/test_stdio_channel.py is what proves stdout stays clean.
+    idle timeout. MCPServer's own handler already logs to stderr, so
+    nothing is lost. mcp 2.x also points fd 1 at stderr while it serves
+    stdio, but a record logged before that, at import, would still reach
+    the channel. tests/test_stdio_channel.py is what proves stdout stays
+    clean.
 
     Runs after _forbid_resource_downloads(), whose import of
     estnltk.resource_utils is what installs the handler. Best-effort, like
@@ -1891,7 +1930,7 @@ _TOOL_CALLS: dict[str, int] = {}
 def _counted(fn):
     """Decorator: bump _TOOL_CALLS[fn.__name__] each time the tool runs.
     functools.wraps preserves the signature + annotations + docstring so
-    FastMCP's schema generation is unaffected."""
+    the SDK's schema generation is unaffected."""
     import functools
 
     @functools.wraps(fn)
@@ -1923,7 +1962,7 @@ def _counted(fn):
 # ---------------------------------------------------------------------------
 # Output-schema types. total=False so every field is optional: this
 # advertises a structured output schema to clients (Smithery quality
-# score) without FastMCP rejecting a return that conditionally omits a
+# score) without the SDK rejecting a return that conditionally omits a
 # key. Inner shapes stay loose (list[dict]/dict) on purpose; the
 # top-level schema is what matters.
 # ---------------------------------------------------------------------------
@@ -9307,9 +9346,11 @@ _STATS: dict[str, Any] = {
     "by_status": {},
     "by_path": {},
     # Count of MCP `initialize` calls, a privacy-safe proxy for client
-    # connections / session-starts. NOT a user count: a client that
-    # reconnects counts again, and automated probes count too. No identity,
-    # no IP, no body is stored: only the fact that an initialize occurred.
+    # connections / session-starts. A 2026-07-28 client has no handshake
+    # and opens with `server/discover` instead, so that counts too. NOT a
+    # user count: a client that reconnects counts again, and automated
+    # probes count too. No identity, no IP, no body is stored: only the
+    # fact that a handshake occurred.
     "sessions": 0,
     # JSON-RPC method mix on POST /mcp, bucketed to a FIXED allowlist (see
     # _MCP_METHODS). Stateless HTTP means an `initialize` cannot be tied to
@@ -9424,6 +9465,7 @@ def _save_persistent_stats() -> None:
 _MCP_METHODS: frozenset[str] = frozenset({
     "initialize",
     "notifications/initialized",
+    "server/discover",
     "tools/list",
     "tools/call",
     "prompts/list",
@@ -9833,7 +9875,9 @@ def _build_http_app(
     public_mode=False (default): require bearer token, rate-limit per token.
     public_mode=True:           no auth, rate-limit per client IP.
 
-    `inner` defaults to FastMCP's streamable-http app; tests inject a stub.
+    `inner` defaults to the SDK's streamable-http app, whose lifespan runs
+    its session manager (lifespan events pass straight through below);
+    tests inject a stub.
     `static_rate_limit` is the per-IP limit on _STATIC_PATHS; it defaults
     to $ESTNLTK_MCP_STATIC_RATE_LIMIT_PER_MINUTE, then
     DEFAULT_STATIC_RATE_LIMIT_PER_MINUTE.
@@ -9844,20 +9888,20 @@ def _build_http_app(
     if inner is None:
         from mcp.server.transport_security import TransportSecuritySettings
 
-        # FastMCP auto-enables DNS-rebinding protection with a
-        # localhost-only host allowlist when constructed with the
-        # default host=127.0.0.1. That allowlist is baked in at
-        # construction time and rejects any request from a real
-        # domain (Fly, Smithery, custom). DNS-rebinding protection is
-        # designed for browser attacks against localhost-bound dev
-        # servers and doesn't apply behind HTTPS termination, so we
-        # disable it here for HTTP-mode deployments.
-        mcp.settings.transport_security = TransportSecuritySettings(
-            enable_dns_rebinding_protection=False,
+        # Given no transport_security, streamable_http_app() enables
+        # DNS-rebinding protection with a localhost-only host allowlist
+        # (its host defaults to 127.0.0.1), which rejects any request
+        # from a real domain (Fly, Smithery, custom). DNS-rebinding
+        # protection is designed for browser attacks against
+        # localhost-bound dev servers and doesn't apply behind HTTPS
+        # termination, so we disable it here for HTTP-mode deployments.
+        inner = mcp.streamable_http_app(
+            stateless_http=True,
+            json_response=True,  # simpler for clients without SSE
+            transport_security=TransportSecuritySettings(
+                enable_dns_rebinding_protection=False,
+            ),
         )
-        mcp.settings.stateless_http = True
-        mcp.settings.json_response = True  # simpler for clients without SSE
-        inner = mcp.streamable_http_app()
     limiter = _RateLimiter(rate_limit)
     if static_rate_limit is None:
         static_rate_limit = int(os.environ.get(
@@ -9973,11 +10017,12 @@ def _build_http_app(
                         "initialize / tools-list / SSE opens, which inflate "
                         "the /mcp path bucket); use tool_calls_total as the "
                         "true usage number. sessions_total counts MCP "
-                        "initialize calls, a privacy-safe proxy for client "
-                        "connections, NOT a user count: a client that "
-                        "reconnects counts again and automated probes count "
-                        "too. No identity, IP, or request body is ever stored, "
-                        "only the fact of an initialize. Daily connections "
+                        "initialize calls (server/discover for 2026-07-28 "
+                        "clients, which have no handshake), a privacy-safe "
+                        "proxy for client connections, NOT a user count: a "
+                        "client that reconnects counts again and automated "
+                        "probes count too. No identity, IP, or request body is "
+                        "ever stored, only the fact of a handshake. Daily connections "
                         "= the day-over-day delta in the metrics snapshot. "
                         "rate_limited.requests is every 429 the rate limiter "
                         "sent (the same number as by_status['429']). "
@@ -10103,7 +10148,7 @@ def _build_http_app(
             # non-rate-limited POST /mcp gets here; for those we buffer the
             # JSON-RPC body to peek at the `method`, then replay it to the
             # inner app byte-for-byte. Nothing from the body is stored: we
-            # bump _STATS["sessions"] on the fact of an initialize, and
+            # bump _STATS["sessions"] on the fact of a handshake, and
             # bucket the method into a FIXED allowlist so a caller-supplied
             # string can never become a metrics key. All other traffic (GET
             # SSE streams, other paths) passes straight through with the
@@ -10116,7 +10161,7 @@ def _build_http_app(
                     _STATS["mcp_methods"][method] = (
                         _STATS["mcp_methods"].get(method, 0) + 1
                     )
-                    if method == "initialize":
+                    if method in ("initialize", "server/discover"):
                         _STATS["sessions"] += 1
                 receive_for_inner = _replay_receive(consumed, receive)
 

@@ -143,7 +143,7 @@ defence-in-depth.
   which IP or token was throttled never reaches `/metrics` or the file. Reading or
   deleting `/data/metrics.json` only affects the displayed counts; it
   doesn't reveal anything about what users sent.
-- **Stateless HTTP.** `mcp.settings.stateless_http = True` so each
+- **Stateless HTTP.** `streamable_http_app(stateless_http=True)` so each
   request is independent: no per-client session state to grow
   unbounded.
 
