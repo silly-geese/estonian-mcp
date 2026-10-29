@@ -22,7 +22,7 @@ classifiers = [
     "Natural Language :: Estonian",
 ]
 dependencies = [
-    "mcp[cli]>=1.28,<2",
+    "mcp[cli]>=1.28,<3",
     "estnltk>=1.7.3",
     "compress-fasttext>=0.1.5",
     "scikit-learn>=1.0",
