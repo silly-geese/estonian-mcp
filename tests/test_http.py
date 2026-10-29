@@ -1,7 +1,7 @@
 """HTTP-mode smoke tests: auth + rate limit + health bypass.
 
-Exercises the auth wrapper directly with a stub inner app — no uvicorn,
-no FastMCP lifespan, no subprocess. Fast and deterministic.
+Exercises the auth wrapper directly with a stub inner app: no uvicorn,
+no MCP session-manager lifespan, no subprocess. Fast and deterministic.
 
 Tool-dispatch over HTTP is covered by the live-curl block in CI's
 docker-build job; this file pins the auth surface.
@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import httpx  # transitive dep of mcp
+import httpx2 as httpx  # transitive dep of mcp 2.x, which dropped httpx
 
 import server
 
@@ -60,7 +60,7 @@ async def stub_inner(scope, receive, send):
 
 
 async def boom_inner(scope, receive, send):
-    """ASGI app that raises before sending anything — simulates an
+    """ASGI app that raises before sending anything; simulates an
     unhandled failure escaping the inner MCP app."""
     if scope["type"] == "lifespan":
         msg = await receive()
@@ -102,7 +102,7 @@ async def echo_inner(scope, receive, send):
 
 async def logging_boom_inner(scope, receive, send):
     """Mimics the MCP SDK's inner-500 path: log the exception via the `mcp.*`
-    logger (carrying exc_info) and then return its OWN 500 — the exception
+    logger (carrying exc_info) and then return its OWN 500; the exception
     does NOT propagate to our wrapper. Verifies we borrow the logged type."""
     if scope["type"] == "lifespan":
         msg = await receive()
@@ -370,7 +370,7 @@ def metrics_persistence_test() -> None:
 
 
 def classify_mcp_method_unit_test() -> None:
-    """Pure checks for the JSON-RPC method classifier — the heart of the
+    """Pure checks for the JSON-RPC method classifier, the heart of the
     session counter and the mcp_methods breakdown. Critically, a tool call
     whose text merely contains the word 'initialize' must NOT be counted as
     one, and a caller-supplied method name must never become a metrics key."""
@@ -386,6 +386,8 @@ def classify_mcp_method_unit_test() -> None:
           cm(sneaky) == "tools/call")
     lister = b'{"jsonrpc":"2.0","id":4,"method":"tools/list"}'
     check("tools/list → 'tools/list'", cm(lister) == "tools/list")
+    discover = b'{"jsonrpc":"2.0","id":7,"method":"server/discover","params":{}}'
+    check("server/discover → 'server/discover'", cm(discover) == "server/discover")
     noti = b'{"jsonrpc":"2.0","method":"notifications/initialized"}'
     check("notifications/initialized bucketed",
           cm(noti) == "notifications/initialized")
@@ -400,7 +402,7 @@ def classify_mcp_method_unit_test() -> None:
     check("100k-char tool call still classified", cm(huge) == "tools/call")
     check("no unbounded key growth: every result is allowlisted",
           all(cm(b) in server._MCP_METHODS or cm(b) in ("other", None)
-              for b in (init, tool, sneaky, lister, noti, batch, hostile, huge, b"")))
+              for b in (init, tool, sneaky, lister, discover, noti, batch, hostile, huge, b"")))
 
 
 def rate_limit_episode_unit_test() -> None:
@@ -552,9 +554,9 @@ async def inner_exc_capture_test() -> None:
 
 
 async def session_counter_test() -> None:
-    """End-to-end: an initialize POST bumps sessions_total AND the body is
-    replayed to the inner app byte-for-byte; a non-initialize POST does not
-    bump it. Uses echo_inner to prove the replay."""
+    """End-to-end: an initialize or server/discover POST bumps
+    sessions_total AND the body is replayed to the inner app byte-for-byte;
+    any other POST does not bump it. Uses echo_inner to prove the replay."""
     print("session counter")
     app = server._build_http_app(token=None, rate_limit=100, public_mode=True, inner=echo_inner)
     transport = httpx.ASGITransport(app=app)
@@ -576,6 +578,13 @@ async def session_counter_test() -> None:
         check("tools/call body replayed verbatim", r.json() == call_body, r.text)
         check("tools/call did NOT bump sessions",
               server._STATS["sessions"] == base + 1, str(server._STATS["sessions"]))
+
+        # 2026-07-28 has no initialize: a client opens with server/discover.
+        discover_body = {"jsonrpc": "2.0", "id": 3, "method": "server/discover", "params": {}}
+        r = await c.post("/mcp", json=discover_body)
+        check("server/discover body replayed verbatim", r.json() == discover_body, r.text)
+        check("server/discover bumped sessions by 1",
+              server._STATS["sessions"] == base + 2, str(server._STATS["sessions"]))
 
 
 asyncio.run(run())

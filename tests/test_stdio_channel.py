@@ -31,7 +31,7 @@ import threading
 import time
 from pathlib import Path
 
-import mcp.types
+from mcp.types.version import LATEST_HANDSHAKE_VERSION
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -55,7 +55,7 @@ def message(msg_id: int | None, method: str, params: dict) -> str:
 
 requests = "".join([
     message(1, "initialize", {
-        "protocolVersion": mcp.types.LATEST_PROTOCOL_VERSION,
+        "protocolVersion": LATEST_HANDSHAKE_VERSION,
         "capabilities": {},
         "clientInfo": {"name": "test_stdio_channel", "version": "0"},
     }),
