@@ -81,6 +81,7 @@ CALLS: list[tuple[str, dict]] = [
     ("classify_register", {"text": "Käesoleva lepingu alusel sätestatakse kohustused."}),
     ("check_style", {"text": "Süsteem kasutab andmeid. Andmed töödeldakse."}),
     ("check_officialese", {"text": "Aruandeperioodil koguti ja valideeriti andmestik."}),
+    ("check_translationese", {"text": "Palun saatke meile teie andmed."}),
     ("check_term_consistency", {"text": "Andmestik ja teadusandmestik."}),
     ("check_term_consistency", {"text": "Andmestik ja teadusandmestik.",
                                 "glossary": ["teadusandmestik"]}),  # preferred
@@ -222,7 +223,7 @@ async def run() -> None:
     # in _CheckResult would still be advertised to every client.
     for name in ("check_compounds", "check_punctuation", "check_capitalization",
                  "check_numbers", "check_redundancy", "check_object_case",
-                 "check_abbreviation_hyphenation"):
+                 "check_abbreviation_hyphenation", "check_translationese"):
         props = set((tools[name].outputSchema or {}).get("properties", {}))
         check(f"{name} outputSchema is issues and summary_estonian",
               props == {"issues", "summary_estonian"}, str(sorted(props)))
@@ -262,7 +263,8 @@ async def run() -> None:
     instr = server.SERVER_INSTRUCTIONS
     for needle in ("_estonian", "verbatim", "heuristics", "empty list",
                    "does not apply is omitted", f"{server.MAX_TEXT_CHARS:,}",
-                   f"{server.MAX_DOC_CHARS:,}", "check_compound_familiarity"):
+                   f"{server.MAX_DOC_CHARS:,}", "check_compound_familiarity",
+                   "word for word", "longer text", "check_translationese"):
         check(f"instructions mention {needle!r}", needle in instr)
     check("instructions stay well under Claude Code's 4,096-character cut",
           len(instr) < 3000, str(len(instr)))

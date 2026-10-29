@@ -92,7 +92,7 @@ DEFAULT_STATIC_RATE_LIMIT_PER_MINUTE = 60
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "0.10.0"
+SERVER_VERSION = "1.0.0"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -191,9 +191,17 @@ SERVER_INSTRUCTIONS = (
     "check_officialese for kantseliit in reports, academic and business "
     "prose (check_legalese is for statutes and stays silent on those), plus "
     "check_style for umbisikuline tegumood and rhythm. 'Keep the terminology "
-    "consistent': check_term_consistency. A correctly spelled, well-formed "
+    "consistent': check_term_consistency. 'Sounds translated': "
+    "check_translationese. A correctly spelled, well-formed "
     "word can still be the wrong register or the wrong term for its domain, "
     "and the mechanical checks cannot tell you that. "
+    "WRITING ESTONIAN: compose from the meaning, never word for word from "
+    "English (Estonian says the same in about a quarter fewer words). Outside "
+    "documents (reports, contracts, policies, academic text) keep it short: "
+    "10 to 15 words a sentence, one idea each, no filler or hype. When "
+    "editing, change only what is wrong or unclear, keep the writer's words "
+    "and never return a longer text unless asked. Reread every draft once as "
+    "an Estonian editor would, then run check_translationese on it. "
     "The check_* issue lists are heuristics: a hit is a candidate to verify, "
     "not a verdict, and an empty list means nothing was found in that "
     "check's scope, not that the text is correct. In Estonian replies, quote "
@@ -3879,8 +3887,9 @@ def check_punctuation(text: Annotated[str, Field(description="Estonian text.")])
     sobivad) and on in an English name (video on demand) are not counted.
     A line break, a table cell edge (| or a tab), an HTML tag, an arrow or
     a quotation mark ends the clause. Not checked: the comma before kui,
-    mis or kes (it depends on meaning), list and apposition commas,
-    dashes, colons.
+    mis or kes (it depends on meaning), apposition commas, dashes, colons.
+    A comma before ja in a list and a letter's greeting and closing commas
+    are check_translationese's.
     """
     return _check_punctuation(text)
 
@@ -4624,7 +4633,8 @@ def check_capitalization(text: Annotated[str, Field(description="Estonian text."
 
     Sentence-initial words and all-caps acronyms are skipped. A hit that
     opens a line, list item or quotation, or sits in a proper name (Eesti
-    Keele Instituut), is usually false.
+    Keele Instituut), is usually false. English title case in headings is
+    check_translationese's `title-case`.
     """
     return _check_capitalization(text)
 
@@ -6795,7 +6805,9 @@ def check_style(text: Annotated[str, Field(description="Estonian text to measure
       under 15%; under 5% may read forceful. Reports: over 40% is the
       clearest kantseliit sign (see check_officialese).
     - `sentence_length`: words per sentence; a stddev under 30% of the
-      mean reads monotonous.
+      mean reads monotonous. News and web text: at most 10 to 15 words a
+      sentence (the state's web-writing guide). Measured averages: e-mail
+      about 9, news about 14, statutes about 25.
     - `hedging`: share of words on a short fixed list (vist, pigem,
       ehk); over 5% reads wishy-washy, 0% does not rule hedging out.
     """
@@ -8066,6 +8078,907 @@ def check_officialese(text: Annotated[str, Field(description="Estonian non-legal
     plain.
     """
     return _check_officialese(text)
+
+
+# ---------------------------------------------------------------------------
+# Translationese (check_translationese): English sentence structure and
+# English habits of form carried into Estonian. Every rule is one that EKI
+# or an author EKI publishes rules on, and each keeps quiet where the same
+# surface is correct Estonian. Sources, by rule:
+#
+#   oma-possessive        EKK 1997, M 8 Asesõnad: a possessor that is the
+#                         subject takes oma; the personal genitive is for
+#                         a possessor that is not (Ma andsin Jürile tema
+#                         artikli tagasi). ÕS 2025 'oma'.
+#   pronoun-after-verb    EKI teatmik, Tekstisidusus (2026): -me me, -te te.
+#   subject-pronoun       EKI teatmik, Kirjutaja mina (2026): käsitlen,
+#                         mitte mina käsitlen.
+#   verb-second           EKK 1997, SÜ 66 Lause sõnajärg, condition 3: after
+#                         a fronted subordinate clause the verb comes next
+#                         (Kui saabub kevad, muutub ka meeleolu paremaks).
+#   saama-future          EKK 1997, SÜ 27: discouraged, unsuitable with
+#                         active verbs.
+#   maks-*                EKK 1997, SÜ 100 ("maksitamine ... mõjub keelelise
+#                         eputamisena"); Dreving in "Kas eurotekstides on
+#                         kohta ilusale ja selgele keelele?" (EKI 2009): a
+#                         noun's maks form for a da-infinitive is "lausa
+#                         vale".
+#   mitte-des             EKK 1997, SÜ 100: the negation of des is mata.
+#   tanu-negative         Mäekivi, Emakeelne eurokeel (EKI 2013), on the
+#                         English 'thanks to'; AMSS 'tänu'.
+#   english-phrase        AMSS 'minu', 'oma'; Kask, Oma Keel 1/2022.
+#   greeting-punctuation, closing-comma
+#                         EKI keelenõuvakk "Vahemärgid kirja alguses ja
+#                         lõpus" (2026), EKI teatmik, Koma (2026).
+#   serial-comma          EKI teatmik, Koma (2026).
+#   title-case            EKI teatmik, Pealkiri (2022); Microsoft Estonian
+#                         Style Guide (2024).
+#
+# Left alone because ÕS 2025 or the EKI 2026 dictionary accepts them:
+# aset leidma, rolli mängima, mis puudutab, X aastat vana, rohkem kui,
+# päeva lõpuks, kursis hoidma, hea meel + da, teiste sõnadega, läbi for a
+# means; also a pronoun subject after an adverb (Eile ma läksin: EKK calls
+# it "üsna tavaline") and the comma after a fronted des phrase (Kasutades
+# seda tööriista, ...), which EKI requires.
+# ---------------------------------------------------------------------------
+
+# The persons a verb form marks, with the imperatives that _FORM_PERSONS
+# leaves out: o (2sg), ge (2pl), gem (1pl).
+_TR_FORM_PERSONS: dict[str, frozenset[str]] = {
+    **_FORM_PERSONS, "o": frozenset({"2sg"}), "ge": frozenset({"2pl"}),
+    "gem": frozenset({"1pl"}),
+}
+
+# Genitive personal pronouns that stand for oma when they name the
+# subject's own thing. me and te are left out: they are also nominatives.
+_TR_POSSESSIVES: dict[str, str] = {
+    "minu": "1sg", "mu": "1sg", "sinu": "2sg", "su": "2sg", "meie": "1pl", "teie": "2pl",
+}
+_TR_SUBJECT_PRONOUNS: dict[str, str] = {
+    "ma": "1sg", "mina": "1sg", "sa": "2sg", "sina": "2sg", "ta": "3sg", "tema": "3sg",
+    "me": "1pl", "meie": "1pl", "te": "2pl", "teie": "2pl", "nad": "3pl", "nemad": "3pl",
+}
+
+# Sentence adverbials that keep minu (AMSS 'minu': minu arvates / meelest /
+# arust; EKI teatmik, Üldlaiend: minu teada).
+_TR_POSSESSIVE_ADVERBIALS: frozenset[str] = frozenset(
+    {"arvates", "meelest", "arust", "teada", "poolest"})
+
+# Participles whose genitive is their agent, not a possessor: meie
+# hüvitatav osa is the part we reimburse.
+_TR_PARTICIPLE_ENDINGS: tuple[str, ...] = ("tav", "dav", "tud", "dud", "nud", "tu", "matu")
+
+# A short subject pronoun only: a long one may be a stressed, contrastive
+# topic (Kui sa tuled, mina ootan sind kodus).
+_TR_SHORT_PRONOUNS: frozenset[str] = frozenset({"ma", "sa", "ta", "me", "te", "nad"})
+
+# Verbs after which a pronoun that repeats the ending is redundant (EKI:
+# Pöördelõppu kordava asesõna saab tuua öeldise ette või lausest välja
+# jätta).
+_TR_PLURAL_FORMS: dict[str, frozenset[str]] = {
+    "me": frozenset({"me", "sime", "ksime", "nuksime"}),
+    "te": frozenset({"te", "site", "ksite", "nuksite"}),
+}
+
+# Subordinators that can open a sentence, and the second word the
+# two-word ones need (Enne kui, Juhul kui, Olgugi et).
+_TR_FRONT_OPENERS: dict[str, frozenset[str]] = {
+    "kui": frozenset(), "kuna": frozenset(), "kuigi": frozenset(), "ehkki": frozenset(),
+    "kuni": frozenset(), "et": frozenset(), "kuivõrd": frozenset(),
+    "enne": frozenset({"kui"}), "pärast": frozenset({"kui"}), "niipea": frozenset({"kui"}),
+    "juhul": frozenset({"kui"}), "olgugi": frozenset({"et"}),
+}
+
+# After a comma inside the fronted part these open another clause of it;
+# any other word starts the main clause.
+_TR_EMBED_OPENERS: frozenset[str] = frozenset(
+    {"et", "kui", "kuna", "kuigi", "ehkki", "kuni", "kas", "ja", "ning", "või", "ega", "nagu", "sest"})
+
+# Determiners and quantifiers that open a noun phrase but are not its head.
+_TR_DETERMINERS: frozenset[str] = frozenset({
+    "see", "need", "too", "nood", "iga", "kogu", "mõni", "mitu", "üks", "kõik", "selline",
+    "niisugune", "seesama",
+})
+
+# Present indicative forms of saama: the future is saab olema, saavad
+# toimuma. sai õppima (got to study) is past and is left alone.
+_TR_SAAMA_PRESENT: frozenset[str] = frozenset({"n", "d", "b", "me", "te", "vad"})
+
+# hakkama saama (to cope) and minema saama (to get away) are idioms.
+_TR_SAAMA_IDIOMS: frozenset[str] = frozenset({"hakkama", "minema"})
+
+# Nouns that take a da-infinitive (ettepanek võtta, võimalus osaleda);
+# matched on the lemma or the compound head (muudatusettepanek).
+_TR_DA_NOUNS: frozenset[str] = frozenset("""
+    ettepanek võimalus soov otsus plaan õigus kohustus vajadus luba nõue kavatsus
+    katse valmidus valmisolek oskus julgus aeg põhjus tahtmine tahe huvi ülesanne
+    palve käsk korraldus kutse idee püüd püüe soovitus kokkulepe lubadus volitus
+    pädevus kohus komme harjumus vabadus tung
+""".split())
+
+# Verbs of motion and starting that take a ma-infinitive (sõitis Pärnu
+# lepingut sõlmima), where a maks form is "iseäranis mõttetu" (EKK).
+_TR_MA_VERBS: frozenset[str] = frozenset("""
+    minema tulema sõitma jooksma kiirustama ruttama asuma hakkama jääma saatma
+    kutsuma lähetama kogunema istuma lendama suunduma pöörduma
+""".split())
+
+# Causes nobody is grateful for (Mäekivi: "Tänu ressursside piiratusele"
+# → "Ressursside piiratuse tõttu"); the lemma or the compound head.
+_TR_NEGATIVE_CAUSES: frozenset[str] = frozenset("""
+    õnnetus kahju kriis haigus viga häire ebaõnnestumine maavärin torm kaotus rike
+    tõrge probleem puudus puudujääk hilinemine streik pankrot sõda tulekahju üleujutus
+    põud katkestus ummik avarii inflatsioon kärbe piiratus paanika vigastus surm
+    halvenemine langus vähenemine rünnak pettus vargus korruptsioon hooletus lohakus
+    eksitus eksimus pandeemia epideemia viirus katastroof häving nappus defitsiit
+    võlg võlgnevus trahv konflikt segadus viivitus seisak koondamine tuisk libedus
+    ebaõnn õnnetusjuhtum purunemine leke kahjustus
+""".split())
+
+# Phrases translated word for word, each with its Estonian and the reason.
+_TR_PHRASES: tuple[tuple[re.Pattern, str, str], ...] = (
+    (re.compile(r"\bminu\s+arvamusel\b", re.IGNORECASE), "minu arvates / minu meelest",
+     "'Minu arvamusel' on tõlkelaen (in my opinion); eesti keeles 'minu arvates'."),
+    (re.compile(r"\bminu\s+vabandused\b", re.IGNORECASE), "vabandan",
+     "'Minu vabandused' (my apologies) on otsetõlge; eesti keeles 'vabandan'."),
+    (re.compile(r"\btunne\s+oma\s+klienti\b", re.IGNORECASE), "klienditundmise põhimõte",
+     "'Tunne oma klienti' (know your customer) on otsetõlge; põhimõtte nimi on "
+     "'klienditundmise põhimõte'."),
+)
+
+# Letter formulas. A closing takes no comma before the name, on one line
+# or two (Lugupidamisega / Mari Tamm); a salutation ends in ! or in
+# nothing, and the letter goes on with a capital (EKI 2026).
+_TR_CLOSINGS: tuple[str, ...] = (
+    "lugupidamisega", "austusega", "tervitades", "tervitustega", "parimate soovidega",
+    "heade soovidega", "parimat", "ette tänades", "tänades", "tänuga", "kõike head",
+    "kõike paremat", "soojade soovidega", "sõbralikult", "meeldivat koostööd soovides",
+    "edu soovides",
+)
+_TR_CLOSING_RE = re.compile(
+    r"^[ \t]*(?P<f>" + "|".join(map(re.escape, _TR_CLOSINGS)) + r")[ \t]*,[ \t]*"
+    r"(?P<rest>[^\n,.!?]{0,60})$", re.IGNORECASE | re.MULTILINE)
+_TR_GREETING_RE = re.compile(
+    r"^[ \t]*(?P<g>(?:tere|hei|tervist|tšau|hommikust|hea|head|lugupeetud|austatud|kallis|"
+    r"kallid|armas|armsad)\b(?:,[ \t]+)?[^\n,.!?:;]{0,60}?)[ \t]*,[ \t]*$",
+    re.IGNORECASE | re.MULTILINE)
+# Tere and a name with no comma between (Tere, Mari! is an address, üte);
+# Hea kolleeg Tiina! is not one and takes none.
+_TR_NONSPACE_RE = re.compile(r"\S")
+_TR_TERE_NAME_RE = re.compile(
+    r"^[ \t]*(?P<g>tere hommikust|tere päevast|tere õhtust|tere|hei|tervist|tšau)[ \t]+"
+    r"(?P<n>(?-i:[A-ZÕÄÖÜŠŽ])[\w\-]+)", re.IGNORECASE | re.MULTILINE)
+# What Hea / Kallis must be followed by to open a letter (Hea klient), so
+# that Hea meel, ... is left alone. A capitalised word (a name) counts too.
+_TR_ADDRESS_NOUNS: frozenset[str] = frozenset("""
+    kolleeg kolleegid klient kliendid sõber sõbrad partner partnerid koostööpartner
+    koostööpartnerid lugeja lugejad kasutaja kasutajad liige liikmed külaline külalised
+    härra proua preili meeskond pere perekond õpetaja lapsevanem lapsevanemad tudeng
+    tudengid õpilane õpilased osaleja osalejad kandidaat kandidaadid kodanik kodanikud
+""".split())
+
+# A list item is a short phrase with none of these in it; nor does it open
+# with an inserted remark (Korjasin seeni, nagu riisikaid ja pilvikuid, ning ...).
+_TR_LIST_CONJUNCTIONS: frozenset[str] = frozenset({"ja", "ning", "või", "ega"})
+_TR_KIIL_OPENERS: frozenset[str] = frozenset({
+    "nagu", "näiteks", "nt", "sealhulgas", "sh", "eriti", "eelkõige", "peamiselt", "ehk",
+    "st", "eeskätt", "muuhulgas",
+})
+# After ja these add an emphasised afterthought, which may take a comma.
+_TR_AFTERTHOUGHT: frozenset[str] = frozenset({"ka", "isegi", "eriti", "veel", "samuti", "siis"})
+_TR_NOMINAL_POS: frozenset[str] = frozenset("SHAPNOCU")
+# What a possessive pronoun stands before: a noun, adjective or numeral.
+_TR_HEAD_POS: frozenset[str] = frozenset("SANOCU")
+
+# Title case: a heading of 2 to 10 words where most words after the first
+# are capitalised. Names, institutions (Maksu- ja Tolliamet), the polite
+# Teie and a word after a colon or a quotation mark keep their capital.
+_TR_HEADING_WORD_RE = re.compile(r"[^\W\d_][\w'’\-]*")
+_TR_INSTITUTION_HEADS: tuple[str, ...] = tuple("""
+    amet ministeerium instituut ülikool kool keskus inspektsioon kantselei kohus liit
+    selts fond pank kogu muuseum teater haigla büroo agentuur nõukogu komisjon ühing
+    koda teenistus akadeemia gümnaasium kolledž klubi kirik vald linn maakond vabariik
+    sihtasutus kontsern grupp
+""".split())
+_TR_POLITE: frozenset[str] = frozenset({
+    "teie", "teid", "teile", "teil", "teilt", "sina", "sinu", "sind", "sulle", "sul", "sult",
+})
+_TR_SENTENCE_OPENERS: str = ':"„“«(!?.'
+_TR_FUNCTION_POS: frozenset[str] = frozenset("VPJKD")
+# Heading lines a text gets checked in; each costs a few lexicon lookups.
+_TR_HEADING_LINES = 200
+
+
+def _tr_readings(span) -> list[tuple[str, str, str]]:
+    return [(a.lemma or "", a.partofspeech or "", a.form or "") for a in span.annotations]
+
+
+def _tr_persons(spans: list, k: int) -> frozenset[str] | None:
+    """The persons spans[k] marks as a finite verb or an imperative; None
+    when it marks none. A verb after ei or pole is the negative stem (ei
+    tee), not an imperative, and palun is the politeness word."""
+    if spans[k].text.lower() == "palun":
+        return None
+    out: set[str] = set()
+    for _lemma, pos, form in _tr_readings(spans[k]):
+        persons = _TR_FORM_PERSONS.get(form) if pos == "V" else None
+        if persons is None:
+            return None
+        out |= persons
+    if k and spans[k - 1].text.lower() in ("ei", "pole"):
+        return None
+    return frozenset(out) or None
+
+
+def _tr_clauses(spans: list, lo: int, hi: int) -> list[tuple[int, int]]:
+    """One sentence cut into clause-sized pieces: at punctuation, at
+    conjunctions and subordinators, and at relative words."""
+    out, start = [], lo
+    for k in range(lo, hi):
+        if (spans[k].text in _CLAUSE_BOUNDARY_MARKS or spans[k].text.lower() in _CLAUSE_SCAN_STOP
+                or _relative_word(spans[k])):
+            if start < k:
+                out.append((start, k))
+            start = k + 1
+    if start < hi:
+        out.append((start, hi))
+    return out
+
+
+def _tr_clause_person(spans: list, a: int, b: int) -> str | None:
+    """The one person the clause spans[a:b] is in: every person-marked verb
+    agrees on it, and so does any subject pronoun. None when that is not
+    certain (no such verb, verbs in different persons, a sid form with no
+    pronoun to choose between 2sg and 3pl)."""
+    verbs = [p for k in range(a, b) if (p := _tr_persons(spans, k))]
+    if not verbs:
+        return None
+    subjects = {_TR_SUBJECT_PRONOUNS[spans[k].text.lower()] for k in range(a, b)
+                if spans[k].text.lower() in _TR_SUBJECT_PRONOUNS
+                and any(pos == "P" and form in ("sg n", "pl n")
+                        for _l, pos, form in _tr_readings(spans[k]))}
+    if all(len(v) == 1 for v in verbs) and len(set(verbs)) == 1:
+        person = next(iter(verbs[0]))
+        return None if subjects - {person} else person
+    if len(subjects) == 1:
+        person = next(iter(subjects))
+        return person if all(person in v for v in verbs) else None
+    return None
+
+
+def _tr_oma_issues(text: str, spans: list, lo: int, hi: int) -> list[dict]:
+    """oma-possessive: Palun saatke meile teie andmed → oma andmed."""
+    issues: list[dict] = []
+    for a, b in _tr_clauses(spans, lo, hi):
+        person = _tr_clause_person(spans, a, b)
+        if person is None:
+            continue
+        for k in range(a, b - 1):
+            low = spans[k].text.lower()
+            if _TR_POSSESSIVES.get(low) != person or not any(
+                    pos == "P" and form in ("sg g", "pl g") for _l, pos, form in _tr_readings(spans[k])):
+                continue
+            nxt = spans[k + 1]
+            readings = _tr_readings(nxt)
+            if (nxt.text.lower() in _TR_POSSESSIVE_ADVERBIALS or nxt.text.lower() == "oma"
+                    or not any(pos in _TR_HEAD_POS for _l, pos, _f in readings)
+                    or any(pos in ("K", "V", "D") for _l, pos, _f in readings)
+                    or any(pos == "A" and lemma.endswith(_TR_PARTICIPLE_ENDINGS)
+                           for lemma, pos, _f in readings)):
+                continue
+            # A quoted or capitalised Minu / Meie inside a sentence is a
+            # title or a name (raamat „Minu Eesti“); Teie and Sinu are a
+            # letter's polite capital.
+            if k > lo and spans[k - 1].text in _QUOTE_MARKS:
+                continue
+            if spans[k].text[:1].isupper() and k > lo and low not in ("teie", "sinu"):
+                continue
+            issues.append({
+                "phrase": text[spans[k].start:nxt.end],
+                "position": spans[k].start,
+                "rule": "oma-possessive",
+                "rule_estonian": "omastav asesõna oma",
+                "explanation": (f"Kui omanik on lause alus, on eesti keeles 'oma' või ei "
+                                f"midagi, mitte '{spans[k].text}' (inglise my, your)."),
+                "suggestion": f"oma {nxt.text} / {nxt.text}",
+            })
+    return issues
+
+
+def _tr_pronoun_after_verb_issues(text: str, spans: list, lo: int, hi: int) -> list[dict]:
+    """pronoun-after-verb: lähtume me → lähtume. Not in a question (Olete te
+    kindel?), and not before a comma."""
+    issues: list[dict] = []
+    if spans[hi - 1].text == "?":
+        return issues
+    for k in range(lo, hi - 2):
+        pronoun = spans[k + 1].text.lower()
+        forms = _TR_PLURAL_FORMS.get(pronoun)
+        readings = _tr_readings(spans[k])
+        if (forms is None or not readings or spans[k + 2].text in _CLAUSE_BOUNDARY_MARKS
+                or not all(pos == "V" and form in forms for _l, pos, form in readings)):
+            continue
+        verb = spans[k].text
+        issues.append({
+            "phrase": text[spans[k].start:spans[k + 1].end],
+            "position": spans[k].start,
+            "rule": "pronoun-after-verb",
+            "rule_estonian": "pöördelõppu kordav asesõna",
+            "explanation": (f"Pöördelõpp näitab tegijat juba; '{spans[k + 1].text}' tegusõna "
+                            f"järel kordab seda ('lähtume me' → 'lähtume')."),
+            "suggestion": f"{verb} / {spans[k + 1].text} {verb[:1].lower() + verb[1:]}",
+        })
+    return issues
+
+
+def _tr_subject_np(spans: list, j: int, hi: int) -> tuple[int, str] | None:
+    """A nominative noun phrase of at most four words from spans[j]: the
+    index after its noun, and the noun's number ('sg' or 'pl'). Modifiers
+    are nominatives and genitives (meie uus süsteem, ettevõtte juht)."""
+    k = j
+    while k < hi and k - j < 4:
+        readings = _tr_readings(spans[k])
+        if not readings or _is_punct(spans[k]) or any(pos == "V" for _l, pos, _f in readings):
+            return None
+        if any(pos == "S" and form in ("sg n", "pl n") for _l, pos, form in readings):
+            nxt = _tr_readings(spans[k + 1]) if k + 1 < hi else []
+            if (nxt and any(pos in ("S", "H") and form in ("sg n", "pl n") for _l, pos, form in nxt)
+                    and not any(pos == "V" for _l, pos, _f in nxt)):
+                k += 1  # a noun before another nominal qualifies it
+                continue
+            plural = any(pos == "S" and form == "pl n" for _l, pos, form in readings)
+            return k + 1, "pl" if plural else "sg"
+        if not any(pos in _TR_NOMINAL_POS and form.endswith((" n", " g"))
+                   for _l, pos, form in readings):
+            return None
+        k += 1
+    return None
+
+
+def _tr_verb_second_issue(text: str, spans: list, lo: int, hi: int) -> dict | None:
+    """verb-second: Kui tellimus on kinnitatud, me saadame arve → saadame.
+    The sentence opens with a subordinate clause; its comma is followed by
+    a short subject pronoun or a common-noun subject and then the finite
+    verb. Not in a question, not after siis (Kui ..., siis me ...), not
+    with a negated verb, and not for a parenthetical (..., ma arvan, ...)."""
+    k = lo
+    while k < hi and (spans[k].text in _QUOTE_MARKS or spans[k].text in ("-", "*", "•")):
+        k += 1
+    opener = spans[k].text.lower() if k < hi else ""
+    if opener not in _TR_FRONT_OPENERS or spans[hi - 1].text == "?":
+        return None
+    second = _TR_FRONT_OPENERS[opener]
+    if second and not any(s.text.lower() in second for s in spans[k + 1:k + 3]):
+        return None
+    comma, predicate = None, False
+    for m in range(k + 1, hi):
+        word = spans[m].text
+        if word == ",":
+            if m + 1 < hi and (spans[m + 1].text.lower() in _TR_EMBED_OPENERS
+                               or _relative_word(spans[m + 1])):
+                continue
+            comma = m
+            break
+        if word in _CLAUSE_BOUNDARY_MARKS:
+            return None
+        predicate = predicate or any(
+            pos == "V" and (form in _FINITE_FORMS or (opener == "et" and form == "da"))
+            for _l, pos, form in _tr_readings(spans[m]))
+    if comma is None or not predicate or comma + 3 > hi:
+        return None
+    j = comma + 1
+    low = spans[j].text.lower()
+    explanation = ("Lause algul olev kõrvallause on pealause esimene liige, nii et kohe "
+                   "järgneb öeldis: 'Kui saabub kevad, muutub ka meeleolu paremaks.'")
+    if low in _TR_SHORT_PRONOUNS:
+        if not any(pos == "P" and form in ("sg n", "pl n") for _l, pos, form in _tr_readings(spans[j])):
+            return None
+        # The pronoun agreeing with the person settles a verb that is also
+        # a noun (saame: saam), so the sentence's reading is enough.
+        persons = _tr_persons(spans, j + 1)
+        if (not persons or _TR_SUBJECT_PRONOUNS[low] not in persons
+                or (j + 2 < hi and spans[j + 2].text in (",", ")", "-", "\u2013", "\u2014"))):
+            return None
+        verb = spans[j + 1].text
+        suggestion = (verb if _TR_SUBJECT_PRONOUNS[low][0] in "12"
+                      else f"{verb} {spans[j].text}")
+        return {
+            "phrase": text[spans[j].start:spans[j + 1].end],
+            "position": spans[j].start,
+            "rule": "verb-second",
+            "rule_estonian": "öeldis teisel kohal",
+            "explanation": explanation,
+            "suggestion": suggestion,
+        }
+    if low in _TR_DETERMINERS and not any(pos == "S" for _l, pos, _f in _tr_readings(spans[j + 1])):
+        return None
+    found = _tr_subject_np(spans, j, hi)
+    if found is None or found[0] >= hi:
+        return None
+    end, number = found
+    persons = _tr_persons(spans, end)
+    if (not persons or ("3pl" if number == "pl" else "3sg") not in persons
+            or not _sure_finite(spans[end], spans[end + 1] if end + 1 < hi else None)):
+        return None
+    return {
+        "phrase": text[spans[j].start:spans[end].end],
+        "position": spans[j].start,
+        "rule": "verb-second",
+        "rule_estonian": "öeldis teisel kohal",
+        "explanation": explanation,
+        "suggestion": f"{spans[end].text} {text[spans[j].start:spans[end - 1].end]}",
+    }
+
+
+def _tr_saama_future_issues(text: str, spans: list, lo: int, hi: int) -> list[dict]:
+    """saama-future: saab olema → on, saab toimuma → toimub. saama with a
+    da-infinitive (seda saab teha) is a possibility and is not matched."""
+    issues: list[dict] = []
+    for k in range(lo, hi):
+        readings = _tr_readings(spans[k])
+        if not readings or not all(lemma == "saama" and pos == "V" and form in _TR_SAAMA_PRESENT
+                                   for lemma, pos, form in readings):
+            continue
+        form = readings[0][2]
+        for m in range(k + 1, min(hi, k + 3)):
+            after = _tr_readings(spans[m])
+            verb = next((lemma for lemma, pos, f in after if pos == "V" and f == "ma"), None)
+            if verb is None:
+                if any(pos == "D" for _l, pos, _f in after):
+                    continue  # saab kindlasti olema
+                break
+            if verb in _TR_SAAMA_IDIOMS or not all(pos == "V" and f == "ma" for _l, pos, f in after):
+                break
+            if verb == "olema":
+                plain = _first(_synthesize("olema", form, "V")) or "on"
+                suggestion = f"{plain} / tuleb"
+            else:
+                suggestion = _first(_synthesize(verb, form, "V")) or "olevik"
+            issues.append({
+                "phrase": text[spans[k].start:spans[m].end],
+                "position": spans[k].start,
+                "rule": "saama-future",
+                "rule_estonian": "saama-tulevik",
+                "explanation": ("Tulevikku väljendab eesti keeles olevik; 'saab tegema' on "
+                                "laenkonstruktsioon ja ebasoovitav."),
+                "suggestion": suggestion,
+            })
+            break
+    return issues
+
+
+def _tr_maks_issues(text: str, spans: list, lo: int, hi: int) -> list[dict]:
+    """maks-infinitive (ettepanek võtmaks → võtta) and maks-purpose
+    (Tagamaks → et tagada; sõitis sõlmimaks → sõlmima). A purpose maks
+    after an et in the same sentence is left alone: EKI accepts it where
+    it keeps two et from meeting."""
+    issues: list[dict] = []
+    et_before = False
+    for k in range(lo, hi):
+        if spans[k].text.lower() == "et":
+            et_before = True
+        readings = _tr_readings(spans[k])
+        if not readings or not all(pos == "V" and form == "maks" for _l, pos, form in readings):
+            continue
+        verb = readings[0][0]
+        da = _first(_synthesize(verb, "da", "V"))
+        prev = spans[k - 1] if k > lo else None
+        if prev is not None and _span_bits(prev)[0] == "S" and (
+                _span_bits(prev)[2] in _TR_DA_NOUNS or (_root_parts(prev) or [""])[-1] in _TR_DA_NOUNS):
+            issues.append({
+                "phrase": text[prev.start:spans[k].end],
+                "position": prev.start,
+                "rule": "maks-infinitive",
+                "rule_estonian": "maks-vorm da-tegevusnime asemel",
+                "explanation": ("Nimisõna laiendab da-tegevusnimi: 'ettepanek võtta', mitte "
+                                "'ettepanek võtmaks'."),
+                "suggestion": f"{prev.text} {da}" if da else "da-tegevusnimi",
+            })
+            continue
+        motion = False
+        for m in range(k - 1, max(lo, k - 5) - 1, -1):
+            if spans[m].text in _CLAUSE_BOUNDARY_MARKS:
+                break
+            if any(pos == "V" and lemma in _TR_MA_VERBS for lemma, pos, _f in _tr_readings(spans[m])):
+                motion = True
+                break
+        if motion:
+            ma = _first(_synthesize(verb, "ma", "V"))
+            issues.append({
+                "word": spans[k].text,
+                "position": spans[k].start,
+                "rule": "maks-purpose",
+                "rule_estonian": "maks-lühend",
+                "explanation": ("Liikumist väljendava tegusõna järel sobib ma-tegevusnimi: "
+                                "'sõitis Pärnu lepingut sõlmima'."),
+                "suggestion": ma or "ma-tegevusnimi",
+            })
+        elif not et_before:
+            issues.append({
+                "word": spans[k].text,
+                "position": spans[k].start,
+                "rule": "maks-purpose",
+                "rule_estonian": "maks-lühend",
+                "explanation": ("Eesmärki väljendab loomulikumalt et-lause; sage maks-vorm mõjub "
+                                "eputavalt. Stiilisoovitus."),
+                "suggestion": f"et {da}" if da else "et + da-tegevusnimi",
+            })
+    return issues
+
+
+def _tr_mitte_des_issues(text: str, spans: list, lo: int, hi: int) -> list[dict]:
+    """mitte-des: Mitte leides → Leidmata. A contrast (õpid mitte lugedes,
+    vaid tehes) keeps mitte."""
+    issues: list[dict] = []
+    if any(s.text.lower() in ("vaid", "kuid", "aga", "ent") for s in spans[lo:hi]):
+        return issues
+    for k in range(lo, hi - 1):
+        if spans[k].text.lower() != "mitte":
+            continue
+        verb = next((lemma for lemma, pos, form in _tr_readings(spans[k + 1])
+                     if pos == "V" and form == "des"), None)
+        mata = _first(_synthesize(verb, "mata", "V")) if verb else None
+        if not mata:
+            continue
+        if spans[k].text[:1].isupper():
+            mata = mata[:1].upper() + mata[1:]
+        issues.append({
+            "phrase": text[spans[k].start:spans[k + 1].end],
+            "position": spans[k].start,
+            "rule": "mitte-des",
+            "rule_estonian": "mitte + des-vorm",
+            "explanation": "des-vormi eitus on mata-vorm: 'Leidmata', mitte 'Mitte leides'.",
+            "suggestion": mata,
+        })
+    return issues
+
+
+def _tr_tanu_issues(text: str, spans: list, lo: int, hi: int) -> list[dict]:
+    """tanu-negative: tänu ressursside piiratusele → ressursside piiratuse
+    tõttu. Only the preposition tänu, before a cause on the list."""
+    issues: list[dict] = []
+    for k in range(lo, hi - 1):
+        if spans[k].text.lower() != "tänu" or not any(
+                pos == "K" for _l, pos, _f in _tr_readings(spans[k])):
+            continue
+        for m in range(k + 1, min(hi, k + 5)):
+            if spans[m].text in _CLAUSE_BOUNDARY_MARKS:
+                break
+            noun = next((lemma for lemma, pos, form in _tr_readings(spans[m])
+                         if pos == "S" and form.endswith(" all")), None)
+            if noun is None:
+                continue
+            if noun in _TR_NEGATIVE_CAUSES or (_root_parts(spans[m]) or [""])[-1] in _TR_NEGATIVE_CAUSES:
+                words = []
+                for w in spans[k + 1:m + 1]:
+                    allative = next(((lemma, pos, form) for lemma, pos, form in _tr_readings(w)
+                                     if form.endswith(" all")), None)
+                    genitive = allative and _first(_synthesize(
+                        allative[0], allative[2][:-len("all")] + "g", allative[1]))
+                    words.append(genitive or w.text)
+                issues.append({
+                    "phrase": text[spans[k].start:spans[m].end],
+                    "position": spans[k].start,
+                    "rule": "tanu-negative",
+                    "rule_estonian": "tänu halva põhjuse korral",
+                    "explanation": ("'Tänu' sobib, kui on põhjust tänulik olla; halva põhjuse "
+                                    "korral 'tõttu' või 'tagajärjel'."),
+                    "suggestion": " ".join(words) + " tõttu",
+                })
+            break
+    return issues
+
+
+def _tr_item(spans: list, a: int, b: int) -> bool:
+    """spans[a:b] is a short list item: one to four words, no verb,
+    conjunction, relative word or inserted-remark opener, ending in a
+    word with a case."""
+    if not 1 <= b - a <= 4:
+        return False
+    for s in spans[a:b]:
+        low = s.text.lower()
+        if (_is_punct(s) or low in _CLAUSE_SCAN_STOP or low in _TR_KIIL_OPENERS
+                or _relative_word(s) or any(pos in ("V", "J") for _l, pos, _f in _tr_readings(s))):
+            return False
+    return bool(_tr_cases(spans[b - 1]))
+
+
+def _tr_cases(span) -> set[str]:
+    return {form.split()[-1] for _l, pos, form in _tr_readings(span)
+            if pos in _TR_NOMINAL_POS and " " in form}
+
+
+def _tr_serial_comma_issues(text: str, spans: list, lo: int, hi: int) -> list[dict]:
+    """serial-comma: kohvi, teed, ja küpsiseid → teed ja. Three short items
+    in a shared case, the last two joined by ', ja'. A comma that closes a
+    clause, an apposition (Costa, Portugali peaminister, ja Juncker), an
+    inserted remark or an address stays."""
+    issues: list[dict] = []
+    for i in range(lo + 2, hi - 1):
+        if spans[i].text != "," or spans[i + 1].text.lower() not in _TR_LIST_CONJUNCTIONS:
+            continue
+        j = i + 2
+        if j >= hi or spans[j].text.lower() in _TR_AFTERTHOUGHT:
+            continue
+        end3 = j
+        while (end3 < hi and end3 - j < 4 and not _is_punct(spans[end3])
+               and not any(pos == "V" for _l, pos, _f in _tr_readings(spans[end3]))):
+            end3 += 1
+        if not _tr_item(spans, j, end3):
+            continue
+        p = i - 1
+        while p > lo and not _is_punct(spans[p]):
+            p -= 1
+        if spans[p].text != "," or not _tr_item(spans, p + 1, i):
+            continue
+        q = p - 1
+        while (q >= lo and p - q <= 4 and not _is_punct(spans[q]) and not _relative_word(spans[q])
+               and not any(pos in ("V", "J", "K") for _l, pos, _f in _tr_readings(spans[q]))):
+            q -= 1
+        if q + 1 >= p or not _tr_item(spans, q + 1, p):
+            continue
+        if not (_tr_cases(spans[p - 1]) & _tr_cases(spans[i - 1]) & _tr_cases(spans[end3 - 1])):
+            continue
+
+        def named(a: int, b: int) -> bool:
+            return any(pos == "H" for s in spans[a:b] for _l, pos, _f in _tr_readings(s))
+        if named(q + 1, p) and not named(p + 1, i) and named(j, end3):
+            continue
+        issues.append({
+            "phrase": text[spans[i - 1].start:spans[i + 1].end],
+            "position": spans[i - 1].start,
+            "rule": "serial-comma",
+            "rule_estonian": "koma ja ees loetelus",
+            "explanation": ("Loetelus ei panda koma sõnade ja, ning, või, ega ette; see on "
+                            "inglise tava."),
+            "suggestion": f"{spans[i - 1].text} {spans[i + 1].text}",
+        })
+    return issues
+
+
+@lru_cache(maxsize=4096)
+def _tr_capital_kind(word: str) -> str:
+    """How a capitalised heading word reads: 'name' (a known name, an
+    abbreviation or an institution: Eesti, ERR, Tolliameti), 'function'
+    (only a verb, pronoun, conjunction, adposition or adverb: Me, Saame,
+    Ja), 'common' (another known word: Teenused) or '' (unknown)."""
+    if word.isupper() or _lexicon_names(word):
+        return "name"
+    readings = _lexicon_readings(word.lower())
+    if not readings:
+        return ""
+    if any(r["partofspeech"] == "S" and r["lemma"].lower().endswith(_TR_INSTITUTION_HEADS)
+           for r in readings):
+        return "name"
+    pos = {r["partofspeech"] for r in readings}
+    return "function" if pos <= _TR_FUNCTION_POS else "common"
+
+
+def _tr_title_case_issues(text: str) -> list[dict]:
+    """title-case: Meie Teenused Ja Hinnad → Meie teenused ja hinnad. A
+    markdown heading, or a line of 2 to 10 words with no closing
+    punctuation after a blank line and before more text."""
+    issues: list[dict] = []
+    lines = text.split("\n")
+    offset, checked = 0, 0
+    for idx, line in enumerate(lines):
+        start, offset = offset, offset + len(line) + 1
+        raw = line.strip()
+        body = raw.lstrip("#").strip()
+        if not body or body[-1] in ".,;!?":
+            continue
+        if not raw.startswith("#") and not (
+                (idx == 0 or not lines[idx - 1].strip()) and idx + 1 < len(lines)):
+            continue
+        words = [(m.group(0), m.start()) for m in _TR_HEADING_WORD_RE.finditer(body)]
+        if not 2 <= len(words) <= 10:
+            continue
+        checked += 1
+        if checked > _TR_HEADING_LINES:
+            break
+        counted, capitals, common, function, named = 0, 0, [], 0, False
+        for w, at in words:
+            kind = _tr_capital_kind(w) if w[:1].isupper() else ""
+            named = named or kind == "name"
+            if at == 0 or body[:at].rstrip()[-1:] in _TR_SENTENCE_OPENERS:
+                continue
+            if w.lower() in _TR_LIST_CONJUNCTIONS:
+                if w[:1].isupper():
+                    common.append(w)  # lowered in the suggestion, not counted
+                    function += 1
+                continue
+            counted += 1
+            if not w[:1].isupper() or w.endswith("-") or w.lower() in _TR_POLITE:
+                continue
+            capitals += 1
+            if kind in ("common", "function"):
+                common.append(w)
+                function += kind == "function"
+        # Most words capitalised, at least two of them ordinary words, and
+        # with a name in the line one of those must be a word no name
+        # capitalises (Eesti Keele Instituut is a name, Kuidas Me Saame
+        # Aidata is not).
+        ordinary = [w for w in common if w.lower() not in _TR_LIST_CONJUNCTIONS]
+        if len(ordinary) < 2 or capitals * 3 < counted * 2 or (named and not function):
+            continue
+        fixed = body
+        for w in common:
+            fixed = re.sub(rf"(?<!\w){re.escape(w)}(?!\w)", w[:1].lower() + w[1:], fixed, count=1)
+        issues.append({
+            "phrase": body,
+            "position": start + line.index(body),
+            "rule": "title-case",
+            "rule_estonian": "pealkirja suurtähed",
+            "explanation": ("Eesti pealkirjas on suure tähega esimene sõna ja nimed; iga sõna "
+                            "suure tähega on inglise tava."),
+            "suggestion": fixed,
+        })
+    return issues
+
+
+@lru_cache(maxsize=4096)
+def _tr_addressee(word: str) -> bool:
+    """A capitalised word after Tere that names who is greeted: a known
+    name, an address noun (Kolleeg) or a word the lexicon lacks (a name it
+    does not know). Tere Tulemast is a phrase in title case, not an
+    address."""
+    return bool(_lexicon_names(word) or word.lower() in _TR_ADDRESS_NOUNS
+                or not _lexicon_readings(word.lower()))
+
+
+def _tr_letter_issues(text: str) -> list[dict]:
+    """closing-comma (Lugupidamisega, → Lugupidamisega) and
+    greeting-punctuation (Hea Mari, → Hea Mari!; Tere Mari → Tere, Mari)."""
+    issues: list[dict] = []
+    for m in _TR_CLOSING_RE.finditer(text):
+        rest = m.group("rest").strip()
+        if rest and not rest[:1].isupper():
+            continue
+        issues.append({
+            "phrase": text[m.start("f"):text.index(",", m.end("f")) + 1],
+            "position": m.start("f"),
+            "rule": "closing-comma",
+            "rule_estonian": "koma lõputervituse järel",
+            "explanation": "Lõputervituse ja nime vahele koma ei panda: 'Lugupidamisega / Mari Tamm'.",
+            "suggestion": m.group("f"),
+        })
+    greeted = set()
+    for m in _TR_GREETING_RE.finditer(text):
+        greeting = m.group("g").strip()
+        words = greeting.split()
+        if words[0].lower() in ("hea", "head", "kallis", "kallid", "armas", "armsad") and (
+                len(words) < 2 or not (words[1][:1].isupper()
+                                       or words[1].lower() in _TR_ADDRESS_NOUNS)):
+            continue
+        if len(words) > 6 or not _TR_NONSPACE_RE.search(text, m.end()):
+            continue  # a letter goes on after its salutation
+        if words[0].lower() in ("tere", "hei", "tervist", "tšau") and len(words) > 1:
+            greeting = f"{words[0]}, {' '.join(words[1:])}"
+        greeted.add(m.start("g"))
+        issues.append({
+            "phrase": text[m.start("g"):m.end()].rstrip(),
+            "position": m.start("g"),
+            "rule": "greeting-punctuation",
+            "rule_estonian": "pöördumise kirjavahemärgid",
+            "explanation": ("Pöördumine lõpeb hüüumärgiga või märgita, mitte komaga, ja kiri "
+                            "jätkub suure tähega."),
+            "suggestion": f"{greeting}!",
+        })
+    for m in _TR_TERE_NAME_RE.finditer(text):
+        name = m.group("n")
+        if m.start("g") in greeted or not _tr_addressee(name):
+            continue
+        issues.append({
+            "phrase": text[m.start("g"):m.end("n")],
+            "position": m.start("g"),
+            "rule": "greeting-punctuation",
+            "rule_estonian": "pöördumise kirjavahemärgid",
+            "explanation": "Tervituse ja pöördumise vahele käib koma: 'Tere, Mari!'",
+            "suggestion": f"{m.group('g')}, {name}",
+        })
+    return issues
+
+
+def _tr_subject_pronoun_issue(spans: list, sentences: list[tuple[int, int]]) -> dict | None:
+    """subject-pronoun: three or more sentences, and a third of them or
+    more, open with ma, mina, me or meie before a verb whose ending shows
+    the same person. Reported once, at the first."""
+    hits = []
+    for lo, hi in sentences:
+        k = lo
+        while k < hi and spans[k].text in _QUOTE_MARKS:
+            k += 1
+        if k + 1 >= hi or spans[k].text.lower() not in ("ma", "mina", "me", "meie"):
+            continue
+        persons = _tr_persons(spans, k + 1)
+        if persons == {_TR_SUBJECT_PRONOUNS[spans[k].text.lower()]}:
+            hits.append(spans[k].start)
+    if len(hits) < 3 or len(hits) * 3 < len(sentences):
+        return None
+    return {
+        "position": hits[0],
+        "rule": "subject-pronoun",
+        "rule_estonian": "liigne isikuline asesõna",
+        "explanation": (f"{len(hits)} lauset {len(sentences)}-st algab sõnaga 'ma' või 'me', "
+                        "kuigi pöördelõpp näitab tegijat juba: 'Loodan', mitte 'Ma loodan'."),
+        "suggestion": "jäta asesõna ära, kus see vastandust ei rõhuta",
+    }
+
+
+def _check_translationese(text: str) -> dict:
+    """English sentence structure and English habits of form in Estonian
+    text: the rules listed above _TR_FORM_PERSONS."""
+    _check_text(text)
+    t = _Text()(text)
+    t.tag_layer(["sentences", "morph_analysis"])
+    spans = list(t.morph_analysis)
+    sentences = [(lo, hi) for lo, hi in _sentence_ranges(t, spans) if hi > lo]
+
+    issues: list[dict] = []
+    for lo, hi in sentences:
+        issues.extend(_tr_oma_issues(text, spans, lo, hi))
+        issues.extend(_tr_pronoun_after_verb_issues(text, spans, lo, hi))
+        found = _tr_verb_second_issue(text, spans, lo, hi)
+        if found:
+            issues.append(found)
+        issues.extend(_tr_saama_future_issues(text, spans, lo, hi))
+        issues.extend(_tr_maks_issues(text, spans, lo, hi))
+        issues.extend(_tr_mitte_des_issues(text, spans, lo, hi))
+        issues.extend(_tr_tanu_issues(text, spans, lo, hi))
+        issues.extend(_tr_serial_comma_issues(text, spans, lo, hi))
+    for rx, plain, why in _TR_PHRASES:
+        issues.extend({
+            "phrase": m.group(0),
+            "position": m.start(),
+            "rule": "english-phrase",
+            "rule_estonian": "inglise keele mõjuga väljend",
+            "explanation": why,
+            "suggestion": plain,
+        } for m in rx.finditer(text))
+    issues.extend(_tr_letter_issues(text))
+    issues.extend(_tr_title_case_issues(text))
+    found = _tr_subject_pronoun_issue(spans, sentences)
+    if found:
+        issues.append(found)
+    issues.sort(key=lambda d: d["position"])
+    return {
+        "issues": issues,
+        "summary_estonian": (
+            f"Leiti {len(issues)} kohta, mis kõlavad tõlkena." if issues
+            else "Tõlkekeele tunnuseid ei leitud."
+        ),
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    title="Check Estonian for English structure (translationese)",
+    readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+))
+@_counted
+def check_translationese(text: Annotated[str, Field(description="Estonian text you wrote, translated or are editing.")]) -> _CheckResult:
+    """Flag English structure that makes Estonian read as translated. Run
+    it on Estonian you wrote or translated.
+
+    Rules: `oma-possessive` (saatke meile teie andmed → oma andmed),
+    `pronoun-after-verb` (lähtume me → lähtume), `subject-pronoun` (a third
+    of the sentences open with Ma or Me; once), `verb-second` (Kui ...,
+    me saadame → saadame), `saama-future` (saab olema → on),
+    `maks-infinitive` (ettepanek võtmaks → võtta), `maks-purpose`
+    (Tagamaks → et tagada), `mitte-des` (Mitte leides → Leidmata),
+    `tanu-negative` (tänu + a bad cause → tõttu), `english-phrase` (minu
+    arvamusel), `greeting-punctuation` (Hea Mari, → Hea Mari!; Tere Mari →
+    Tere, Mari), `closing-comma` (Lugupidamisega,), `serial-comma` (teed,
+    ja küpsiseid), `title-case` (Meie Teenused Ja Hinnad).
+
+    `maks-purpose` and `subject-pronoun` are style hints. Third-person
+    possessives, negated verbs and questions are not checked. Accepted
+    Estonian is never flagged (aset leidma, rolli mängima, Eile ma läksin,
+    a capital Teie to one reader). Letter formulas such as Palun leidke
+    manuses are check_officialese's.
+    """
+    return _check_translationese(text)
 
 
 # How many distinct content nouns get a WordNet lookup in

@@ -27,7 +27,8 @@ in ground truth so it stops guessing on the mechanical layer
 synonyms instead of inventing them.
 
 It also covers the **editorial** layer, where a word can be correctly
-spelled, morphologically valid and still wrong: `check_officialese` for
+spelled, morphologically valid and still wrong: `check_translationese` for
+Estonian that keeps English sentence structure, `check_officialese` for
 bureaucratic Estonian in reports and academic prose, `check_term_consistency`
 for a document that names one thing three ways, and `synonyms` read as a
 word-fit check: its glosses carry domain constraints (`korpus` is
@@ -93,6 +94,7 @@ of images is not one, however natural it sounds in ML jargon).
 | `classify_register(text)` | Coarse formal/colloquial register hint with matched markers, consistency flag for register-mixed text, plus structural signals (umbisikuline tegumood ratio, noun density) so dense officialese no longer scores "neutral" |
 | `check_style(text)` | Style metrics, lemma-aware repetition, umbisikuline-tegumood ratio, sentence-length variance, hedging-word density |
 | `check_officialese(text)` | Kantseliit check for **non-legal** prose (reports, academic, business), where `check_legalese` stays silent. Nominalisation density (`hindamine` → `hindama`), impersonal-voice ratio, clause stacking (`mille käigus … ning …`), Estonian-calibrated sentence length, admin filler (`omab` → `on`, `mudeli poolt loodud` → `mudeli loodud`), `läbi viima` in every form (`viis läbi uuringu` → `korraldas / tegi`, `läbiviimine`) with routes (`Rada viib läbi metsa`) left alone, translated stock phrases of letters (`Palun leidke manuses`, `ärge kõhelge ühendust võtmast`, `sealhulgas, kuid mitte ainult`) and the request `Küsin täpsemalt, kas …` (→ `Palun täpsustage, …`). A -mine noun's verb is a real one: `läbivaatamine` → `läbi vaatama`, `riskihindamine` → `hindama` |
+| `check_translationese(text)` | English structure in Estonian, the patterns that make a text read as translated, each one EKI or an EKI-published author rewrites: `teie andmed` where the subject's own thing is `oma andmed`, `lähtume me` → `lähtume`, `Kui ..., me saadame` → `saadame` (the verb comes first after a fronted clause), `saab olema` → `on`, `ettepanek võtmaks` → `võtta`, `Tagamaks` → `et tagada`, `Mitte leides` → `Leidmata`, `tänu` with a bad cause → `tõttu`, `minu arvamusel`, a third of the sentences opening with `Ma`, and English habits of form: `Hea Mari,` → `Hea Mari!`, `Tere Mari` → `Tere, Mari`, `Lugupidamisega,` → `Lugupidamisega`, the serial comma (`teed, ja`), title case in headings. Accepted Estonian such as `aset leidma`, `rolli mängima` or `Eile ma läksin` is left alone |
 | `check_term_consistency(text, glossary?)` | One referent, one term. Flags a document that calls the same thing `andmestik` on page 1 and `teadusandmestik` on page 2, via shared compound head or shared Estonian WordNet synset, with per-variant counts so you can standardise on the dominant one. With a domain glossary (the server's, or a per-call `glossary`), a variant that is the only one listed in its group is named the group's `preferred` form |
 | `check_redundancy(text)` | Pleonasm check, flags semantic doubling like `samuti ka` (also+also), `kõige optimaalsem` (most+optimal), and fixed redundant phrases |
 | `check_object_case(text)` | Käändeõpetus, flags direct-object case errors under negation and after partitive-only verbs (armastama, vihkama, vajama, …), and verb government: `teavitama` takes the person in the partitive, `teatama` in the allative (`teavitas politseile` → `teavitas politseid` or `teatas politseile`; `kahtlasest tegevusest teavitamine Rahapesu Andmebüroole` → `teatamine`) |
@@ -292,6 +294,11 @@ alternative that preserves the meaning.
 ```
 
 ```
+Write this reply in Estonian, short, the way a native speaker would,
+then run check_translationese on it and fix what holds: <text>
+```
+
+```
 Classify the register of this draft. If it scores formal, soften
 it for a casual newsletter audience. If it scores colloquial,
 tighten it for a B2B email.
@@ -331,7 +338,7 @@ send to suppress it). You'll especially see it right after adding or
 updating the connector, since the client re-checks tools it hasn't
 seen before.
 
-Good news: **all 27 tools are marked `readOnlyHint: true`** (they only
+Good news: **all 28 tools are marked `readOnlyHint: true`** (they only
 read text, never write or call out), so any well-behaved client can
 safely let you allow them once and stop asking:
 

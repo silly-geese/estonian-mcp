@@ -1,6 +1,6 @@
 ---
 name: estonian-writing-assistant
-description: "Use this skill whenever the user is writing, editing, proofreading, or studying Estonian text and the estonian-mcp connector is available, even if they don't explicitly ask. Covers proofreading (spell_check first, then verify lemma and case forms via lemmatize and analyze_morphology on uncertain words), tone-aware rewrites (classify_register before and after edits to confirm the register matches the audience), de-bureaucratising stiff Estonian prose (check_officialese for kantseliit in reports, academic and business writing, where check_legalese stays silent), keeping one term per referent across a long document (check_term_consistency), answering 'is this the right word here?' by reading each WordNet gloss's domain constraint rather than trusting ML-jargon familiarity, vocabulary diversification (synonyms from WordNet for same-meaning swaps; find_related_words via fastText for adjacent concepts in marketing copy), morphology study, compound splits, syllabification, and named-entity extraction from Estonian news or documents. Core principle: never invent Estonian lemmas, case endings, conjugations, or spellings; always verify with the MCP tools, because models routinely hallucinate Estonian inflections. Documents tool quirks inline (fastText antonym-near-neighbours, polysemy, Vabamorf gaps on neologisms, synonyms-vs-related-words decision rule) and anti-patterns."
+description: "Use this skill whenever the user is writing, editing, proofreading, or studying Estonian text and the estonian-mcp connector is available, even if they don't explicitly ask. Covers writing or translating Estonian that reads native rather than translated from English (short sentences, Estonian structure, then check_translationese), proofreading (spell_check first, then verify lemma and case forms via lemmatize and analyze_morphology on uncertain words), tone-aware rewrites (classify_register before and after edits to confirm the register matches the audience), de-bureaucratising stiff Estonian prose (check_officialese for kantseliit in reports, academic and business writing, where check_legalese stays silent), keeping one term per referent across a long document (check_term_consistency), answering 'is this the right word here?' by reading each WordNet gloss's domain constraint rather than trusting ML-jargon familiarity, vocabulary diversification (synonyms from WordNet for same-meaning swaps; find_related_words via fastText for adjacent concepts in marketing copy), morphology study, compound splits, syllabification, and named-entity extraction from Estonian news or documents. Core principle: never invent Estonian lemmas, case endings, conjugations, or spellings; always verify with the MCP tools, because models routinely hallucinate Estonian inflections. Documents tool quirks inline (fastText antonym-near-neighbours, polysemy, Vabamorf gaps on neologisms, synonyms-vs-related-words decision rule) and anti-patterns."
 ---
 
 # Estonian writing assistant
@@ -39,6 +39,7 @@ The hard rule, applied throughout this skill:
 | `check_compound_familiarity` | Attestation check for each compound noun: is the lemma in the fastText corpus vocabulary (`in_vocab`), in Estonian WordNet (`in_wordnet`), or a legal term of art? **Read `attested` first, and read `attested: false` for what it is**: outside a 100K-word vocabulary, which is the normal state for correct specialist vocabulary. `lisakäive`, `klikkimismäär`, `koolitoit`, `rehvivahetus` are all unattested here and all ordinary Estonian, so unattested is NEVER on its own a reason to rewrite. `is_suspect` is narrow: unattested AND the nearest neighbour is a real word AND that similarity is still under 0.55 (`mõtteliin`, 0.536). Recall is low on purpose: a coinage scoring inside the band real vocabulary occupies is missed rather than bought at the price of flagging good Estonian, so `toortõlkeoht` (0.571) passes. `neighbour_quality.signal: none` means the nearest neighbour is a scrape-artifact token, the score means nothing, and no verdict is offered. Note the other limit too: a compound that is merely *stilted* rather than invented (`teadusandmestik`) passes, because similarity can't judge register, so use `check_officialese` for that. Run on any Estonian compound you yourself produced (rather than verbatim user input). |
 | `check_domain_terms` | For Estonian written about an organisation's own systems. Reports the compounds that are unattested AND not on the organisation's glossary or identifier list. That says only that the word is not the organisation's: it may be a name you coined, or ordinary Estonian the lexicons lack (`vagunisõit` is common). Where it names something the organisation has a word for, or something with an identifier, use theirs. When there are glossary terms, each comes with up to three of them **spelled alike** (`suggestions`): look-alikes, not synonyms, so replace the compound only when a suggestion names the same thing. `contains_glossary_term` marks a compound built on a glossary term (`vagunireisitabel` on `vagunireis`), which is ordinary Estonian and must not be shortened to the term. The hosted server has no glossary of its own, so pass the organisation's terms in `glossary` (up to 1,000). With no glossary at all it is only the unattested list, which is never on its own a reason to rewrite. |
 | `check_officialese` | Kantseliit check for **non-legal** prose: reports, academic writing, business copy, grant/R&D paperwork. Use this, not `check_legalese`, for anything that isn't a statute or contract: `check_legalese`'s lexicon and 34-word gate are tuned for legislation and return nothing on report officialese. Gives nominalisation density with the verb to swap in (`hindamine` → `hindama`), correctly-counted umbisikuline tegumood, clause stacking, Estonian-calibrated sentence length, and admin filler. Also `läbi viima` in every form with a verb in the same form (`viidi läbi` → `korraldati / tehti`, `pidama` for a meeting), translated letter phrases (`calque-phrase`: `Palun leidke manuses`, `ärge kõhelge ... võtmast`, `kiri leiab teid hästi`, `tänan teid teie ... eest`, `vaatan edasi koostööle`, `sealhulgas, kuid mitte ainult`, `antud juhul`) and the request `Küsin täpsemalt, kas …` (`kusin-tapsemalt` → `Palun täpsustage, …` / `Sooviksin täpsemalt teada, …`). All of these are style hints: say so when you pass them on. |
+| `check_translationese` | English sentence structure and English habits of form that make Estonian read as translated: `teie andmed` where the subject's own thing is `oma andmed`, `lähtume me`, a third of the sentences opening with `Ma`, `Kui ..., me saadame` (the verb comes first after a fronted clause), `saab olema`, `ettepanek võtmaks`, `Tagamaks`, `Mitte leides`, `tänu` with a bad cause, `minu arvamusel`, a letter's `Hea Mari,` / `Tere Mari` / `Lugupidamisega,`, the serial comma (`teed, ja`), title case in headings. Run it on every Estonian text you write or translate. `maks-purpose` and `subject-pronoun` are style hints. |
 | `check_term_consistency` | One referent, one term. Run on any document longer than a couple of paragraphs: catches `andmestik` in §1, `teadusandmestik` in §2, `pildiandmestik` in §3. Reports per-variant counts so you can standardise on the dominant one. Pass the organisation's terms in `glossary` when you have them (up to 1,000; the hosted server has none of its own): when exactly one variant in a group is listed, the group names it `preferred`, so standardise on `preferred` when present and otherwise on `dominant`. Read each group before rewriting: some are genuinely distinct concepts. |
 | `check_capitalization` | Algustäheortograafia (initial-letter orthography) check per EKI Reeglid. Flags weekdays, months, nationalities, and language/culture adjectives wrongly capitalized mid-sentence. A hit at the start of a line, list item or quotation, or inside a proper name (`Eesti Keele Instituut`), is usually false. Run on every Estonian text you produce. |
 | `check_compounds` | Liitsõnaõigekiri: flags common compound splits the model produces (`kooli maja` → `koolimaja`). Lexicon-based, phase 1. |
@@ -49,6 +50,44 @@ The hard rule, applied throughout this skill:
 | `syllabify` | Per-syllable breakdown with quantity + accent. Useful for slogan rhythm, song lyrics, or pronunciation guides. |
 
 ## Workflows
+
+### 0. Write or translate into Estonian
+
+Most "worse Estonian" is English structure, not wrong words: the
+possessives, pronouns, word order, light verbs and punctuation of the
+English it was thought in. Write from the meaning, then edit as an
+Estonian editor would.
+
+1. **Compose, don't translate.** Take the meaning and say it the Estonian
+   way: the person in the verb ending (`Loodan`, not `Ma loodan`), `oma`
+   for the subject's own thing, the verb right after a fronted clause
+   (`Kui tellimus on kinnitatud, saadame arve`), plain verbs for `-mine`
+   nouns and light verbs. Estonian says
+   the same in about a quarter fewer words than English, so a version as
+   long as its English source still carries English structure.
+2. **Keep it short outside documents.** Messages, replies, e-mail, UI and
+   marketing copy: 10 to 15 words a sentence, one idea each, two to four
+   sentences a paragraph, the purpose first. No filler, hype, small talk
+   or English enthusiasm (`!` after every line). A letter still keeps its
+   greeting, thanks and closing: a bare one reads as rude.
+3. **Documents keep their weight.** Reports, contracts, policies and
+   academic text keep their content, defined terms and fixed formulas:
+   never vary a term for style. Still remove kantseliit
+   (`check_officialese`, `check_legalese`).
+4. **Edit lightly.** When the user gave the text, change only what is
+   wrong or unclear: no synonym swaps for taste (`ja` → `ning`), no word
+   moved unless its order is wrong, no rewrite longer than the original
+   unless asked.
+5. **Revise in a separate pass.** Reread the draft once as an Estonian
+   editor, then run `check_translationese` with the four orthography
+   checks below, and fix the hits that hold. A second, separate pass does
+   more than any instruction to "sound natural".
+
+Letters: `Tere, Mari!` or `Hea Mari!` (or no mark), never a comma after
+the greeting, and the first sentence starts with a capital. The closing
+takes no comma: `Lugupidamisega` / `Mari Tamm`. Ask directly, with
+`palun` and the imperative. `Teie` with a capital addresses one reader
+and is correct.
 
 ### 1. Proofread a draft
 
@@ -75,14 +114,14 @@ text:
    you suspect a wrong case form, call `analyze_morphology` and
    report the actual `form` (e.g., `sg p` = singular partitive).
 
-**You should run `check_capitalization`, `check_compounds`,
-`check_punctuation`, and `check_numbers` on every Estonian text you
-yourself produce before sending it to the user**, not just on text
-the user gives you. The four EKI-Reeglid checks together catch the
-most common AI mistakes (wrongly-capitalized weekdays / language
-adjectives, split compounds, missing commas before subordinating
-conjunctions, wrong decimal/thousands separators). Each one is
-cheap; run them all in parallel, check each flag against its
+**You should run `check_translationese`, `check_capitalization`,
+`check_compounds`, `check_punctuation`, and `check_numbers` on every
+Estonian text you yourself produce before sending it to the user**, not
+just on text the user gives you. Together they catch the most common AI
+mistakes (English structure and letter punctuation, wrongly-capitalized
+weekdays / language adjectives, split compounds, missing commas before
+subordinating conjunctions, wrong decimal/thousands separators). Each one
+is cheap; run them all in parallel, check each flag against its
 sentence, and surface the ones that hold with the `rule_estonian` label.
 
 `check_hyphenation` is the odd one out: only call it if the user
@@ -418,6 +457,17 @@ manusest` is fine), `ärge kõhelge ühendust võtmast` → `võtke julgelt
 eest` → `tänan teid ... eest`, `vaatan edasi koostööle` → `ootan huviga
 koostööd`, `sealhulgas, kuid mitte ainult` → `sealhulgas`.
 
+### Accepted Estonian that looks translated
+
+Do not "fix" these: ÕS 2025 or the EKI 2026 dictionary accepts them, and
+`check_translationese` leaves them alone. `aset leidma`, `rolli
+mängima`, `mis puudutab`, `X aastat vana`, `rohkem kui`, `päeva lõpuks`
+(ultimately), `kursis hoidma`, `hea meel` + da-infinitive, `teiste
+sõnadega`, `läbi` for a means, `täna` for nowadays, `erinev` for various.
+A pronoun subject after an adverb is normal (`Eile ma läksin poodi`), and
+the comma after a fronted des phrase is required (`Kasutades seda
+tööriista, säästad aega`).
+
 ### Light verbs and -mine nouns
 
 `läbi viima` and `läbiviimine` are a style matter, not an error (EKI
@@ -503,6 +553,8 @@ paraphrases:
 - "What words go with X in Estonian?"
 - "How is this word built?" (compound questions)
 - "Does this sound natural in Estonian?"
+- "This sounds translated / make it sound native"
+- "Make it shorter" / "Write this in Estonian" / "Translate this into Estonian"
 
 When the user pastes Estonian text without an explicit instruction,
 default to: spell-check first, surface anything questionable, then
