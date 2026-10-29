@@ -1,6 +1,10 @@
 version: 2
 updates:
-  - package-ecosystem: "pip"
+  # uv, not pip: the pip ecosystem bumps pyproject.toml and leaves uv.lock
+  # alone, while CI and the image install from the lock. Its PRs ran the
+  # old locked version and passed without testing the one they proposed
+  # (#88 widened mcp to a major version the server does not run on).
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"

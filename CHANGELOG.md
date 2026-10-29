@@ -7,6 +7,29 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-10-29
+
+### Security
+
+- **nltk** 3.10.3 -> 3.10.4, for GHSA-j456-xh4h-cpf2 (high):
+  `WekaClassifier` passed an unvalidated, caller-controlled model path
+  to the Weka JVM, outside `nltk.pathsec` containment. nltk arrives
+  under `estnltk` and serves `punkt_tab` only: the server never loads a
+  Weka model, no tool takes a path, and the image has no Java runtime.
+  Patched regardless. 3.10.4 also confines nltk's model save and load
+  methods to its data directories, the subject of GHSA-8mgp-746c-j5xp,
+  which 0.6.2 left knowingly open. Its downloader now keeps an archive
+  private (0600) and extracts `punkt_tab` beside it, so
+  `scripts/fetch_resources.py` and the image work as before.
+
+### Changed
+
+- **Dependabot updates `uv.lock` with `pyproject.toml`**, and CI installs
+  with `uv sync --locked`, which fails when the two disagree. Dependabot
+  used the `pip` ecosystem, which changes `pyproject.toml` alone, while CI
+  installed the old locked version with `--frozen`: #88 widened `mcp` to a
+  major version the server does not run on, and passed.
+
 ## [1.0.1] - 2026-10-29
 
 ### Fixed
