@@ -7,6 +7,25 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-29
+
+### Fixed
+
+- **Log lines no longer leak into the stdio protocol channel**
+  ([#87](https://github.com/silly-geese/estonian-mcp/pull/87),
+  contributed by @martin-tnc). `import estnltk` adds a handler to the
+  root logger that prints through `tqdm.write()`, i.e. to stdout, so
+  under stdio transport every INFO record (the SDK's "Processing request
+  of type CallToolRequest" on each call, gensim's lines while loading
+  fastText) went into the JSON-RPC stream. Usually it sat in the stdout
+  buffer and was discarded at exit; in a long session the buffer filled,
+  a flush put half a log line in front of a response, and the client
+  dropped the response as non-JSON: `check_compound_familiarity` hung
+  until the client's idle timeout. The handler is now removed at
+  startup; logs still go to stderr. `tests/test_stdio_channel.py` runs
+  the server unbuffered over stdio and fails on any non-JSON stdout
+  line.
+
 ## [1.0.0] - 2026-10-29
 
 Estonian that reads as translated from English, and rewrites that grow.
