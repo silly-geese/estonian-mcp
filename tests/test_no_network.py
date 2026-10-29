@@ -101,6 +101,7 @@ TOOL_CALLS: dict[str, tuple] = {
     "classify_register": ("Käesoleva lepingu alusel sätestatakse kohustused.",),
     "check_style": ("Süsteem kasutab andmeid. Andmed töödeldakse.",),
     "check_officialese": ("Aruandeperioodil koguti ja valideeriti andmestik.",),
+    "check_translationese": ("Palun saatke meile teie andmed.",),
     "check_term_consistency": ("Andmestik ja teadusandmestik.",),
     "check_compounds": ("Kooli maja on suur.",),
     "check_punctuation": ("Ma tean et see on hea.",),

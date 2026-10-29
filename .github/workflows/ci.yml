@@ -107,6 +107,11 @@ jobs:
       - name: Run officialese / term-consistency tests
         run: uv run --python ${{ matrix.python-version }} python tests/test_officialese.py
 
+      # check_translationese: every rule against the forms EKI rewrites and
+      # the correct Estonian that looks like them, plus linear time.
+      - name: Run translationese tests
+        run: uv run --python ${{ matrix.python-version }} python tests/test_translationese.py
+
       - name: Run resource-availability tests (issues #37, #38)
         run: uv run --python ${{ matrix.python-version }} python tests/test_resources.py
 

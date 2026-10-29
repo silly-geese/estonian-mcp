@@ -7,6 +7,102 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-29
+
+Estonian that reads as translated from English, and rewrites that grow.
+The only Estonian study of AI editors (Sööt, Õiguskeel 2025/4) found all
+three models it tested adding kantseliit such as `poolt` and `läbi
+viidud` even when told to avoid it, and getting about a third of their
+word-order changes wrong, mostly against verb-second order. Studies of
+LLM translation find that asking a model to sound natural does little,
+while a separate revision pass and pointed feedback help. So this
+release adds a check that names the English structure in a draft, and
+server instructions that say how to write Estonian and when to run it.
+
+Every rule rests on a current EKI source (ÕS 2025, the EKI teatmik and
+keelenõuvakk of 2022 to 2026, the EKI 2026 dictionary) or on EKK or an
+author EKI publishes, and each keeps quiet where the same surface is
+correct Estonian. On about 2 million characters of ERR news, opinion and
+interviews and Estonian Tax and Customs Board and Social Insurance Board
+guidance, the new check raised 18 flags: 13 `maks-purpose` style hints
+and five sentences that depart from the rule they name. On 1,988 real
+Estonian headings it raised none.
+
+### Added
+
+- **`check_translationese(text)`**, 28 tools now:
+  - `oma-possessive`: the subject's own thing is `oma` (EKK): `Palun
+    saatke meile teie andmed` → `oma andmed`, `Me täname meie kliente` →
+    `oma kliente`. Only when every verb of the clause, and any subject
+    pronoun, agree on the possessive's person, so `Saadame teile teie
+    arve`, `Teie tellimus on teel` and `meie hüvitatav osa` (the
+    participle's agent) stay quiet. Third person is not checked.
+  - `pronoun-after-verb`: `lähtume me` → `lähtume` (EKI teatmik,
+    Tekstisidusus, 2026). Not in a question.
+  - `subject-pronoun`: three or more sentences, and a third or more of
+    them, open with `Ma` or `Me` although the verb ending shows the person
+    (EKI teatmik, Kirjutaja mina, 2026). Reported once; a style hint.
+  - `verb-second`: after a fronted subordinate clause the verb comes next
+    (EKK: `Kui saabub kevad, muutub ka meeleolu paremaks`): `Kui tellimus
+    on kinnitatud, me saadame arve` → `saadame`. A short pronoun or a
+    common-noun subject only; `siis`, a negated verb, a long contrastive
+    pronoun (`mina ootan`) and a parenthetical (`ma arvan`) stay quiet, and
+    so does a pronoun after an adverb (`Eile ma läksin`), which EKK calls
+    `üsna tavaline`.
+  - `saama-future`: `saab olema` → `on / tuleb`, `saab toimuma` →
+    `toimub` (EKK). `Seda saab teha`, `hakkama saama`, `minema saama` and
+    the past `sai õppima` are left alone.
+  - `maks-infinitive`: a noun's da-infinitive written as maks (`ettepanek
+    võtmaks` → `ettepanek võtta`), which an EKI publication calls `lausa
+    vale`. `maks-purpose`: `Tagamaks` → `et tagada`, and after a verb of
+    motion the ma-infinitive (`sõitis Pärnu sõlmimaks` → `sõlmima`); a
+    style hint (EKK). The et-clause hint is skipped after an `et` in the
+    same sentence, where EKI accepts maks to keep two `et` apart.
+  - `mitte-des`: `Mitte leides` → `Leidmata` (EKK). Not in a contrast
+    (`mitte lugedes, vaid tehes`).
+  - `tanu-negative`: `tänu` before a bad cause → `tõttu`, with the phrase
+    in the genitive (`tänu ressursside piiratusele` → `ressursside
+    piiratuse tõttu`; Mäekivi, EKI 2013).
+  - `english-phrase`: `minu arvamusel` → `minu arvates`, `minu
+    vabandused` → `vabandan`, `tunne oma klienti` → `klienditundmise
+    põhimõte`.
+  - `greeting-punctuation` and `closing-comma` (EKI keelenõuvakk 2026):
+    `Hea Mari,` → `Hea Mari!`, `Tere Mari` → `Tere, Mari`,
+    `Lugupidamisega,` → `Lugupidamisega`. `Hea kolleeg Tiina!` takes no
+    comma and is not flagged.
+  - `serial-comma`: `kohvi, teed, ja küpsiseid` → `teed ja` (EKI teatmik,
+    Koma). Three short items in a shared case; a comma that closes a
+    clause, an apposition, an inserted remark or an address stays.
+  - `title-case`: `Meie Teenused Ja Hinnad` → `Meie teenused ja hinnad`
+    (EKI teatmik, Pealkiri). Most words of the heading must be
+    capitalised, and names and institutions (`Eesti Keele Instituut`,
+    `Maksu- ja Tolliamet`) keep theirs.
+- **The server instructions say how to write Estonian**: compose from the
+  meaning, never word for word from English (Estonian says the same in
+  about a quarter fewer words); outside documents, 10 to 15 words a
+  sentence, one idea each, no filler or hype; when editing, change only
+  what is wrong and never return a longer text unless asked; reread every
+  draft as an Estonian editor, then run `check_translationese`. A test
+  pins these lines.
+- **`check_style`'s description gives the Estonian sentence-length
+  norms**: at most 10 to 15 words a sentence for news and web text (the
+  state's web-writing guide), against measured averages of about 9 in
+  e-mail, 14 in news and 25 in statutes.
+
+### Changed
+
+- **The skill** opens with a workflow for writing or translating into
+  Estonian (compose, keep it short outside documents, edit lightly,
+  revise in a separate pass), adds `check_translationese` to the checks to
+  run on every text you produce, and lists accepted Estonian not to "fix":
+  `aset leidma`, `rolli mängima`, `mis puudutab`, `X aastat vana`,
+  `rohkem kui`, `läbi` for a means, `täna` for nowadays.
+- `check_punctuation` and `check_capitalization` point to the new rules
+  for the serial comma, a letter's commas and title case. Their output is
+  unchanged.
+- Callers pay about 540 more tokens for the tool list and about 120 more
+  for the server instructions.
+
 ## [0.10.0] - 2026-10-27
 
 New rules in five existing tools, each checked against EKI or the
