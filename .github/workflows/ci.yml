@@ -34,8 +34,11 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
+      # --locked, not --frozen: it fails when uv.lock no longer matches
+      # pyproject.toml. --frozen installed the old locked version, so a
+      # range bumped without its lock passed untested (#88).
       - name: Install dependencies (locked)
-        run: uv sync --frozen --python ${{ matrix.python-version }}
+        run: uv sync --locked --python ${{ matrix.python-version }}
 
       # The documented setup path, not a bespoke one. This job used to
       # hand-roll the WordNet + fastText fetches and let EstNLTK silently
@@ -160,7 +163,7 @@ jobs:
       - run: uv python install 3.13
 
       - name: uv sync (nothing else)
-        run: uv sync --frozen --python 3.13
+        run: uv sync --locked --python 3.13
 
       # Isolate every resource search path so nothing pre-seeded on the
       # runner can make this pass for the wrong reason.
