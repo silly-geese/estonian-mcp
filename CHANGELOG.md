@@ -5,10 +5,11 @@ All notable user-facing changes to this MCP server.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.7.2] - 2026-10-30
 
 ### Security
 
+- nltk 3.10.4 (GHSA-j456-xh4h-cpf2): a patch on the 0.7 line for pinned consumers.
 - Image scan fixes: a build of this tree now passes trivy's gate on
   fixable high and critical findings. No API or tool behaviour change.
   - **certifi** 2026.4.22 -> 2026.10.19. GHSA-6q48-6c7w-9gw2 (critical):
