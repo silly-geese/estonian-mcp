@@ -1,9 +1,9 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11, <3.14"
 resolution-markers = [
-    "sys_platform == 'win32'",
     "python_full_version >= '3.12' and sys_platform == 'emscripten'",
+    "sys_platform == 'win32'",
     "python_full_version < '3.12' and sys_platform == 'emscripten'",
     "sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
@@ -377,7 +377,7 @@ wheels = [
 
 [[package]]
 name = "estnltk"
-version = "1.7.4"
+version = "1.7.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "bs4" },
@@ -398,25 +398,28 @@ dependencies = [
     { name = "requests" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bb/ed/d49a7b3fb0394b34a925d05d0124b0e0a48fd860d78a7be9e4ca31dcd6cf/estnltk-1.7.4.tar.gz", hash = "sha256:08432fe5e95cc364c50aece3d8c28f4fdf2c83682f0a5a484339654501bd2dc6", size = 59000045, upload-time = "2025-01-22T12:42:49.375Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/4c/7baf72c6d046644817e5fee81512523c559c723090094999d02e31feb3b4/estnltk-1.7.5.tar.gz", hash = "sha256:aa6dcc3cdb0963be3ef6967ba3d635b82647a12503fa3edaab809e2cf63a71ec", size = 59076792, upload-time = "2026-08-24T12:59:58.618Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3a/2a/337ebdc5b89fc43bf6e17f159ac97ae7435bf358e1c167815458a5c8f641/estnltk-1.7.4-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:5cfb1daa09e5a6c6404d876ac6027aea20dc3c08e5d0132447859a14618f0309", size = 59830950, upload-time = "2025-01-22T12:59:41.999Z" },
-    { url = "https://files.pythonhosted.org/packages/97/7c/c97fc8020d4ae9a7160ef9be08cded06ff9633820ad5dd9ac14f5be25c95/estnltk-1.7.4-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:c3e396c82518dfd0c8cb8f12be2783ce102c7362b002c5f9b5d66eafa2c0c646", size = 59784296, upload-time = "2025-01-22T12:59:52.55Z" },
-    { url = "https://files.pythonhosted.org/packages/28/d4/f4aa700b573e8f0ab34bf8d6004631e7617d973bce0dd88352ae6b5c247a/estnltk-1.7.4-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:835cce97e29e8ad501fbb08cb654f5cc1dcfb67637ad87fd12138c93bbe3462e", size = 70851684, upload-time = "2025-01-22T13:00:02.087Z" },
-    { url = "https://files.pythonhosted.org/packages/56/01/cb6b54166ea6e93976d1076f319a13543398cbb500a3756ec93070444042/estnltk-1.7.4-cp311-cp311-win_amd64.whl", hash = "sha256:a9198583c090070a2dbbce69bd142725c25f25f2527ade67b0fbddf73f16812e", size = 59689748, upload-time = "2025-01-22T13:00:11.64Z" },
-    { url = "https://files.pythonhosted.org/packages/01/bb/d5066a4583c85442ed15030e2aa5073a76974009d03db0d689419f95dda6/estnltk-1.7.4-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:76829816a22d79d6c98bcf86d677d2d01b41b135f1e39042ddb736509b62836d", size = 59833259, upload-time = "2025-01-22T13:00:21.154Z" },
-    { url = "https://files.pythonhosted.org/packages/c1/5f/e8caafc9756473aba67c973ce9ef992d1bb1b49be6526290925c7e3b6177/estnltk-1.7.4-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:00cd16332fb2fca9d9986b26774b32f8254924371c632d791925eaecb67630ad", size = 59784802, upload-time = "2025-01-22T13:00:30.92Z" },
-    { url = "https://files.pythonhosted.org/packages/5e/00/82029fe8324c5220147aab2bf3aa3b5e9e305eb6a70b7ed39f6a99cc5e8b/estnltk-1.7.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:947e9f7d0f1e4afe1b9ca207f5578c0846c923e10cb6d1b154cc69b73cd3883f", size = 70863191, upload-time = "2025-01-22T13:00:41.744Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/68/d7ea139567a42ec28a4e4288d46cd040db910058964b386e044311f3971f/estnltk-1.7.4-cp312-cp312-win_amd64.whl", hash = "sha256:b4cdca3acfcc72118a54453237ff7fdc7afce3a1cbed25c1d2f9e3e9a19dc9b3", size = 59689966, upload-time = "2025-01-22T13:00:52.518Z" },
-    { url = "https://files.pythonhosted.org/packages/6a/d0/24fca2282af0ac1403e0dc2cd1602015b7f1e3d8d0689591cffae7a4b17c/estnltk-1.7.4-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:f7ed870ba30cc04f79cd9f93fdbf9172c8f8bae3aa24a9efd66edaa2a2d6bcd0", size = 59833325, upload-time = "2025-01-22T13:10:27.574Z" },
-    { url = "https://files.pythonhosted.org/packages/80/25/a9771826b94283b1cf6c945ec866d4a4b64621bb937c76456e0e445316f0/estnltk-1.7.4-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:c9dd17adb9054d16f7bdd7a12fdee69c4d09b037b6bad79f2d465b0dc93d852c", size = 59784837, upload-time = "2025-01-22T13:10:36.341Z" },
-    { url = "https://files.pythonhosted.org/packages/5a/e3/77b9b6497f5cccab83c75cfc4f173de8b09e9ef6843c9afca8ecbcd6a280/estnltk-1.7.4-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:603340d7211f8ddf39cd0c7bbd6b1c0f78af0cd1fc7a34dbc0f2f1551ace09a3", size = 70863247, upload-time = "2025-01-22T13:10:46.765Z" },
-    { url = "https://files.pythonhosted.org/packages/85/f4/f5c7df9e7f5276c22befd547105a9ac0d4033a1f2592311c93e22fad63bb/estnltk-1.7.4-cp313-cp313-win_amd64.whl", hash = "sha256:722f85972b9f8b543042dd573b735e27b5480b747ee52eff4803bb2f5c4c10d0", size = 59690614, upload-time = "2025-01-22T13:10:56.696Z" },
+    { url = "https://files.pythonhosted.org/packages/62/f8/e1a08149551f0ed52814bd1d64e9d6604fc23243644b7786b1f59618e9e4/estnltk-1.7.5-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:d8a8ad4ef68e1a30b23cc10510e2360f4ceb57aa5c834107a4c6f517215cd57c", size = 59893063, upload-time = "2026-08-24T12:58:45.204Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/4a/0ddfb27d7d405c9878b820761902a5aae8c934e587fc5da37dba3ac19792/estnltk-1.7.5-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:400e802f99c8505e8c96d1b1bb45babd407a140668c0cf2e95757f1a3a6590a7", size = 59853075, upload-time = "2026-08-24T12:58:49.747Z" },
+    { url = "https://files.pythonhosted.org/packages/74/3b/3355275394a623d40812d4ad5a1e57df86e819efc56b5db6235495be5cff/estnltk-1.7.5-cp311-cp311-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e967923cfbcd33087c7e37c2f08367ced86ffc19cb7a3b48d93db3a7d88f6c60", size = 71164723, upload-time = "2026-08-25T11:46:05.256Z" },
+    { url = "https://files.pythonhosted.org/packages/68/07/65c303ba0cc366fdb033dfa5af608cc0211b262a30d505ca3cd79f2a8fd6/estnltk-1.7.5-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6c8482ffd0b16dc28d849b6f347e43b16da7b437ccb71ac88624e3af49cb4390", size = 71211094, upload-time = "2026-08-24T12:58:53.9Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/26/ece088054e5a4497833ec6825b8c12759ace4bd29d8f6457b77c85f8e85c/estnltk-1.7.5-cp311-cp311-win_amd64.whl", hash = "sha256:178e07bdd8443796e2785e8c0d72b7ff65ab97354368d90222cac4e747550c0f", size = 59959898, upload-time = "2026-08-24T12:58:57.846Z" },
+    { url = "https://files.pythonhosted.org/packages/15/06/bd0df7e990b6a0eb8d8d345b8da11b5b37b42615c396cb1cb5f9fb3c75b9/estnltk-1.7.5-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:b34499423d589b2f958c492286a74df61927bf7eb743a99533d58e459c9b12e3", size = 59895538, upload-time = "2026-08-24T12:59:02.268Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/8b/ddce68d6a6f6bb8dcb56fa9bc9c9891dcdea7f7f8314c330ed9610c2de62/estnltk-1.7.5-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:af147beffcbdb4c9eb314ecbcaedafeed3cd65649071f1c0b601511ff860c48a", size = 59854533, upload-time = "2026-08-24T12:59:06.436Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/80/d56c7c72e39e961f359685e7fe6ad8704633c6e8a516ac8ecf4c37d677cf/estnltk-1.7.5-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:5029da2f3d6e71d5045f41011ea1198b321005725637dd07d668a52281bec634", size = 71165419, upload-time = "2026-08-25T11:46:10.17Z" },
+    { url = "https://files.pythonhosted.org/packages/77/c8/3a055d2ff2281d6ed485e399d791648487ad63bd3f5672471fa9e7707dc8/estnltk-1.7.5-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0da046c20b32e6595a774d7d1397803de42f1e63c49b43f83d9451d5294debfd", size = 71216274, upload-time = "2026-08-24T12:59:10.54Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/75/fb6452de9015ab5e96c5b68f6a7d0a7702ac6f46141d92abdfab4123394c/estnltk-1.7.5-cp312-cp312-win_amd64.whl", hash = "sha256:bbd67b40a7a8d8932ecbf7b38e51d5c8a94cf5e17ad27ddb6e79e14274246a84", size = 59960493, upload-time = "2026-08-24T12:59:14.92Z" },
+    { url = "https://files.pythonhosted.org/packages/86/26/e64ae3f0548b78649ac337728ecdaeb0f9adf7cbcf5ff31cfc64110438b2/estnltk-1.7.5-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:80dede4d66bc418eb370d2b3e15d5f44fb9a98ee488d25c8f4f941502eaad506", size = 59906106, upload-time = "2026-08-24T12:59:18.747Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/78/9aa2a2b9e0a7d987ad6e93f9c6aca484952ced2b8d9f91bbd797c667bea5/estnltk-1.7.5-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:6aa957d09959e9df74ab45085610ec069ada81ada4416a471cdb53c408137bf3", size = 59862708, upload-time = "2026-08-24T12:59:23.566Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/d2/724161588e1b0929813f093bc86bfea1521265a4d1b6c04eb7ae838cc558/estnltk-1.7.5-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:0ff582b5d95cd75881c005649186dfe661460e5ae400cca7552338d4ecbb3e0e", size = 71168118, upload-time = "2026-08-25T11:46:15.989Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/f8/450751b496aea2443d5c6d3ff2aaa39c0e3e098e52419595506ebc4c2ece/estnltk-1.7.5-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5465d7185b49939289bcffb306a021a232c0b0f0c5224bebb47912673da60b2a", size = 71217523, upload-time = "2026-08-24T12:59:28.817Z" },
+    { url = "https://files.pythonhosted.org/packages/af/32/2558ac94dae32cd053f3f7c88c30b3c591d075a95d9595ffb3e7a9db8ad5/estnltk-1.7.5-cp313-cp313-win_amd64.whl", hash = "sha256:ab7a77dbf4d47b94e8063e279f4032d19de6362b1e7e1827e30d5a221f48d390", size = 59960466, upload-time = "2026-08-24T12:59:34.201Z" },
 ]
 
 [[package]]
 name = "estnltk-core"
-version = "1.7.4"
+version = "1.7.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "networkx" },
@@ -424,9 +427,9 @@ dependencies = [
     { name = "pandas" },
     { name = "regex" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f6/be/bdb3ee3c3e3482e8c3783361ebc640222085f477dee0a2827ec705b28a2c/estnltk_core-1.7.4.tar.gz", hash = "sha256:3554513e7aae3e358ae7943892e8d27101f5e305768bfb545ecb85db81f4f08a", size = 185292, upload-time = "2025-01-22T12:32:58.911Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8f/98/e3946b52df5b28703be6d2df621fd7ef786716370cef319cd8d664930ceb/estnltk_core-1.7.5.tar.gz", hash = "sha256:1110bf4ead4c749d0fd40c93e71a7c40855bede4f6bc7bbb198552cf6a28051c", size = 189046, upload-time = "2026-08-24T12:39:06.953Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/db/da/c8db4a3ed348a18411657d93eec76a1597c58b0eac03a3e1b82706989cf6/estnltk_core-1.7.4-py3-none-any.whl", hash = "sha256:52f0810f0253bca8e535bc80e37f81972a308714f4094b239e4b33aad3a17c4b", size = 235787, upload-time = "2025-01-22T12:32:57.126Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/fd/2a4996dddb3bcb1403438fd9b8a3ecd025017f10c3e674f07749ae43f494/estnltk_core-1.7.5-py3-none-any.whl", hash = "sha256:158cb3533139a31156ee4a65d645722fa4df521ecb4d9468f50ffec11052dc48", size = 239802, upload-time = "2026-08-24T12:39:05.814Z" },
 ]
 
 [[package]]
