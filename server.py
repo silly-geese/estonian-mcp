@@ -24,6 +24,7 @@ import argparse
 import base64
 import bisect
 import collections
+import contextvars
 import difflib
 import hashlib
 import heapq
@@ -34,8 +35,10 @@ import os
 import re
 import secrets
 import sys
+import threading
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from functools import cached_property, lru_cache
 from pathlib import Path
 from typing import Annotated, Any, TypedDict
@@ -92,7 +95,7 @@ DEFAULT_STATIC_RATE_LIMIT_PER_MINUTE = 60
 _TRUSTED_PROXY_HOPS = max(0, int(os.environ.get("ESTNLTK_MCP_TRUSTED_PROXY_HOPS", "1")))
 
 # Bumped manually in lockstep with pyproject.toml's [project].version.
-SERVER_VERSION = "1.1.0"
+SERVER_VERSION = "1.1.1"
 
 # Favicons served alongside the MCP endpoint so Google's favicon service
 # (used by the Anthropic Connectors Directory + tool-call UI in Claude)
@@ -522,10 +525,39 @@ def _wordnet_available() -> bool:
         return False
 
 
-@lru_cache(maxsize=1)
+_WORDNET = threading.local()
+
+
 def _wordnet():
+    """EstNLTK's Wordnet, one per thread. It holds a sqlite3 connection
+    that only the thread which opened it may use (see _TOOL_EXECUTOR).
+    Every tool runs on the tool thread, so the server opens one, about
+    50 MB; a test or script that calls a helper such as
+    _check_compound_familiarity on its own thread gets its own."""
+    wn = getattr(_WORDNET, "wn", None)
+    if wn is None:
+        wn = _WORDNET.wn = _wordnet_class()()
+    return wn
+
+
+@lru_cache(maxsize=1)
+def _wordnet_class() -> type:
+    """Wordnet without a traceback at exit. It and its synsets refer to
+    each other, so the garbage collector frees it, at exit on the main
+    thread, and sqlite3 refuses to close a connection another thread
+    opened there. The process is ending, so the refusal is dropped."""
+    import sqlite3
+
     from estnltk.wordnet import Wordnet
-    return Wordnet()
+
+    class _Wordnet(Wordnet):
+        def __del__(self) -> None:
+            try:
+                super().__del__()
+            except sqlite3.ProgrammingError:
+                pass
+
+    return _Wordnet
 
 
 # Where the fastText model may live, in priority order. The container path
@@ -1926,15 +1958,53 @@ def _impersonal_voice(spans: list) -> dict:
 # /metrics and persisted to the Fly volume alongside the HTTP counters.
 _TOOL_CALLS: dict[str, int] = {}
 
+# Every tool runs on this one thread, one call at a time. mcp 2.x runs a
+# sync tool on a pool of worker threads, where 1.x ran it on the event
+# loop's own thread, so from 1.1.0 tool calls ran side by side. EstNLTK's
+# Wordnet could not take that: one sqlite3 connection, bound to the thread
+# that opened it, and one cursor that every lookup shared. On any other
+# thread synonyms failed ("SQLite objects created in a thread can only be
+# used in that same thread"), check_term_consistency and
+# check_compound_familiarity quietly lost their WordNet evidence, and the
+# server died of a segmentation fault within seconds of parallel calls:
+# a call refused by sqlite3's thread check still clears the shared
+# cursor's statement while the owning thread is reading from it.
+# _wordnet() now opens one per thread, and this thread keeps that to one,
+# about 50 MB, where the SDK's pool of 40 threads could open 40. Vabamorf
+# and EstNLTK's taggers are shared and unlocked as well.
+#
+# One worker is the 1.x model without the blocked event loop: a long call
+# still delays the next one, as it always did, while /health and the HTTP
+# layer keep answering. The tool thread is never asked to wait for itself:
+# a call made on it (a tool calling another tool) runs in place.
+_TOOL_THREAD = threading.local()
+
+
+def _mark_tool_thread() -> None:
+    _TOOL_THREAD.is_tool_thread = True
+
+
+_TOOL_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="estonian-mcp-tool", initializer=_mark_tool_thread
+)
+
 
 def _counted(fn):
-    """Decorator: bump _TOOL_CALLS[fn.__name__] each time the tool runs.
-    functools.wraps preserves the signature + annotations + docstring so
-    the SDK's schema generation is unaffected."""
+    """Decorator: bump _TOOL_CALLS[fn.__name__] each time the tool runs,
+    and run it on the tool thread (see _TOOL_EXECUTOR), whoever calls it:
+    the SDK, a test or a script. functools.wraps preserves the signature
+    + annotations + docstring so the SDK's schema generation is
+    unaffected."""
     import functools
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
+        if not getattr(_TOOL_THREAD, "is_tool_thread", False):
+            # copy_context: the call keeps the caller's contextvars, as
+            # anyio's worker threads keep them.
+            return _TOOL_EXECUTOR.submit(
+                contextvars.copy_context().run, wrapper, *args, **kwargs
+            ).result()
         _TOOL_CALLS[fn.__name__] = _TOOL_CALLS.get(fn.__name__, 0) + 1
         try:
             return fn(*args, **kwargs)

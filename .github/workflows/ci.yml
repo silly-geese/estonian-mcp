@@ -148,6 +148,12 @@ jobs:
       - name: Run output-schema tests (every tool, through the MCP layer)
         run: uv run --python ${{ matrix.python-version }} python tests/test_output_schemas.py
 
+      # Many calls at once, as a busy client makes them. Every suite above
+      # calls one tool at a time, and stayed green through 1.1.0, whose
+      # parallel calls broke synonyms and crashed the server.
+      - name: Run parallel-call tests (one tool thread)
+        run: uv run --python ${{ matrix.python-version }} python tests/test_parallel_calls.py
+
   # Proves the DOCUMENTED source-install path works, from a clean state.
   # The existing `smoke` job pre-fetches resources through bespoke steps and
   # exports ESTNLTK_MCP_FASTTEXT_PATH, which masks exactly the class of bug
