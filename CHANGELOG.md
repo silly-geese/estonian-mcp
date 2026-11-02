@@ -7,6 +7,25 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-02
+
+### Fixed
+
+- **Parallel tool calls no longer break `synonyms` or crash the server.**
+  Version 2 of the MCP SDK, which 1.1.0 moved to, runs each tool call on
+  a pool of worker threads, where version 1 ran them one at a time.
+  EstNLTK's WordNet keeps one SQLite connection, usable only on the
+  thread that opened it, and one cursor for every lookup. On any other
+  thread `synonyms` failed ("SQLite objects created in a thread can only
+  be used in that same thread"), `check_term_consistency` reported
+  itself `degraded`, and `check_compound_familiarity` lost its WordNet
+  evidence. A call refused that way still frees the statement the
+  owning thread is reading, so within seconds of parallel calls the
+  server died of a segmentation fault. Every tool now runs on one
+  thread, one call at a time, as before 1.1.0, while the HTTP layer
+  keeps answering. `tests/test_parallel_calls.py` makes 64 calls at once
+  and compares each answer with the same call made alone.
+
 ## [1.1.0] - 2026-10-29
 
 The server now runs on version 2 of the MCP Python SDK (`mcp` 2.3), and
