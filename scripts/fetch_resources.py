@@ -87,6 +87,9 @@ def fetch_fasttext() -> bool:
 
     target = _fasttext_target()
     if target.exists():
+        if not target.is_file():
+            print(f"  fasttext: FAILED ({target} exists but is not a regular file)")
+            return False
         # "Exists" is not "good". A truncated leftover from an interrupted
         # run would otherwise be accepted forever, and the server then fails
         # to load it with an opaque error. Hashing 33 MB costs ~0.1 s.
