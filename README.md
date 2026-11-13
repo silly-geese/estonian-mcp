@@ -363,7 +363,7 @@ server works locally and as a container.
 
 ### Run locally as stdio (zero network)
 
-Python 3.11-3.13. EstNLTK stops at 3.13, and the Pillow it pulls in needs 3.11 for its security fixes.
+Python 3.11.5 to 3.13. EstNLTK stops at 3.13, the Pillow it pulls in needs 3.11 for its security fixes, and the Soup Sieve it pulls in needs 3.11.5 for its.
 
 ```sh
 git clone https://github.com/silly-geese/estonian-mcp.git
@@ -607,7 +607,7 @@ Contributions are welcome, especially from Estonian speakers who can
 sharpen the linguistic rules. Here's how to get started:
 
 1. **Fork** the repo and clone your fork.
-2. **Set up** the environment (Python 3.11-3.13):
+2. **Set up** the environment (Python 3.11.5 to 3.13):
    ```sh
    uv sync
    # punkt_tab + WordNet + fastText (none can come from uv.lock):

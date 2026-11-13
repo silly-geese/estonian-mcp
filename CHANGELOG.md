@@ -7,6 +7,26 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- **Python 3.11.0 to 3.11.4.** `requires-python` is now
+  `>=3.11.5,<3.14`. Soup Sieve arrives under `beautifulsoup4` ->
+  `estnltk`, and 4.0 is the first release with the fix for
+  CVE-2026-126190 (GHSA-mmhr-3c5m-f64f, high: polynomial-time denial of
+  service in the descendant combinator); it needs Python 3.11.5, and no
+  2.x release carries the fix. The lock already gave 3.11.5 and later
+  Soup Sieve 4.1 but left 3.11.0 to 3.11.4 on 2.10. The container image
+  (Python 3.13), the hosted server and CI are on 4.1 and do not change.
+  The lock drops Soup Sieve 2.10 and nothing else moves.
+
+### Fixed
+
+- **`scripts/fetch_resources.py` no longer crashes when the fastText
+  path is a directory.** It stopped with `IsADirectoryError` while
+  checking the existing file; it now reports that the path is not a
+  regular file and exits non-zero, as for any other failed download.
+  Thanks to @siimtolk (#100).
+
 ## [1.1.1] - 2026-11-02
 
 ### Fixed
