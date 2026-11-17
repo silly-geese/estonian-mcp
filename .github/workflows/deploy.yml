@@ -1,0 +1,99 @@
+name: deploy
+
+# Ships master to https://estonian-mcp.fly.dev as soon as CI passes on it.
+#
+# A commit that changes nothing in the image (docs, tests, workflows) is
+# not deployed: the app runs one machine with a volume, so every deploy
+# restarts it, and it answers 502 for the ~12 s the server takes to import.
+# The image tag records the commit it was built from (git-<sha>), which is
+# how this job knows what is live.
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time, never cancelled halfway through a rollout.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      APP: estonian-mcp
+      URL: https://estonian-mcp.fly.dev
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      EVENT: ${{ github.event_name }}
+      CI_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+
+      - name: Decide whether master needs deploying
+        id: plan
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          echo "sha=$head" >> "$GITHUB_OUTPUT"
+          # CI for an older commit can finish after CI for a newer one.
+          # Deploying it would roll production back, so leave it to the
+          # newer run.
+          if [ "$EVENT" = workflow_run ] && [ "$CI_SHA" != "$head" ]; then
+            echo "CI passed on $CI_SHA, but master is now $head: its own run deploys it."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          live=$(flyctl image show --app "$APP" --json | jq -r '.[0].Tag')
+          live_sha=${live#git-}
+          echo "live image: $live"
+          if [ "$EVENT" = workflow_run ] && [ "$live_sha" != "$live" ] \
+             && git cat-file -e "$live_sha^{commit}" 2>/dev/null \
+             && git diff --quiet "$live_sha" "$head" -- \
+                  Dockerfile .dockerignore pyproject.toml uv.lock server.py logo.png data fly.toml; then
+            echo "Nothing the image is built from changed since $live_sha."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy
+        if: steps.plan.outputs.deploy == 'true'
+        run: flyctl deploy --app "$APP" --remote-only --image-label "git-${{ steps.plan.outputs.sha }}"
+
+      - name: Check the live server
+        if: steps.plan.outputs.deploy == 'true'
+        env:
+          SHA: ${{ steps.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test "$(flyctl image show --app "$APP" --json | jq -r '.[0].Tag')" = "git-$SHA"
+          up=
+          for _ in $(seq 1 24); do
+            if curl -fsS --max-time 10 "$URL/health" | jq -e '.ok == true' >/dev/null; then up=1; break; fi
+            sleep 5
+          done
+          test -n "$up"
+          curl -fsS --max-time 60 -X POST "$URL/mcp" \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"synonyms","arguments":{"word":"kasutama"}}}' \
+            | jq -e '.result.isError != true' >/dev/null
+          echo "git-$SHA is live and answering tool calls."

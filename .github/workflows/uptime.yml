@@ -1,0 +1,44 @@
+name: uptime
+
+# Every 10 minutes, checks the hosted server from outside Fly, the way a
+# client reaches it: /health, then an MCP tools/list. A failed run means
+# clients could not use the server, and GitHub mails the failure; the run
+# list is the outage history. tools/list rather than tools/call, so the
+# probe does not inflate the tool_calls counts in /metrics.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      URL: https://estonian-mcp.fly.dev
+    steps:
+      - name: Health and tools/list
+        run: |
+          # Three tries 30 s apart: a deploy restarts the machine, and it
+          # answers 502 for the ~12 s the server takes to import.
+          for i in 1 2 3; do
+            if curl -fsS --max-time 15 "$URL/health" | jq -e '.ok == true' >/dev/null \
+               && curl -fsS --max-time 30 -X POST "$URL/mcp" \
+                    -H 'Content-Type: application/json' \
+                    -H 'Accept: application/json, text/event-stream' \
+                    -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+                  | jq -e '(.result.tools | length) > 0' >/dev/null; then
+              echo "up (try $i)"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::$URL failed /health or tools/list three times in a row"
+          exit 1
